@@ -322,7 +322,7 @@ class NotepadX:
                 counters.cb
             )
             if success:
-                return max(1, round(counters.WorkingSetSize / (1024 * 1024)))
+                return max(1, round(counters.PagefileUsage / (1024 * 1024)))
         except Exception:
             pass
         return 0
@@ -1496,7 +1496,7 @@ class NotepadX:
         if doc.get('virtual_mode'):
             # Don't rebuffer while the user is actively selecting text.
             event_type = str(getattr(event, 'type', ''))
-            if event_type in {'5', '6', 'Motion', 'ButtonRelease'}:
+            if event_type in {'4', '5', '6', 'Motion', 'ButtonPress', 'ButtonRelease'}:
                 self.update_status()
                 return
             try:
@@ -1528,6 +1528,7 @@ class NotepadX:
             self.update_status()
             return
 
+        text = doc['text']
         if hasattr(event, 'delta') and event.delta:
             delta = -1 if event.delta > 0 else 1
         elif getattr(event, 'num', None) == 4:
@@ -1535,7 +1536,26 @@ class NotepadX:
         else:
             delta = 1
 
-        self.load_virtual_window(doc, doc['window_start_line'] + (delta * 5))
+        visible_lines = max(1, doc['window_end_line'] - doc['window_start_line'] + 1)
+        try:
+            top_local_line = int(text.index('@0,0').split('.')[0])
+        except tk.TclError:
+            top_local_line = 1
+        try:
+            bottom_local_line = int(text.index(f"@0,{max(0, text.winfo_height() - 1)}").split('.')[0])
+        except tk.TclError:
+            bottom_local_line = visible_lines
+
+        if delta < 0:
+            if top_local_line > 1:
+                text.yview_scroll(-3, 'units')
+            elif doc['window_start_line'] > 1:
+                self.load_virtual_window(doc, max(1, doc['window_start_line'] - 20))
+        else:
+            if bottom_local_line < visible_lines:
+                text.yview_scroll(3, 'units')
+            elif doc['window_end_line'] < doc['total_file_lines']:
+                self.load_virtual_window(doc, min(doc['total_file_lines'], doc['window_end_line'] + 20))
         self.update_status()
         return "break"
 
@@ -2326,6 +2346,9 @@ class NotepadX:
                         self.root.update_idletasks()
 
         text.edit_modified(False)
+        text.mark_set(tk.INSERT, '1.0')
+        text.tag_remove('sel', '1.0', tk.END)
+        text.see('1.0')
         self.configure_syntax_highlighting(doc['frame'])
         self.restore_doc_notes(doc)
         self.register_doc_for_shared_notes(doc)
@@ -2599,6 +2622,12 @@ class NotepadX:
     def close_current_tab(self, event=None, recreate_if_empty=True):
         doc = self.get_current_doc()
         if not doc:
+            return "break"
+        if (
+            len(self.documents) == 1 and
+            not doc.get('file_path') and
+            doc.get('untitled_name') == 'Untitled 1'
+        ):
             return "break"
         if not self.confirm_close_tab(doc):
             return "break"
@@ -3182,8 +3211,18 @@ class NotepadX:
         if not file_path:
             return "break"
 
-        for project_file in self.get_project_source_files(file_path):
+        selected_project_path = os.path.normcase(os.path.abspath(file_path))
+        project_files = self.get_project_source_files(file_path)
+        for project_file in project_files:
             self.open_file_path(project_file)
+        for tab_id, doc in self.documents.items():
+            doc_file_path = doc.get('file_path')
+            if doc_file_path and os.path.normcase(os.path.abspath(doc_file_path)) == selected_project_path:
+                self.notebook.select(doc['frame'])
+                self.set_active_document(tab_id)
+                if self.text:
+                    self.text.focus_set()
+                break
         return "break"
 
     def open_recent_file(self, file_path):
