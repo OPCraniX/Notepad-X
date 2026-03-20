@@ -192,6 +192,9 @@ class NotepadX:
         base_dir = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
         return os.path.join(base_dir, 'Notepad-X')
 
+    def get_emergency_support_dir(self):
+        return os.path.join(tempfile.gettempdir(), 'Notepad-X')
+
     def directory_is_writable(self, directory):
         try:
             os.makedirs(directory, exist_ok=True)
@@ -214,6 +217,19 @@ class NotepadX:
 
     def move_support_paths_to_user_dir(self):
         fallback_dir = self.get_user_support_dir()
+        os.makedirs(fallback_dir, exist_ok=True)
+        self.app_dir = fallback_dir
+        self.session_path = os.path.join(self.app_dir, "Notepad-X.session.json")
+        if self.isolated_session:
+            self.session_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.session.json")
+        self.editor_identity_path = os.path.join(self.app_dir, "Notepad-X.editor.json")
+        if self.isolated_session:
+            self.editor_identity_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.editor.json")
+        self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
+        self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
+
+    def move_support_paths_to_emergency_dir(self):
+        fallback_dir = self.get_emergency_support_dir()
         os.makedirs(fallback_dir, exist_ok=True)
         self.app_dir = fallback_dir
         self.session_path = os.path.join(self.app_dir, "Notepad-X.session.json")
@@ -338,7 +354,7 @@ class NotepadX:
 
     def persist_editor_identity(self):
         known_ids = list(dict.fromkeys(self.known_editor_ids + [self.editor_id]))[-32:]
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 os.makedirs(os.path.dirname(self.editor_identity_path), exist_ok=True)
                 with open(self.editor_identity_path, 'w', encoding='utf-8') as f:
@@ -351,6 +367,9 @@ class NotepadX:
             except PermissionError as exc:
                 if attempt == 0:
                     self.move_support_paths_to_user_dir()
+                    continue
+                if attempt == 1:
+                    self.move_support_paths_to_emergency_dir()
                     continue
                 self.log_exception("persist editor identity", exc)
                 return
@@ -1318,8 +1337,6 @@ class NotepadX:
         self.root.bind('<Control-Shift-T>', self.close_current_tab)
         self.root.bind('<Control-Shift-t>', self.close_current_tab)
         self.root.bind('<Control-Tab>', self.switch_tab_right)
-        self.root.bind('<Control-Left>', self.switch_tab_left)
-        self.root.bind('<Control-Right>', self.switch_tab_right)
         self.root.bind('<Control-Shift-F>', self.show_font_dialog)
         self.root.bind('<Control-Shift-f>', self.show_font_dialog)
         # Search / Navigation
@@ -1665,6 +1682,9 @@ class NotepadX:
             'syntax_job': None,
             'syntax_mode': None,
             'syntax_override': None,
+            'last_insert_index': '1.0',
+            'last_yview': 0.0,
+            'last_xview': 0.0,
         }
         self.apply_syntax_tag_colors(text)
         self.configure_syntax_highlighting(tab_frame)
@@ -1676,6 +1696,56 @@ class NotepadX:
             self.set_active_document(tab_frame)
         self.root.after_idle(lambda frame=tab_frame: self.update_line_number_gutter(self.documents.get(str(frame))))
         return tab_frame
+
+    def remember_doc_view_state(self, doc):
+        if not doc:
+            return
+        text = doc.get('text')
+        if not text or not text.winfo_exists():
+            return
+        try:
+            doc['last_insert_index'] = text.index(tk.INSERT)
+        except tk.TclError:
+            pass
+        try:
+            doc['last_yview'] = text.yview()[0]
+        except (tk.TclError, IndexError):
+            pass
+        try:
+            doc['last_xview'] = text.xview()[0]
+        except (tk.TclError, IndexError):
+            pass
+
+    def restore_doc_view_state(self, doc):
+        if not doc:
+            return
+        text = doc.get('text')
+        if not text or not text.winfo_exists():
+            return
+        insert_index = doc.get('last_insert_index') or '1.0'
+        try:
+            text.mark_set(tk.INSERT, insert_index)
+        except tk.TclError:
+            text.mark_set(tk.INSERT, '1.0')
+
+        if doc.get('virtual_mode'):
+            try:
+                global_line = doc['window_start_line'] + int(text.index(tk.INSERT).split('.')[0]) - 1
+            except (tk.TclError, ValueError):
+                global_line = doc.get('window_start_line', 1)
+            self.ensure_virtual_line_visible(doc, global_line)
+            text = doc.get('text')
+            if not text or not text.winfo_exists():
+                return
+
+        try:
+            text.xview_moveto(float(doc.get('last_xview', 0.0)))
+        except (tk.TclError, TypeError, ValueError):
+            pass
+        try:
+            text.yview_moveto(float(doc.get('last_yview', 0.0)))
+        except (tk.TclError, TypeError, ValueError):
+            pass
 
     def get_syntax_mode(self, doc):
         if doc['large_file_mode'] or doc['virtual_mode'] or doc['preview_mode']:
@@ -2277,6 +2347,7 @@ class NotepadX:
         if not doc:
             return
         self.set_last_active_editor_widget(doc['text'])
+        self.remember_doc_view_state(doc)
         if doc.get('virtual_mode'):
             # Don't rebuffer while the user is actively selecting text.
             event_type = str(getattr(event, 'type', ''))
@@ -2370,6 +2441,7 @@ class NotepadX:
 
         if not doc.get('virtual_mode'):
             doc['text'].yview(*args)
+            self.remember_doc_view_state(doc)
             self.update_line_number_gutter(doc)
             return
 
@@ -2388,6 +2460,7 @@ class NotepadX:
             return
 
         self.load_virtual_window(doc, target_line)
+        self.remember_doc_view_state(doc)
         self.update_status()
 
     def update_vertical_scrollbar(self, tab_id, scrollbar, first, last):
@@ -2401,6 +2474,7 @@ class NotepadX:
         if not doc.get('virtual_mode'):
             if first is not None and last is not None:
                 scrollbar.set(first, last)
+            self.remember_doc_view_state(doc)
             self.update_line_number_gutter(doc)
             return
 
@@ -3367,6 +3441,9 @@ class NotepadX:
         text.mark_set(tk.INSERT, '1.0')
         text.tag_remove('sel', '1.0', tk.END)
         text.see('1.0')
+        doc['last_insert_index'] = '1.0'
+        doc['last_yview'] = 0.0
+        doc['last_xview'] = 0.0
         self.configure_syntax_highlighting(doc['frame'])
         self.restore_doc_notes(doc)
         self.register_doc_for_shared_notes(doc)
@@ -3685,11 +3762,17 @@ class NotepadX:
         self.text = doc['text']
         self.current_file = doc['file_path']
         self.syntax_mode_selection.set(doc.get('syntax_override') or 'auto')
+        self.restore_doc_view_state(doc)
         self.update_line_number_gutter(doc)
         self.update_window_title()
         self.update_status()
 
     def on_tab_changed(self, event=None):
+        previous_widget = getattr(self, 'last_active_editor_widget', None)
+        if previous_widget is not None:
+            previous_doc = self.get_doc_for_text_widget(previous_widget)
+            if previous_doc:
+                self.remember_doc_view_state(previous_doc)
         for doc in self.documents.values():
             self.hide_note_popup(doc)
         self.set_active_document(self.notebook.select())
@@ -3735,6 +3818,7 @@ class NotepadX:
         if doc.get('suspend_modified_events'):
             doc['text'].edit_modified(False)
             return
+        self.remember_doc_view_state(doc)
         if not doc.get('file_path'):
             self.configure_syntax_highlighting(tab_id)
         if doc.get('syntax_mode') and doc.get('syntax_mode') != 'python':
@@ -3781,6 +3865,10 @@ class NotepadX:
         current_tab = self.notebook.select()
         if current_tab not in tab_ids:
             return "break"
+
+        current_doc = self.documents.get(str(current_tab))
+        if current_doc:
+            self.remember_doc_view_state(current_doc)
 
         next_index = (tab_ids.index(current_tab) + offset) % len(tab_ids)
         next_tab = tab_ids[next_index]
@@ -3895,8 +3983,6 @@ class NotepadX:
         self.menu.add_cascade(label="View", menu=view_menu)
         view_menu.add_command(label="Full Screen", command=self.toggle_fullscreen, accelerator="F11")
         view_menu.add_command(label="Switch Tab", command=self.switch_tab_right, accelerator="Ctrl+Tab")
-        view_menu.add_command(label="Switch Tab Left", command=self.switch_tab_left, accelerator="Ctrl+Left")
-        view_menu.add_command(label="Switch Tab Right", command=self.switch_tab_right, accelerator="Ctrl+Right")
         view_menu.add_checkbutton(label="Status Bar", variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator="Ctrl+B")
         view_menu.add_checkbutton(label="Numbered Lines", variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
         view_menu.add_checkbutton(label="Word Wrap", variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
