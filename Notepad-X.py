@@ -9,6 +9,7 @@ import bisect
 import re
 import hashlib
 import secrets
+import subprocess
 import tempfile
 import traceback
 import time
@@ -182,6 +183,19 @@ class NotepadX:
             ]
         except Exception:
             self.winmm = None
+        try:
+            self.shell32 = ctypes.WinDLL('shell32', use_last_error=True)
+            self.shell32.ShellExecuteW.restype = wintypes.HINSTANCE
+            self.shell32.ShellExecuteW.argtypes = [
+                wintypes.HWND,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                ctypes.c_int,
+            ]
+        except Exception:
+            self.shell32 = None
 
     def get_resource_dir(self):
         if getattr(sys, 'frozen', False):
@@ -1177,42 +1191,45 @@ class NotepadX:
         if not doc or doc.get('virtual_mode') or doc.get('preview_mode'):
             return "break"
 
-        ordered_tags = self.get_ordered_note_tags(doc)
-        if not ordered_tags:
+        text_widget = doc.get('text')
+        if not text_widget:
             return "break"
 
-        current_offset = self.text.count('1.0', self.text.index(tk.INSERT), 'chars')[0]
-        note_tag = ordered_tags[0]
-        for candidate_tag in ordered_tags:
-            ranges = self.text.tag_ranges(candidate_tag)
-            if len(ranges) < 2:
-                continue
-            note_offset = self.text.count('1.0', str(ranges[0]), 'chars')[0]
-            if note_offset > current_offset:
-                note_tag = candidate_tag
-                break
+        ordered_tags = self.get_ordered_note_tags(doc)
+        if not ordered_tags:
+            doc['last_note_cycle_tag'] = None
+            return "break"
 
-        ranges = self.text.tag_ranges(note_tag)
+        last_tag = doc.get('last_note_cycle_tag')
+        if last_tag in ordered_tags:
+            note_tag = ordered_tags[(ordered_tags.index(last_tag) + 1) % len(ordered_tags)]
+        else:
+            note_tag = ordered_tags[0]
+
+        ranges = text_widget.tag_ranges(note_tag)
         if len(ranges) < 2:
+            doc['last_note_cycle_tag'] = None
             return "break"
 
         start = str(ranges[0])
         end = str(ranges[1])
-        self.text.tag_remove('sel', '1.0', tk.END)
-        self.text.tag_add('sel', start, end)
-        self.text.mark_set(tk.INSERT, end)
-        self.text.see(start)
+        text_widget.tag_remove('sel', '1.0', tk.END)
+        text_widget.tag_add('sel', start, end)
+        text_widget.mark_set(tk.INSERT, end)
+        text_widget.see(start)
+        self.set_last_active_editor_widget(text_widget)
+        doc['last_note_cycle_tag'] = note_tag
         self.mark_note_as_read(doc, note_tag)
         note_data = doc['notes'].get(note_tag)
         if note_data:
-            bbox = self.text.bbox(start)
+            bbox = text_widget.bbox(start)
             if bbox:
                 x, y, width, height = bbox
                 self.show_note_popup(
                     doc,
                     note_data,
-                    self.text.winfo_rootx() + x + width,
-                    self.text.winfo_rooty() + y + height
+                    text_widget.winfo_rootx() + x + width,
+                    text_widget.winfo_rooty() + y + height
                 )
         self.update_status()
         return "break"
@@ -1679,6 +1696,7 @@ class NotepadX:
             'note_editor_label': None,
             'last_unread_count': 0,
             'notes_registered': False,
+            'last_note_cycle_tag': None,
             'syntax_job': None,
             'syntax_mode': None,
             'syntax_override': None,
@@ -2805,6 +2823,15 @@ class NotepadX:
             return "break"
 
         self.hide_note_popup(doc)
+        suggested_author = getattr(self, 'note_author_name', '') or ''
+        author_name = self.prompt_note_input("Add Note", "Author:", initialvalue=suggested_author, parent=self.root)
+        if author_name is None:
+            return "break"
+        author_name = author_name.strip()
+        if not author_name:
+            messagebox.showinfo("Add Note", "Enter an author name first.", parent=self.root)
+            return "break"
+        self.note_author_name = author_name
         note_input = self.prompt_note_input("Add Note", "Note:", parent=self.root)
         if not note_input:
             return "break"
@@ -2821,7 +2848,7 @@ class NotepadX:
             end,
             note_text,
             author_id=self.editor_id,
-            author_label=self.get_doc_editor_label(doc),
+            author_label=author_name,
             read_by=[self.editor_id]
         )
         self.persist_doc_notes(doc)
@@ -3204,6 +3231,7 @@ class NotepadX:
                 pass
         doc['notes'] = {}
         doc['note_counter'] = 1
+        doc['last_note_cycle_tag'] = None
         doc['context_note_tag'] = None
         self.hide_note_popup(doc)
 
@@ -4847,10 +4875,33 @@ class NotepadX:
                 return "break"
             doc = self.get_current_doc()
 
+        print_error = None
         try:
-            os.startfile(doc['file_path'], 'print')
+            if hasattr(os, 'startfile'):
+                os.startfile(doc['file_path'], 'print')
+                return "break"
+            elif self.shell32:
+                result = self.shell32.ShellExecuteW(None, 'print', doc['file_path'], None, None, 0)
+                if result <= 32:
+                    raise OSError(f"Windows print action failed with code {result}")
+                return "break"
         except OSError as exc:
-            messagebox.showerror("Print Failed", str(exc), parent=self.root)
+            print_error = exc
+
+        try:
+            subprocess.Popen(
+                ['notepad.exe', '/p', doc['file_path']],
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            )
+            return "break"
+        except OSError as exc:
+            if print_error is None:
+                print_error = exc
+
+        if print_error is None:
+            print_error = OSError("Print is only available on Windows.")
+        self.log_exception("print file", print_error)
+        messagebox.showerror("Print Failed", str(print_error), parent=self.root)
         return "break"
 
     def exit_app(self, event=None):
