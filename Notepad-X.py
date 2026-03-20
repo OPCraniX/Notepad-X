@@ -102,6 +102,7 @@ class NotepadX:
         self.search_all_tabs = tk.BooleanVar(value=False)
         self.note_filter = tk.StringVar(value='all')
         self.syntax_theme = tk.StringVar(value='Default')
+        self.syntax_mode_selection = tk.StringVar(value='auto')
         self.recovery_job = None
         self.compare_active = False
         self.compare_source_tab = None
@@ -178,10 +179,42 @@ class NotepadX:
             return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
         return os.path.dirname(__file__)
 
+    def get_user_support_dir(self):
+        base_dir = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
+        return os.path.join(base_dir, 'Notepad-X')
+
+    def directory_is_writable(self, directory):
+        try:
+            os.makedirs(directory, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(prefix='notepadx-write-test-', suffix='.tmp', dir=directory)
+            os.close(fd)
+            os.remove(temp_path)
+            return True
+        except OSError:
+            return False
+
     def get_app_dir(self):
         if getattr(sys, 'frozen', False):
-            return os.path.dirname(sys.executable)
+            exe_dir = os.path.dirname(sys.executable)
+            if self.directory_is_writable(exe_dir):
+                return exe_dir
+            fallback_dir = self.get_user_support_dir()
+            os.makedirs(fallback_dir, exist_ok=True)
+            return fallback_dir
         return os.path.dirname(__file__)
+
+    def move_support_paths_to_user_dir(self):
+        fallback_dir = self.get_user_support_dir()
+        os.makedirs(fallback_dir, exist_ok=True)
+        self.app_dir = fallback_dir
+        self.session_path = os.path.join(self.app_dir, "Notepad-X.session.json")
+        if self.isolated_session:
+            self.session_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.session.json")
+        self.editor_identity_path = os.path.join(self.app_dir, "Notepad-X.editor.json")
+        if self.isolated_session:
+            self.editor_identity_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.editor.json")
+        self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
+        self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
 
     def resolve_gfx_path(self, filename):
         base_dir = self.resource_dir
@@ -296,15 +329,25 @@ class NotepadX:
 
     def persist_editor_identity(self):
         known_ids = list(dict.fromkeys(self.known_editor_ids + [self.editor_id]))[-32:]
-        try:
-            with open(self.editor_identity_path, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'editor_id': self.editor_id,
-                    'known_editor_ids': known_ids
-                }, f, indent=2)
-            self.hide_support_file(self.editor_identity_path)
-        except Exception as exc:
-            self.log_exception("save session", exc)
+        for attempt in range(2):
+            try:
+                os.makedirs(os.path.dirname(self.editor_identity_path), exist_ok=True)
+                with open(self.editor_identity_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'editor_id': self.editor_id,
+                        'known_editor_ids': known_ids
+                    }, f, indent=2)
+                self.hide_support_file(self.editor_identity_path)
+                return
+            except PermissionError as exc:
+                if attempt == 0:
+                    self.move_support_paths_to_user_dir()
+                    continue
+                self.log_exception("persist editor identity", exc)
+                return
+            except Exception as exc:
+                self.log_exception("persist editor identity", exc)
+                return
 
     def center_window(self, window, parent=None):
         window.update_idletasks()
@@ -1508,6 +1551,7 @@ class NotepadX:
         if not doc:
             return "break"
         doc['syntax_override'] = syntax_mode
+        self.syntax_mode_selection.set(syntax_mode)
         self.configure_syntax_highlighting(doc['frame'])
         if self.compare_active and self.compare_source_tab == str(doc['frame']):
             self.refresh_compare_panel()
@@ -2971,23 +3015,32 @@ class NotepadX:
                 except OSError as exc:
                     self.log_exception("remove recovery state", exc)
             return
-        try:
-            recovery_dir = os.path.dirname(self.recovery_path)
-            os.makedirs(recovery_dir, exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(prefix='notepadx-recovery-', suffix='.tmp', dir=recovery_dir)
+        for attempt in range(2):
             try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    json.dump(recovery, f, indent=2)
-                os.replace(temp_path, self.recovery_path)
-            finally:
-                if os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
-            self.hide_support_file(self.recovery_path)
-        except Exception as exc:
-            self.log_exception("persist recovery state", exc)
+                recovery_dir = os.path.dirname(self.recovery_path)
+                os.makedirs(recovery_dir, exist_ok=True)
+                fd, temp_path = tempfile.mkstemp(prefix='notepadx-recovery-', suffix='.tmp', dir=recovery_dir)
+                try:
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        json.dump(recovery, f, indent=2)
+                    os.replace(temp_path, self.recovery_path)
+                finally:
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
+                self.hide_support_file(self.recovery_path)
+                return
+            except PermissionError as exc:
+                if attempt == 0:
+                    self.move_support_paths_to_user_dir()
+                    continue
+                self.log_exception("persist recovery state", exc)
+                return
+            except Exception as exc:
+                self.log_exception("persist recovery state", exc)
+                return
 
     def restore_recovery_state(self):
         if self.isolated_session or not os.path.exists(self.recovery_path):
@@ -3039,23 +3092,32 @@ class NotepadX:
                     pass
             return
 
-        try:
-            session_dir = os.path.dirname(self.session_path)
-            os.makedirs(session_dir, exist_ok=True)
-            fd, temp_path = tempfile.mkstemp(prefix='notepadx-session-', suffix='.tmp', dir=session_dir)
+        for attempt in range(2):
             try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                    json.dump(session, f, indent=2)
-                os.replace(temp_path, self.session_path)
-            finally:
-                if os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
-            self.hide_support_file(self.session_path)
-        except Exception:
-            pass
+                session_dir = os.path.dirname(self.session_path)
+                os.makedirs(session_dir, exist_ok=True)
+                fd, temp_path = tempfile.mkstemp(prefix='notepadx-session-', suffix='.tmp', dir=session_dir)
+                try:
+                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                        json.dump(session, f, indent=2)
+                    os.replace(temp_path, self.session_path)
+                finally:
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
+                self.hide_support_file(self.session_path)
+                return
+            except PermissionError as exc:
+                if attempt == 0:
+                    self.move_support_paths_to_user_dir()
+                    continue
+                self.log_exception("save session", exc)
+                return
+            except Exception as exc:
+                self.log_exception("save session", exc)
+                return
 
     def restore_session(self):
         if self.isolated_session:
@@ -3176,10 +3238,12 @@ class NotepadX:
         if not doc:
             self.text = None
             self.current_file = None
+            self.syntax_mode_selection.set('auto')
             self.root.title("Notepad-X")
             return
         self.text = doc['text']
         self.current_file = doc['file_path']
+        self.syntax_mode_selection.set(doc.get('syntax_override') or 'auto')
         self.update_window_title()
         self.update_status()
 
@@ -3401,7 +3465,12 @@ class NotepadX:
             ('C++', 'cpp'), ('Rust', 'rust'), ('Java', 'java'), ('JavaScript', 'javascript'),
             ('HTML', 'html'), ('PHP', 'php'), ('XML', 'xml'), ('SQL', 'sql')
         ):
-            syntax_mode_menu.add_command(label=mode_label, command=lambda value=mode_value: self.set_current_syntax_override(value))
+            syntax_mode_menu.add_radiobutton(
+                label=mode_label,
+                variable=self.syntax_mode_selection,
+                value=mode_value,
+                command=lambda value=mode_value: self.set_current_syntax_override(value)
+            )
         view_menu.add_command(label="Compare Tabs", command=self.show_split_compare, accelerator="Ctrl+Q")
         view_menu.add_command(label="Close Compare Tabs", command=self.close_compare_panel, accelerator="Ctrl+Shift+X")
 
