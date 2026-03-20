@@ -104,6 +104,7 @@ class NotepadX:
         self.sound_enabled = tk.BooleanVar(value=True)
         self.status_bar_enabled = tk.BooleanVar(value=True)
         self.numbered_lines_enabled = tk.BooleanVar(value=True)
+        self.autocomplete_enabled = tk.BooleanVar(value=True)
         self.search_all_tabs = tk.BooleanVar(value=False)
         self.note_filter = tk.StringVar(value='all')
         self.syntax_theme = tk.StringVar(value='Default')
@@ -117,6 +118,11 @@ class NotepadX:
         self.toast_popup = None
         self.toast_after_id = None
         self._last_gutter_copy = None
+        self.autocomplete_popup = None
+        self.autocomplete_listbox = None
+        self.autocomplete_target = None
+        self.autocomplete_target_doc = None
+        self.autocomplete_prefix_start = None
 
         # Panel visibility flags
         self.find_panel_visible = False
@@ -916,6 +922,7 @@ class NotepadX:
             pass
 
     def remember_compare_focus(self, event=None):
+        self.hide_autocomplete_popup()
         compare_widget = self.get_compare_text_widget()
         if compare_widget is not None:
             self.root.after_idle(lambda widget=compare_widget: self.set_last_active_editor_widget(widget))
@@ -1355,6 +1362,11 @@ class NotepadX:
         self.update_status()
         self.save_session()
 
+    def toggle_autocomplete(self):
+        if not self.autocomplete_enabled.get():
+            self.hide_autocomplete_popup()
+        self.save_session()
+
     def toggle_sound(self):
         self.save_session()
 
@@ -1557,6 +1569,7 @@ class NotepadX:
         text.bind('<Control-B>', self.toggle_status_bar)
         text.bind('<FocusIn>', lambda e, frame=tab_frame: self.remember_doc_focus(frame), add='+')
         text.bind('<KeyPress>', lambda e, frame=tab_frame: self.handle_text_keypress(e, frame))
+        text.bind('<KeyRelease>', lambda e, frame=tab_frame: self.handle_text_keyrelease(e, frame), add='+')
         text.bind('<ButtonRelease-1>', lambda e, frame=tab_frame: self.on_text_click_release(e, frame), add='+')
         text.bind('<Button-3>', lambda e, frame=tab_frame: self.show_text_context_menu(e, frame))
 
@@ -2239,7 +2252,23 @@ class NotepadX:
 
     def handle_text_keypress(self, event, tab_id):
         doc = self.documents.get(str(tab_id))
-        if not doc or not doc.get('virtual_mode'):
+        if not doc:
+            return
+
+        if self.autocomplete_enabled.get() and self.autocomplete_popup and self.autocomplete_target == doc.get('text'):
+            if event.keysym == 'Up':
+                self.move_autocomplete_selection(-1)
+                return "break"
+            if event.keysym == 'Down':
+                self.move_autocomplete_selection(1)
+                return "break"
+            if event.keysym in {'Tab', 'Return', 'KP_Enter'}:
+                return self.accept_autocomplete_selection()
+            if event.keysym == 'Escape':
+                self.hide_autocomplete_popup()
+                return "break"
+
+        if not doc.get('virtual_mode'):
             return
 
         navigation_keys = {
@@ -2251,7 +2280,25 @@ class NotepadX:
             return
         return "break"
 
+    def handle_text_keyrelease(self, event, tab_id):
+        doc = self.documents.get(str(tab_id))
+        if not doc:
+            return
+        if (not self.autocomplete_enabled.get()) or doc.get('virtual_mode') or doc.get('preview_mode') or doc.get('large_file_mode'):
+            self.hide_autocomplete_popup()
+            return
+
+        ignored_keys = {
+            'Up', 'Down', 'Return', 'KP_Enter', 'Tab', 'Escape',
+            'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R',
+            'Prior', 'Next', 'Caps_Lock'
+        }
+        if event.keysym in ignored_keys or (event.state & 0x4):
+            return
+        self.root.after_idle(lambda current_doc=doc: self.update_autocomplete_for_doc(current_doc))
+
     def handle_compare_keypress(self, event):
+        self.hide_autocomplete_popup()
         navigation_keys = {
             'Up', 'Down', 'Left', 'Right', 'Prior', 'Next', 'Home', 'End',
             'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R',
@@ -2260,6 +2307,260 @@ class NotepadX:
         if event.keysym in navigation_keys or (event.state & 0x4):
             return
         return "break"
+
+    def get_autocomplete_keywords(self, syntax_mode):
+        keyword_map = {
+            'python': ['and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else',
+                       'except', 'False', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is',
+                       'lambda', 'None', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'self',
+                       'True', 'try', 'while', 'with', 'yield'],
+            'c': ['auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do', 'double', 'else',
+                  'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long', 'register',
+                  'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef',
+                  'union', 'unsigned', 'void', 'volatile', 'while'],
+            'cpp': ['auto', 'bool', 'break', 'case', 'catch', 'char', 'class', 'const', 'constexpr',
+                    'continue', 'default', 'delete', 'double', 'else', 'enum', 'explicit', 'extern',
+                    'false', 'float', 'for', 'friend', 'if', 'inline', 'int', 'namespace', 'new',
+                    'nullptr', 'operator', 'private', 'protected', 'public', 'return', 'static',
+                    'struct', 'template', 'this', 'throw', 'true', 'try', 'typename', 'using', 'virtual',
+                    'void', 'while'],
+            'rust': ['as', 'break', 'const', 'continue', 'crate', 'else', 'enum', 'extern', 'false', 'fn',
+                     'for', 'if', 'impl', 'in', 'let', 'loop', 'match', 'mod', 'move', 'mut', 'pub',
+                     'ref', 'return', 'Self', 'self', 'static', 'struct', 'trait', 'true', 'type',
+                     'unsafe', 'use', 'where', 'while'],
+            'java': ['abstract', 'boolean', 'break', 'byte', 'case', 'catch', 'char', 'class', 'const',
+                     'continue', 'default', 'do', 'double', 'else', 'enum', 'extends', 'final', 'finally',
+                     'float', 'for', 'if', 'implements', 'import', 'int', 'interface', 'long', 'new',
+                     'null', 'package', 'private', 'protected', 'public', 'return', 'short', 'static',
+                     'super', 'switch', 'this', 'throw', 'throws', 'true', 'try', 'void', 'while'],
+            'javascript': ['async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
+                           'default', 'delete', 'else', 'export', 'extends', 'false', 'finally', 'for',
+                           'function', 'if', 'import', 'in', 'let', 'new', 'null', 'return', 'switch',
+                           'this', 'throw', 'true', 'try', 'typeof', 'var', 'while', 'yield'],
+            'html': ['body', 'button', 'class', 'div', 'form', 'head', 'header', 'html', 'id', 'img',
+                     'input', 'label', 'link', 'main', 'meta', 'script', 'section', 'span', 'style', 'title'],
+            'php': ['abstract', 'array', 'as', 'break', 'case', 'catch', 'class', 'const', 'continue',
+                    'echo', 'else', 'elseif', 'extends', 'false', 'final', 'for', 'foreach', 'function',
+                    'if', 'implements', 'include', 'interface', 'namespace', 'new', 'null', 'private',
+                    'protected', 'public', 'require', 'return', 'static', 'switch', 'this', 'throw',
+                    'trait', 'true', 'try', 'use', 'while'],
+            'xml': ['CDATA', 'encoding', 'version', 'xmlns'],
+            'sql': ['AND', 'AS', 'BY', 'CREATE', 'DELETE', 'DROP', 'FROM', 'GROUP', 'HAVING', 'INSERT',
+                    'INTO', 'JOIN', 'LEFT', 'LIKE', 'NOT', 'NULL', 'ON', 'OR', 'ORDER', 'RIGHT',
+                    'SELECT', 'SET', 'TABLE', 'UPDATE', 'VALUES', 'WHERE'],
+        }
+        return keyword_map.get(syntax_mode or '', [])
+
+    def get_autocomplete_prefix(self, text_widget):
+        try:
+            insert_index = text_widget.index(tk.INSERT)
+            line, _ = map(int, insert_index.split('.'))
+            before_cursor = text_widget.get(f"{line}.0", insert_index)
+        except tk.TclError:
+            return None, None
+
+        match = re.search(r'([A-Za-z_][A-Za-z0-9_]*)$', before_cursor)
+        if not match:
+            return None, None
+
+        prefix = match.group(1)
+        start_col = len(before_cursor) - len(prefix)
+        return prefix, f"{line}.{start_col}"
+
+    def get_autocomplete_source_text(self, doc):
+        text_widget = doc.get('text')
+        if not text_widget:
+            return ""
+        try:
+            total_chars = int(text_widget.count('1.0', 'end-1c', 'chars')[0])
+            if total_chars <= 250000:
+                return text_widget.get('1.0', 'end-1c')
+            current_line = int(text_widget.index(tk.INSERT).split('.')[0])
+            start_line = max(1, current_line - 500)
+            end_line = current_line + 500
+            return text_widget.get(f"{start_line}.0", f"{end_line}.end")
+        except tk.TclError:
+            return ""
+
+    def get_autocomplete_suggestions(self, doc, prefix):
+        if not prefix or not doc:
+            return []
+
+        mode = doc.get('syntax_mode') or self.get_syntax_mode(doc)
+        prefix_lower = prefix.lower()
+        candidates = {}
+
+        for keyword in self.get_autocomplete_keywords(mode):
+            if keyword.lower().startswith(prefix_lower) and keyword != prefix:
+                candidates[keyword] = True
+
+        for word in re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', self.get_autocomplete_source_text(doc)):
+            if word.lower().startswith(prefix_lower) and word != prefix:
+                candidates[word] = True
+
+        suggestions = sorted(
+            candidates.keys(),
+            key=lambda value: (
+                0 if value.startswith(prefix) else 1,
+                len(value),
+                value.lower()
+            )
+        )
+        return suggestions[:12]
+
+    def hide_autocomplete_popup(self):
+        popup = self.autocomplete_popup
+        if popup is not None:
+            try:
+                popup.destroy()
+            except tk.TclError:
+                pass
+        self.autocomplete_popup = None
+        self.autocomplete_listbox = None
+        self.autocomplete_target = None
+        self.autocomplete_target_doc = None
+        self.autocomplete_prefix_start = None
+
+    def move_autocomplete_selection(self, direction):
+        listbox = self.autocomplete_listbox
+        if listbox is None:
+            return
+        try:
+            size = listbox.size()
+            if size <= 0:
+                return
+            selection = listbox.curselection()
+            current_index = selection[0] if selection else 0
+            next_index = (current_index + direction) % size
+            listbox.selection_clear(0, tk.END)
+            listbox.selection_set(next_index)
+            listbox.activate(next_index)
+            listbox.see(next_index)
+        except tk.TclError:
+            pass
+
+    def position_autocomplete_popup(self):
+        popup = self.autocomplete_popup
+        target = self.autocomplete_target
+        if popup is None or target is None:
+            return
+        try:
+            bbox = target.bbox(tk.INSERT)
+            if bbox is None:
+                x = target.winfo_rootx() + 12
+                y = target.winfo_rooty() + 24
+            else:
+                x = target.winfo_rootx() + bbox[0]
+                y = target.winfo_rooty() + bbox[1] + bbox[3] + 2
+            popup.update_idletasks()
+            width = popup.winfo_reqwidth()
+            height = popup.winfo_reqheight()
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            x = min(max(8, x), max(8, screen_width - width - 8))
+            y = min(max(8, y), max(8, screen_height - height - 8))
+            popup.geometry(f"+{x}+{y}")
+        except tk.TclError:
+            self.hide_autocomplete_popup()
+
+    def show_autocomplete_popup(self, doc, suggestions, prefix_start):
+        text_widget = doc.get('text')
+        if not text_widget or not suggestions:
+            self.hide_autocomplete_popup()
+            return
+
+        if self.autocomplete_popup is None or not self.autocomplete_popup.winfo_exists():
+            popup = tk.Toplevel(self.root)
+            popup.wm_overrideredirect(True)
+            popup.configure(bg='#30363d')
+
+            listbox = tk.Listbox(
+                popup,
+                bg='#161b22',
+                fg=self.fg_color,
+                selectbackground=self.select_bg,
+                selectforeground='white',
+                activestyle='none',
+                relief='flat',
+                borderwidth=0,
+                highlightthickness=1,
+                highlightbackground='#30363d',
+                exportselection=False
+            )
+            listbox.pack(fill='both', expand=True)
+            listbox.bind('<ButtonRelease-1>', lambda e: self.accept_autocomplete_selection())
+            listbox.bind('<Double-Button-1>', lambda e: self.accept_autocomplete_selection())
+
+            self.autocomplete_popup = popup
+            self.autocomplete_listbox = listbox
+
+        self.autocomplete_target = text_widget
+        self.autocomplete_target_doc = doc
+        self.autocomplete_prefix_start = prefix_start
+
+        listbox = self.autocomplete_listbox
+        listbox.delete(0, tk.END)
+        for suggestion in suggestions:
+            listbox.insert(tk.END, suggestion)
+        if suggestions:
+            listbox.selection_set(0)
+            listbox.activate(0)
+            listbox.see(0)
+
+        self.position_autocomplete_popup()
+        self.autocomplete_popup.lift()
+
+    def accept_autocomplete_selection(self, event=None):
+        if not self.autocomplete_listbox or not self.autocomplete_target or not self.autocomplete_prefix_start:
+            return "break"
+        try:
+            selection = self.autocomplete_listbox.curselection()
+            if not selection:
+                return "break"
+            suggestion = self.autocomplete_listbox.get(selection[0])
+            target = self.autocomplete_target
+            target.delete(self.autocomplete_prefix_start, tk.INSERT)
+            target.insert(self.autocomplete_prefix_start, suggestion)
+            target.mark_set(tk.INSERT, f"{self.autocomplete_prefix_start}+{len(suggestion)}c")
+            target.see(tk.INSERT)
+            target.focus_set()
+            try:
+                target.edit_modified(True)
+            except tk.TclError:
+                pass
+            doc = self.autocomplete_target_doc
+            self.hide_autocomplete_popup()
+            if doc:
+                self.on_text_modified(doc['frame'])
+            else:
+                self.update_status()
+        except tk.TclError:
+            self.hide_autocomplete_popup()
+        return "break"
+
+    def update_autocomplete_for_doc(self, doc):
+        if not self.autocomplete_enabled.get():
+            self.hide_autocomplete_popup()
+            return
+        if not doc or self.get_current_doc() != doc:
+            self.hide_autocomplete_popup()
+            return
+        text_widget = doc.get('text')
+        if text_widget is None or self.root.focus_get() != text_widget:
+            self.hide_autocomplete_popup()
+            return
+
+        prefix, prefix_start = self.get_autocomplete_prefix(text_widget)
+        if not prefix:
+            self.hide_autocomplete_popup()
+            return
+
+        suggestions = self.get_autocomplete_suggestions(doc, prefix)
+        if not suggestions:
+            self.hide_autocomplete_popup()
+            return
+
+        self.show_autocomplete_popup(doc, suggestions, prefix_start)
 
     def on_text_mousewheel(self, event, tab_id):
         doc = self.documents.get(str(tab_id))
@@ -2377,6 +2678,7 @@ class NotepadX:
         doc = self.documents.get(str(tab_id))
         if not doc:
             return "break"
+        self.hide_autocomplete_popup()
 
         self.notebook.select(doc['frame'])
         self.set_active_document(doc['frame'])
@@ -2848,6 +3150,7 @@ class NotepadX:
         doc = self.documents.get(str(tab_id))
         if not doc:
             return
+        self.hide_autocomplete_popup()
 
         index = doc['text'].index(f"@{event.x},{event.y}")
         tags = doc['text'].tag_names(index)
@@ -3343,6 +3646,7 @@ class NotepadX:
             'sound_enabled': bool(self.sound_enabled.get()),
             'status_bar_enabled': bool(self.status_bar_enabled.get()),
             'numbered_lines_enabled': bool(self.numbered_lines_enabled.get()),
+            'autocomplete_enabled': bool(self.autocomplete_enabled.get()),
             'syntax_theme': self.syntax_theme.get(),
         }
 
@@ -3523,6 +3827,7 @@ class NotepadX:
         self.sound_enabled.set(bool(session.get('sound_enabled', True)))
         self.status_bar_enabled.set(bool(session.get('status_bar_enabled', True)))
         self.numbered_lines_enabled.set(bool(session.get('numbered_lines_enabled', True)))
+        self.autocomplete_enabled.set(bool(session.get('autocomplete_enabled', True)))
         self.syntax_theme.set(str(session.get('syntax_theme', 'Default')))
         if self.status_bar_enabled.get():
             self.status_frame.grid()
@@ -3626,6 +3931,7 @@ class NotepadX:
         self.update_status()
 
     def on_tab_changed(self, event=None):
+        self.hide_autocomplete_popup()
         for doc in self.documents.values():
             self.hide_note_popup(doc)
         self.set_active_document(self.notebook.select())
@@ -3833,6 +4139,7 @@ class NotepadX:
         view_menu.add_command(label="Switch Tab Right", command=self.switch_tab_right, accelerator="Ctrl+Right")
         view_menu.add_checkbutton(label="Status Bar", variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator="Ctrl+B")
         view_menu.add_checkbutton(label="Numbered Lines", variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
+        view_menu.add_checkbutton(label="Autocomplete", variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
         view_menu.add_checkbutton(label="Word Wrap", variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
         view_menu.add_checkbutton(label="Sound", variable=self.sound_enabled, command=self.toggle_sound)
         syntax_theme_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')

@@ -10,6 +10,7 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 - Recent files and `Open Project`
 - Drag-reorder tabs
 - GitHub-style line number gutter with click-to-copy line support
+- Local autocomplete popup with syntax keywords and current-document word matching
 - Live Find and Find/Replace
 - Optional `Search across all tabs`
 - Syntax highlighting for many source and config formats
@@ -27,6 +28,7 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 - Status bar with line info, memory usage, note sync state, editor ID, and live clock
 - Word Wrap, Sound toggle, Full Screen, zoom controls, font picker, printing
 - `View > Numbered Lines` toggle with saved preference
+- `View > Autocomplete` toggle with saved preference
 - Built-in Help viewer and About dialog
 
 ## Compare Mode
@@ -49,6 +51,19 @@ Notepad-X includes a GitHub-style line number gutter on the left side of the edi
 - the setting is remembered across launches
 - clicking a line number copies that whole line to the clipboard
 - a small in-window notification appears beside the clicked gutter line
+
+## Autocomplete
+
+Notepad-X includes a lightweight local autocomplete system for normal editable tabs.
+
+- enabled by default
+- `View > Autocomplete` hides or shows it
+- the setting is remembered across launches
+- suggestions combine syntax keywords with matching words from the current tab
+- the popup appears under the caret while typing
+- `Up` / `Down` move through suggestions
+- `Tab` or `Enter` accepts the selected suggestion
+- `Esc` closes the popup
 
 ## Code Notes
 
