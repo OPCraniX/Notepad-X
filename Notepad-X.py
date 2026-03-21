@@ -41,10 +41,10 @@ class NotepadX:
         self.splash_max_height = 645
         self.note_sound_path = self.resolve_audio_path("note.mp3")
         self.delete_note_sound_path = self.resolve_audio_path("delete_note.mp3")
+        self.window_icon_image = None
         
         # Try to set window icon
-        if os.path.exists(self.icon_path):
-            self.root.iconbitmap(self.icon_path)
+        self.apply_window_icon(self.root)
         
         self.root.geometry("1500x700")
         self.root.configure(bg='#1e1e1e')
@@ -232,6 +232,23 @@ class NotepadX:
         if getattr(sys, 'frozen', False):
             return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
         return os.path.dirname(__file__)
+
+    def apply_window_icon(self, window):
+        if window is None:
+            return
+        if os.name == 'nt' and os.path.exists(self.icon_path):
+            try:
+                window.iconbitmap(self.icon_path)
+                return
+            except tk.TclError:
+                pass
+        if os.path.exists(self.splash_path):
+            try:
+                self.window_icon_image = tk.PhotoImage(file=self.splash_path)
+                window.iconphoto(True, self.window_icon_image)
+                return
+            except tk.TclError:
+                pass
 
     def get_user_support_dir(self):
         base_dir = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
@@ -4960,12 +4977,7 @@ class NotepadX:
         dialog.transient(self.root)
         dialog.configure(bg=self.bg_color)
         dialog.geometry("900x650")
-
-        if os.path.exists(self.icon_path):
-            try:
-                dialog.iconbitmap(self.icon_path)
-            except tk.TclError:
-                pass
+        self.apply_window_icon(dialog)
 
         container = tk.Frame(dialog, bg=self.bg_color)
         container.pack(fill='both', expand=True, padx=12, pady=12)
@@ -5203,12 +5215,7 @@ class NotepadX:
         dialog.resizable(False, False)
         dialog.configure(bg=self.bg_color, padx=24, pady=20)
         dialog.pong_after_id = None
-
-        if os.path.exists(self.icon_path):
-            try:
-                dialog.iconbitmap(self.icon_path)
-            except tk.TclError:
-                pass
+        self.apply_window_icon(dialog)
 
         content = tk.Frame(dialog, bg=self.bg_color)
         content.pack()
