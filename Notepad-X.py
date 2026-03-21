@@ -103,6 +103,9 @@ class NotepadX:
         self.max_note_text_length = 4000
         self.max_note_name_length = 120
         self.max_note_reply_length = 1000
+        self.live_find_min_chars = 2
+        self.live_find_max_matches_per_widget = 1000
+        self.live_find_max_matches_typing = 150
         self.recent_files = []
         self.closed_session_files = set()
         self.note_sync_interval_ms = 2000
@@ -136,6 +139,7 @@ class NotepadX:
         self.syntax_theme = tk.StringVar(value='Default')
         self.syntax_mode_selection = tk.StringVar(value='auto')
         self.recovery_job = None
+        self.find_change_job = None
         self.compare_active = False
         self.compare_source_tab = None
         self.compare_refresh_job = None
@@ -1221,6 +1225,7 @@ class NotepadX:
             messagebox.showinfo("Large File Mode", "Find is not available in buffered large-file mode yet.", parent=self.root)
             return "break"
 
+        self.cancel_find_change_job()
         if self.replace_panel_visible:
             self.replace_frame.grid_remove()
             self.replace_panel_visible = False
@@ -1231,7 +1236,6 @@ class NotepadX:
             self.find_frame.grid(sticky='ew')
             self.find_panel_visible = True
             self.find_entry.focus_set()
-            self.on_find_entry_change()  # highlight if text already present
         else:
             self.find_frame.grid_remove()
             self.find_panel_visible = False
@@ -1249,6 +1253,7 @@ class NotepadX:
             messagebox.showinfo("Large File Mode", "Replace is not available in buffered large-file mode.", parent=self.root)
             return "break"
 
+        self.cancel_find_change_job()
         if self.find_panel_visible:
             self.find_frame.grid_remove()
             self.find_panel_visible = False
@@ -1474,6 +1479,7 @@ class NotepadX:
     def set_current_find_match(self, widget, pos, end):
         if widget is None:
             return
+        self.raise_find_tags(widget)
         self.clear_current_find_marker()
         widget.tag_remove('sel', '1.0', tk.END)
         widget.tag_add('sel', pos, end)
@@ -1498,13 +1504,21 @@ class NotepadX:
             return None
 
         start = start_index or widget.index(tk.INSERT)
-        pos = widget.search(query, start, stopindex=tk.END, nocase=True, exact=False)
-        if not pos and wrap:
-            pos = widget.search(query, '1.0', stopindex=start, nocase=True, exact=False)
+        start_offset = self.get_text_char_offset(widget, start)
+        try:
+            content = widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return None
+        matches = self.find_query_offsets(widget, query, start_offset=start_offset, max_matches=1, nocase=True)
+        if not matches and wrap:
+            matches = self.find_query_offsets(widget, query, start_offset=0, stop_offset=start_offset, max_matches=1, nocase=True)
+        pos = self.text_index_from_offset(widget, matches[0], content=content) if matches else None
         if not pos:
             return None
 
-        end = f"{pos}+{len(query)}c"
+        end = self.text_index_from_offset(widget, matches[0] + len(query), content=content)
+        if not end:
+            return None
         self.set_current_find_match(widget, pos, end)
         self.update_status()
         return pos, end
@@ -1556,9 +1570,22 @@ class NotepadX:
             self.set_active_document(doc['frame'])
             search_widget = doc['text']
             start = '1.0' if start_from_top else (search_widget.index(tk.INSERT) if first_pass and search_widget == start_widget else '1.0')
-            pos = search_widget.search(query, start, stopindex=tk.END, nocase=True, exact=False)
-            if pos:
-                end = f"{pos}+{len(query)}c"
+            start_offset = self.get_text_char_offset(search_widget, start)
+            try:
+                content = search_widget.get('1.0', 'end-1c')
+            except tk.TclError:
+                first_pass = False
+                continue
+            matches = self.find_query_offsets(search_widget, query, start_offset=start_offset, max_matches=1, nocase=True)
+            if matches:
+                pos = self.text_index_from_offset(search_widget, matches[0], content=content)
+                if not pos:
+                    first_pass = False
+                    continue
+                end = self.text_index_from_offset(search_widget, matches[0] + len(query), content=content)
+                if not end:
+                    first_pass = False
+                    continue
                 self.set_current_find_match(search_widget, pos, end)
                 return "break"
             first_pass = False
@@ -1754,25 +1781,38 @@ class NotepadX:
             except tk.TclError:
                 continue
 
-    def highlight_matches_in_widget(self, text_widget, query):
+    def highlight_matches_in_widget(self, text_widget, query, max_matches=None):
         try:
             if not text_widget or not text_widget.winfo_exists():
                 return
+            self.raise_find_tags(text_widget)
             text_widget.tag_remove(self.find_matches_tag, '1.0', tk.END)
             text_widget.tag_remove(self.find_current_tag, '1.0', tk.END)
         except tk.TclError:
             return
-        if not query:
+        if not query or len(query) < self.live_find_min_chars:
             return
-        start = "1.0"
-        while True:
+        max_allowed_matches = self.live_find_max_matches_per_widget if max_matches is None else max_matches
+        match_offsets = self.find_query_offsets(
+            text_widget,
+            query,
+            start_offset=0,
+            max_matches=max_allowed_matches,
+            nocase=True
+        )
+        try:
+            content = text_widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return
+        for offset in match_offsets:
             try:
-                pos = text_widget.search(query, start, stopindex=tk.END, nocase=True, exact=False)
+                pos = self.text_index_from_offset(text_widget, offset, content=content)
                 if not pos:
-                    break
-                end = f"{pos}+{len(query)}c"
+                    continue
+                end = self.text_index_from_offset(text_widget, offset + len(query), content=content)
+                if not end:
+                    continue
                 text_widget.tag_add(self.find_matches_tag, pos, end)
-                start = end
             except tk.TclError:
                 break
 
@@ -1787,10 +1827,124 @@ class NotepadX:
         compare_text.tag_add(self.find_current_tag, pos, end)
         compare_text.see(pos)
 
+    def get_text_char_offset(self, text_widget, index):
+        try:
+            return max(0, int(text_widget.count('1.0', index, 'chars')[0]))
+        except (tk.TclError, TypeError, ValueError, IndexError):
+            return 0
+
+    def text_index_from_offset(self, text_widget, offset, content=None):
+        try:
+            safe_offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            safe_offset = 0
+        try:
+            if content is None:
+                content = text_widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return None
+
+        content_length = len(content)
+        safe_offset = min(safe_offset, content_length)
+        line = content.count('\n', 0, safe_offset) + 1
+        last_newline = content.rfind('\n', 0, safe_offset)
+        column = safe_offset if last_newline < 0 else safe_offset - last_newline - 1
+        return f"{line}.{column}"
+
+    def find_query_offsets(self, text_widget, query, start_offset=0, stop_offset=None, max_matches=None, nocase=True):
+        try:
+            if not text_widget or not text_widget.winfo_exists() or not query:
+                return []
+            content = text_widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return []
+
+        content_length = len(content)
+        try:
+            search_start = max(0, min(int(start_offset), content_length))
+        except (TypeError, ValueError):
+            search_start = 0
+        if stop_offset is None:
+            search_stop = content_length
+        else:
+            try:
+                search_stop = max(search_start, min(int(stop_offset), content_length))
+            except (TypeError, ValueError):
+                search_stop = content_length
+
+        haystack = content.casefold() if nocase else content
+        needle = query.casefold() if nocase else query
+        if not needle:
+            return []
+
+        offsets = []
+        cursor = search_start
+        step = max(1, len(needle))
+        while cursor <= search_stop:
+            position = haystack.find(needle, cursor, search_stop)
+            if position < 0:
+                break
+            offsets.append(position)
+            if max_matches and len(offsets) >= max_matches:
+                break
+            cursor = position + step
+        return offsets
+
     def highlight_all_matches(self, query):
         widgets = self.get_find_target_widgets()
         for widget in widgets:
             self.highlight_matches_in_widget(widget, query)
+
+    def raise_find_tags(self, text_widget):
+        try:
+            if not text_widget or not text_widget.winfo_exists():
+                return
+            text_widget.tag_raise(self.find_matches_tag)
+            text_widget.tag_raise(self.find_current_tag, self.find_matches_tag)
+        except tk.TclError:
+            pass
+
+    def highlight_live_find_matches(self, query):
+        if not query:
+            self.clear_find_highlights()
+            return
+        if len(query) < self.live_find_min_chars:
+            return
+        target_widget = self.get_active_search_widget()
+        if target_widget is None:
+            return
+        self.clear_find_highlights()
+        self.highlight_matches_in_widget(
+            target_widget,
+            query,
+            max_matches=self.live_find_max_matches_typing
+        )
+
+    def cancel_find_change_job(self):
+        if self.find_change_job:
+            try:
+                self.root.after_cancel(self.find_change_job)
+            except tk.TclError:
+                pass
+            self.find_change_job = None
+
+    def apply_live_find_change(self):
+        self.find_change_job = None
+        try:
+            if self.find_panel_visible:
+                if not self.find_entry.winfo_exists():
+                    return
+                query = self.find_entry.get().strip()
+            elif self.replace_panel_visible:
+                if not self.replace_find_entry.winfo_exists():
+                    return
+                query = self.replace_find_entry.get().strip()
+            else:
+                return
+
+            self.highlight_live_find_matches(query)
+        except Exception as exc:
+            self.log_exception("live find change", exc)
 
     def on_find_entry_change(self, event=None):
         try:
@@ -1800,13 +1954,17 @@ class NotepadX:
                 query = self.replace_find_entry.get().strip()
             else:
                 return
+        except tk.TclError as exc:
+            self.log_exception("read live find query", exc)
+            return
 
-            self.highlight_all_matches(query)
-            if not query:
-                return
-            self.update_status()
-        except Exception as exc:
-            self.log_exception("live find change", exc)
+        self.cancel_find_change_job()
+        if query and len(query) < self.live_find_min_chars:
+            return
+        try:
+            self.find_change_job = self.root.after(30, self.apply_live_find_change)
+        except tk.TclError as exc:
+            self.log_exception("schedule live find change", exc)
 
     def replace_all(self):
         query = self.replace_find_entry.get().strip()
@@ -2568,6 +2726,7 @@ class NotepadX:
         self.compare_text.tag_config(self.find_matches_tag, background=self.match_bg, foreground='black')
         self.compare_text.tag_config(self.find_current_tag, background='#ff8c42', foreground='black')
         self.apply_syntax_tag_colors(self.compare_text)
+        self.raise_find_tags(self.compare_text)
 
         self.text = None
         self.create_tab()
@@ -2635,6 +2794,7 @@ class NotepadX:
         text.bind('<<Modified>>', lambda e, frame=tab_frame: self.on_text_modified(frame))
         text.tag_config(self.find_matches_tag, background=self.match_bg, foreground='black')
         text.tag_config(self.find_current_tag, background='#ff8c42', foreground='black')
+        self.raise_find_tags(text)
 
         if content:
             text.insert('1.0', content)
