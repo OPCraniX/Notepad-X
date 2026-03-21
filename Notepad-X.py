@@ -1904,6 +1904,20 @@ class NotepadX:
         else:
             self.delete_registry_tree(winreg.HKEY_CURRENT_USER, menu_key)
 
+    def is_edit_with_shell_registered(self):
+        if os.name != 'nt' or winreg is None:
+            return bool(self.edit_with_shell_enabled.get())
+        for extension in self.get_edit_with_shell_extensions():
+            menu_key = rf"Software\Classes\SystemFileAssociations\{extension}\shell\EditWithNotepadX"
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, menu_key, 0, winreg.KEY_READ):
+                    return True
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+        return False
+
     def notify_windows_shell_change(self):
         if os.name != 'nt' or not self.shell32:
             return
@@ -4504,14 +4518,6 @@ class NotepadX:
         if self.isolated_session:
             return
         session = self.get_session_state()
-        has_recent_files = bool(session.get('recent_files'))
-        if not session['open_files'] and not has_recent_files:
-            if os.path.exists(self.session_path):
-                try:
-                    os.remove(self.session_path)
-                except OSError:
-                    pass
-            return
 
         for attempt in range(2):
             try:
@@ -4548,7 +4554,8 @@ class NotepadX:
         self.numbered_lines_enabled.set(bool(session.get('numbered_lines_enabled', True)))
         self.autocomplete_enabled.set(bool(session.get('autocomplete_enabled', True)))
         self.sync_page_navigation_enabled.set(bool(session.get('sync_page_navigation_enabled', False)))
-        self.edit_with_shell_enabled.set(bool(session.get('edit_with_shell_enabled', False)))
+        saved_edit_with_shell = bool(session.get('edit_with_shell_enabled', False))
+        self.edit_with_shell_enabled.set(saved_edit_with_shell or self.is_edit_with_shell_registered())
         saved_font_size = session.get('current_font_size', self.base_font_size)
         try:
             self.current_font_size = max(self.min_font_size, min(self.max_font_size, int(saved_font_size)))
