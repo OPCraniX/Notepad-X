@@ -2198,6 +2198,15 @@ class NotepadX:
         }
         return keyword_sets.get(syntax_mode or '', [])
 
+    def text_has_selection(self, text_widget):
+        if not text_widget:
+            return False
+        try:
+            ranges = text_widget.tag_ranges('sel')
+            return len(ranges) >= 2 and str(ranges[0]) != str(ranges[1])
+        except tk.TclError:
+            return False
+
     def update_autocomplete_popup(self, doc):
         if not self.autocomplete_enabled.get() or not doc:
             self.hide_autocomplete_popup()
@@ -2208,6 +2217,9 @@ class NotepadX:
 
         text = doc.get('text')
         if not text or not text.winfo_exists():
+            self.hide_autocomplete_popup()
+            return
+        if self.text_has_selection(text):
             self.hide_autocomplete_popup()
             return
 
