@@ -28,6 +28,9 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 - `Find Next` and `F3` follow the active pane during compare mode
 - Autosave recovery for unsaved untitled tabs after a crash
 - Crash logging for important failures and unhandled exceptions
+- Conflict detection before saving if a file changed on disk
+- Atomic writes for notes, session, recovery, editor identity, and JSON exports
+- Safer handling of malformed, oversized, and binary-like files
 - Status bar with line info, memory usage, note sync state, editor ID, and live clock
 - Word Wrap, Sound toggle, Full Screen, zoom controls, font picker, printing
 - `View > Numbered Lines` toggle with saved preference
@@ -107,6 +110,20 @@ In large-file virtual mode:
 - editing is disabled
 - direct saving is disabled
 - `Save Copy As` is available for copying the source file elsewhere
+
+Notepad-X also treats binary-like files more cautiously:
+
+- binary-looking content is previewed as safe text instead of being treated like a normal editable text document
+- malformed or unusual encodings are opened with replacement instead of crashing the app
+
+## File Safety
+
+- normal saves use an atomic temp-file replace pattern
+- JSON support files and note sidecars are also written atomically
+- if a file changed on disk after it was opened, Notepad-X asks before overwriting it
+- recovery restores into tabs instead of overwriting user files directly
+- permissions errors are shown to the user instead of failing silently
+- shell and print integrations validate file paths before sending them to Windows
 
 ## Requirements
 

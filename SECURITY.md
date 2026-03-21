@@ -32,3 +32,19 @@ You can expect:
 - A fix or mitigation plan when appropriate
 
 Please allow reasonable time for review and remediation before any public disclosure.
+
+## Current Security Focus
+
+The current Notepad-X security model focuses on:
+
+- atomic file replacement for normal saves
+- atomic writes for session, recovery, editor identity, note sidecars, and JSON note exports
+- validation and sanitization of local support files before trusting them
+- safer handling of malformed, oversized, unusual-encoding, and binary-like files
+- conflict detection before overwriting files that changed on disk
+- text-only file handling with no automatic execution of scripts or markup
+- non-destructive recovery that restores content into tabs instead of overwriting user files
+- user-visible permission and filesystem errors
+- stale editor cleanup for shared note tracking
+
+Notepad-X is a local desktop text editor and is not intended to provide anti-tamper, DRM, sandboxing, or high-assurance runtime integrity protection.

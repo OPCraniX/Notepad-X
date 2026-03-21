@@ -101,9 +101,12 @@ Opening Files
 Saving and Save Safety
 - Normal saves use an atomic temp-file replacement pattern. Notepad-X writes a temporary file first and then replaces the original file.
 - This reduces the chance of partial writes if a save is interrupted.
+- Notepad-X flushes save files before replacing the original so the replacement file is fully written first.
 - Save all keeps you on your original tab when it finishes.
+- If a file changed on disk after it was opened, Notepad-X warns before overwriting the newer disk version.
 - Very large virtual-mode files are intentionally read-only and cannot be directly saved from that mode.
 - Save Copy As is the supported way to create a second copy of a very large read-only tab.
+- Session files, recovery files, editor identity files, note sidecars, and JSON note exports also use atomic writes.
 
 Find and Replace
 - Find highlights matches live while you type.
@@ -165,6 +168,7 @@ Syntax Highlighting
 Large Files
 - Notepad-X uses safer handling for large files so the Tk text widget does not try to hold extremely large content all at once.
 - Large files reduce expensive features such as undo depth and syntax work.
+- Binary-like files are treated more cautiously and can be opened in a safer preview-style mode instead of being treated as normal editable text.
 - Very large files can enter virtual buffered mode instead of loading the full file into the editor.
 - Virtual mode indexes the file and loads only a moving line window around your current location.
 - In virtual mode:
@@ -223,6 +227,7 @@ Shared Notes and Collaboration
   timestamps
   editor-tracking information
 - Notepad-X validates and sanitizes note payloads when reading the sidecar so malformed entries are ignored instead of blindly trusted.
+- Shared editor tracking includes stale-editor cleanup so dead editor entries eventually age out instead of lingering forever.
 - The sync system polls for sidecar changes and reloads notes when another editor updates them.
 - The status bar shows Notes Synced, unread count, and how many editors are currently tracked on that file.
 - In compare mode, the compared file also shows its own status readout aligned on the right side of the bottom bar.
@@ -257,6 +262,7 @@ Session Restore and Recovery
 - Sound, status bar, numbered lines, and syntax theme settings are also restored from the session file.
 - Unsaved untitled tabs are not part of normal session restore, but they can be recovered after a crash through the recovery system.
 - If Notepad-X finds recovery data from a previous crash, it asks whether you want to restore the unsaved tabs.
+- Recovery restores unsaved content back into tabs and never overwrites real user files directly.
 
 Crash Logging
 - Important failure paths write to a crash log in the app folder.
@@ -271,6 +277,7 @@ Support Files
   Notepad-X.recovery.json
   Notepad-X.crash.log
   per-file *.notepadx.notes.json sidecars
+- Notepad-X validates these files before trusting their contents and ignores malformed entries when possible.
 
 Zoom
 - Ctrl+Mouse Wheel zooms in and out.
@@ -281,6 +288,7 @@ Zoom
 Printing
 - Print uses the Windows file print action on the saved file path.
 - If the current tab has never been saved, Notepad-X prompts you to save it first.
+- File paths are validated before Notepad-X hands them off to Windows print integration.
 
 Help Viewer
 - Help Contents opens this file in a scrollable built-in text viewer.

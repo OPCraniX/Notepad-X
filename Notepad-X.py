@@ -15,6 +15,7 @@ import traceback
 import time
 from datetime import datetime
 from ctypes import wintypes
+
 try:
     import winreg
 except ImportError:
@@ -88,6 +89,12 @@ class NotepadX:
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
         self.help_path = os.path.join(self.resource_dir, "Notepad-X-help.txt")
         self.max_recent_files = 10
+        self.max_session_files = 100
+        self.max_recovery_tabs = 20
+        self.shared_editor_stale_seconds = 30
+        self.max_note_text_length = 4000
+        self.max_note_name_length = 120
+        self.max_note_reply_length = 1000
         self.recent_files = []
         self.closed_session_files = set()
         self.note_sync_interval_ms = 2000
@@ -286,6 +293,201 @@ class NotepadX:
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
 
+    def utc_timestamp(self):
+        return datetime.utcnow().isoformat(timespec='seconds')
+
+    def trim_text(self, value, max_length):
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return text[:max_length]
+
+    def parse_iso_datetime(self, value):
+        if not isinstance(value, str):
+            return None
+        try:
+            return datetime.fromisoformat(value.strip())
+        except ValueError:
+            return None
+
+    def read_json_file(self, file_path, context_name, default):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            self.log_exception(context_name, exc)
+            return default
+        return payload
+
+    def write_json_atomically(self, file_path, payload, prefix, context_name):
+        directory = os.path.dirname(file_path) or '.'
+        os.makedirs(directory, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=directory)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
+                json.dump(payload, temp_file, indent=2)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            os.replace(temp_path, file_path)
+            return True
+        except OSError as exc:
+            self.log_exception(context_name, exc)
+            return False
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def get_file_signature(self, file_path):
+        try:
+            stat = os.stat(file_path)
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def update_doc_file_signature(self, doc):
+        file_path = doc.get('file_path') if doc else None
+        signature = self.get_file_signature(file_path) if file_path else None
+        if doc is not None:
+            doc['file_signature'] = signature
+        return signature
+
+    def confirm_external_file_change(self, doc):
+        file_path = doc.get('file_path') if doc else None
+        if not file_path or not os.path.exists(file_path):
+            return True
+        current_signature = self.get_file_signature(file_path)
+        known_signature = doc.get('file_signature')
+        if known_signature is None or current_signature is None or current_signature == known_signature:
+            return True
+        answer = messagebox.askyesno(
+            "File Changed on Disk",
+            "This file changed on disk after it was opened.\n\n"
+            "Overwrite the newer disk version with your current editor contents?",
+            parent=self.root
+        )
+        if answer:
+            return True
+        refreshed = messagebox.askyesno(
+            "Reload File",
+            "Do you want Notepad-X to reload the file from disk instead?",
+            parent=self.root
+        )
+        if refreshed:
+            self.load_content_into_doc(doc, file_path)
+            self.set_active_document(doc['frame'])
+        return False
+
+    def path_looks_safe_for_shell(self, file_path):
+        if not isinstance(file_path, str) or not file_path.strip():
+            return False
+        file_path = os.path.abspath(file_path)
+        if any(char in file_path for char in '\r\n'):
+            return False
+        return True
+
+    def show_filesystem_error(self, title, file_path, exc):
+        location = os.path.abspath(file_path) if file_path else "that path"
+        messagebox.showerror(title, f"Notepad-X could not access:\n{location}\n\n{exc}", parent=self.root)
+
+    def is_probably_binary_file(self, file_path, sample_size=8192):
+        try:
+            with open(file_path, 'rb') as f:
+                sample = f.read(sample_size)
+        except OSError:
+            return False
+        if not sample:
+            return False
+        if b'\x00' in sample:
+            return True
+        text_bytes = b'\t\n\r\b\f' + bytes(range(32, 127))
+        non_text = sum(byte not in text_bytes for byte in sample)
+        return (non_text / max(1, len(sample))) > 0.30
+
+    def sanitize_session_payload(self, session):
+        if not isinstance(session, dict):
+            return None
+        open_files = []
+        for path in session.get('open_files', []):
+            if isinstance(path, str) and os.path.exists(path):
+                open_files.append(path)
+        open_files = list(dict.fromkeys(open_files))[:self.max_session_files]
+
+        recent_files = []
+        for path in session.get('recent_files', []):
+            if isinstance(path, str) and os.path.exists(path):
+                recent_files.append(path)
+        recent_files = list(dict.fromkeys(recent_files))[:self.max_recent_files]
+
+        closed_files = []
+        for path in session.get('closed_session_files', []):
+            if isinstance(path, str):
+                closed_files.append(path)
+
+        selected_file = session.get('selected_file')
+        if not isinstance(selected_file, str) or selected_file not in open_files:
+            selected_file = None
+
+        compare_file = session.get('compare_file')
+        if not isinstance(compare_file, str) or compare_file not in open_files:
+            compare_file = None
+
+        syntax_theme = str(session.get('syntax_theme', 'Default'))
+        if syntax_theme not in {'Default', 'Soft', 'Vivid'}:
+            syntax_theme = 'Default'
+
+        try:
+            current_font_size = int(session.get('current_font_size', self.base_font_size))
+        except (TypeError, ValueError):
+            current_font_size = self.base_font_size
+        current_font_size = max(self.min_font_size, min(self.max_font_size, current_font_size))
+
+        return {
+            'open_files': open_files,
+            'selected_file': selected_file,
+            'recent_files': recent_files,
+            'closed_session_files': closed_files,
+            'sound_enabled': bool(session.get('sound_enabled', True)),
+            'status_bar_enabled': bool(session.get('status_bar_enabled', True)),
+            'numbered_lines_enabled': bool(session.get('numbered_lines_enabled', True)),
+            'autocomplete_enabled': bool(session.get('autocomplete_enabled', True)),
+            'sync_page_navigation_enabled': bool(session.get('sync_page_navigation_enabled', False)),
+            'edit_with_shell_enabled': bool(session.get('edit_with_shell_enabled', False)),
+            'current_font_size': current_font_size,
+            'syntax_theme': syntax_theme,
+            'compare_file': compare_file,
+        }
+
+    def sanitize_recovery_payload(self, recovery):
+        if not isinstance(recovery, dict):
+            return None
+        unsaved_tabs = []
+        for tab in recovery.get('unsaved_tabs', []):
+            if not isinstance(tab, dict):
+                continue
+            untitled_name = self.trim_text(tab.get('untitled_name'), 120) or self.next_untitled_name()
+            content = tab.get('content', '')
+            if not isinstance(content, str):
+                content = str(content)
+            unsaved_tabs.append({
+                'untitled_name': untitled_name,
+                'content': content,
+                'modified': bool(tab.get('modified', True))
+            })
+            if len(unsaved_tabs) >= self.max_recovery_tabs:
+                break
+        selected_untitled = self.trim_text(recovery.get('selected_untitled'), 120)
+        timestamp = self.trim_text(recovery.get('timestamp'), 64)
+        return {
+            'unsaved_tabs': unsaved_tabs,
+            'selected_untitled': selected_untitled,
+            'timestamp': timestamp,
+        }
+
     def resolve_gfx_path(self, filename):
         base_dir = self.resource_dir
         candidates = [
@@ -377,19 +579,16 @@ class NotepadX:
         tk.Tk.report_callback_exception = staticmethod(tk_exception_handler)
 
     def load_known_editor_ids(self):
-        try:
-            if os.path.exists(self.editor_identity_path):
-                with open(self.editor_identity_path, 'r', encoding='utf-8') as f:
-                    identity = json.load(f)
-                if isinstance(identity, dict):
-                    known_ids = identity.get('known_editor_ids', [])
-                    if isinstance(known_ids, list):
-                        return [str(editor_id).strip() for editor_id in known_ids if str(editor_id).strip()]
-                    legacy_id = str(identity.get('editor_id', '')).strip()
-                    if legacy_id:
-                        return [legacy_id]
-        except (OSError, json.JSONDecodeError, AttributeError):
-            pass
+        if not os.path.exists(self.editor_identity_path):
+            return []
+        identity = self.read_json_file(self.editor_identity_path, "load editor identity", {})
+        if isinstance(identity, dict):
+            known_ids = identity.get('known_editor_ids', [])
+            if isinstance(known_ids, list):
+                return [str(editor_id).strip() for editor_id in known_ids if str(editor_id).strip()]
+            legacy_id = str(identity.get('editor_id', '')).strip()
+            if legacy_id:
+                return [legacy_id]
         return []
 
     def generate_editor_id(self):
@@ -400,13 +599,17 @@ class NotepadX:
         known_ids = list(dict.fromkeys(self.known_editor_ids + [self.editor_id]))[-32:]
         for attempt in range(3):
             try:
-                os.makedirs(os.path.dirname(self.editor_identity_path), exist_ok=True)
-                with open(self.editor_identity_path, 'w', encoding='utf-8') as f:
-                    json.dump({
+                if self.write_json_atomically(
+                    self.editor_identity_path,
+                    {
                         'editor_id': self.editor_id,
                         'known_editor_ids': known_ids
-                    }, f, indent=2)
-                return
+                    },
+                    'notepadx-editor-',
+                    'persist editor identity'
+                ):
+                    return
+                raise PermissionError(self.editor_identity_path)
             except PermissionError as exc:
                 if attempt == 0:
                     self.move_support_paths_to_user_dir()
@@ -1663,9 +1866,13 @@ class NotepadX:
     def get_windows_open_command(self):
         if getattr(sys, 'frozen', False):
             executable_path = os.path.abspath(sys.executable)
+            if not self.path_looks_safe_for_shell(executable_path):
+                raise OSError("Unsafe executable path for Windows shell integration.")
             return f'"{executable_path}" "%1"'
         interpreter_path = os.path.abspath(sys.executable)
         script_path = os.path.abspath(__file__)
+        if not self.path_looks_safe_for_shell(interpreter_path) or not self.path_looks_safe_for_shell(script_path):
+            raise OSError("Unsafe interpreter or script path for Windows shell integration.")
         return f'"{interpreter_path}" "{script_path}" "%1"'
 
     def delete_registry_tree(self, root, subkey_path):
@@ -1687,6 +1894,8 @@ class NotepadX:
         menu_key = rf"Software\Classes\SystemFileAssociations\{extension}\shell\EditWithNotepadX"
         if enabled:
             icon_source = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else self.icon_path)
+            if not self.path_looks_safe_for_shell(icon_source):
+                raise OSError("Unsafe icon path for Windows shell integration.")
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, menu_key) as key:
                 winreg.SetValueEx(key, 'MUIVerb', 0, winreg.REG_SZ, 'Edit with Notepad-X')
                 winreg.SetValueEx(key, 'Icon', 0, winreg.REG_SZ, icon_source)
@@ -2216,6 +2425,7 @@ class NotepadX:
             'last_insert_index': '1.0',
             'last_yview': 0.0,
             'last_xview': 0.0,
+            'file_signature': None,
         }
         self.apply_syntax_tag_colors(text)
         self.configure_syntax_highlighting(tab_frame)
@@ -2912,7 +3122,7 @@ class NotepadX:
         if not doc:
             return
 
-        if not doc.get('virtual_mode'):
+        if not doc.get('virtual_mode') and not doc.get('preview_mode'):
             if self.autocomplete_popup_visible() and self.autocomplete_doc_id == str(tab_id):
                 if event.keysym == 'Up':
                     return self.move_autocomplete_selection(-1)
@@ -3402,37 +3612,39 @@ class NotepadX:
             note_rows.append(row)
         try:
             if output_path.lower().endswith('.md'):
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write(f"# Notes Export for {self.get_doc_name(doc['frame'])}\n\n")
-                    for row in note_rows:
-                        f.write(f"## Note {row['id']}\n\n")
-                        f.write(f"- Range: `{row['selection_start']}` to `{row['selection_end']}`\n")
-                        if row['author']:
-                            f.write(f"- Author: {row['author']}\n")
-                        if row['created_at']:
-                            f.write(f"- Created: {row['created_at']}\n")
-                        if row['allowed_by']:
-                            f.write(f"- Allowed by: {row['allowed_by']}\n")
-                        if row['denied_by']:
-                            f.write(f"- Denied by: {row['denied_by']}\n")
-                        f.write("\n### Selected Text\n\n```\n")
-                        f.write(row['selected_text'])
-                        f.write("\n```\n\n### Code Note\n\n")
-                        f.write(row['note'] or '')
-                        if row['allowed_note']:
-                            f.write("\n\n### Allow Reply\n\n")
-                            f.write(row['allowed_note'])
-                        if row['denied_note']:
-                            f.write("\n\n### Deny Reply\n\n")
-                            f.write(row['denied_note'])
-                        f.write("\n\n")
+                markdown_parts = [f"# Notes Export for {self.get_doc_name(doc['frame'])}\n"]
+                for row in note_rows:
+                    markdown_parts.append(f"\n## Note {row['id']}\n")
+                    markdown_parts.append(f"\n- Range: `{row['selection_start']}` to `{row['selection_end']}`\n")
+                    if row['author']:
+                        markdown_parts.append(f"- Author: {row['author']}\n")
+                    if row['created_at']:
+                        markdown_parts.append(f"- Created: {row['created_at']}\n")
+                    if row['allowed_by']:
+                        markdown_parts.append(f"- Allowed by: {row['allowed_by']}\n")
+                    if row['denied_by']:
+                        markdown_parts.append(f"- Denied by: {row['denied_by']}\n")
+                    markdown_parts.append("\n### Selected Text\n\n```\n")
+                    markdown_parts.append(row['selected_text'])
+                    markdown_parts.append("\n```\n\n### Code Note\n\n")
+                    markdown_parts.append(row['note'] or '')
+                    if row['allowed_note']:
+                        markdown_parts.append("\n\n### Allow Reply\n\n")
+                        markdown_parts.append(row['allowed_note'])
+                    if row['denied_note']:
+                        markdown_parts.append("\n\n### Deny Reply\n\n")
+                        markdown_parts.append(row['denied_note'])
+                    markdown_parts.append("\n")
+                self.write_file_atomically(output_path, ''.join(markdown_parts))
             else:
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    json.dump(note_rows, f, indent=2)
+                if not self.write_json_atomically(output_path, note_rows, 'notepadx-export-', 'export notes report'):
+                    raise OSError(output_path)
             messagebox.showinfo("Export Notes", f"Notes exported to:\n{output_path}", parent=self.root)
+        except PermissionError as exc:
+            self.show_filesystem_error("Export Notes", output_path, exc)
         except OSError as exc:
             self.log_exception("export notes report", exc)
-            messagebox.showerror("Export Notes", str(exc), parent=self.root)
+            self.show_filesystem_error("Export Notes", output_path, exc)
         return "break"
 
     def add_note_to_selection(self, tab_id=None, event=None):
@@ -3455,7 +3667,7 @@ class NotepadX:
         author_name = self.prompt_note_input("Add Note", "Author:", initialvalue=suggested_author, parent=self.root)
         if author_name is None:
             return "break"
-        author_name = author_name.strip()
+        author_name = self.trim_text(author_name, self.max_note_name_length)
         if not author_name:
             messagebox.showinfo("Add Note", "Enter an author name first.", parent=self.root)
             return "break"
@@ -3464,9 +3676,9 @@ class NotepadX:
         if not note_input:
             return "break"
 
-        note_text = note_input.strip()
+        note_text = self.trim_text(note_input, self.max_note_text_length)
         if note_text.lower().startswith("# note:"):
-            note_text = note_text[7:].strip()
+            note_text = self.trim_text(note_text[7:], self.max_note_text_length)
         if not note_text:
             return "break"
 
@@ -3508,19 +3720,26 @@ class NotepadX:
             editor_text = str(editor_id).strip()
             if editor_text and editor_text not in normalized_read_by:
                 normalized_read_by.append(editor_text)
+        safe_note_text = self.trim_text(note_text, self.max_note_text_length)
+        safe_approved_by = self.trim_text(approved_by, self.max_note_name_length)
+        safe_denied_by = self.trim_text(dissapproved_by, self.max_note_name_length)
+        safe_author_id = self.trim_text(author_id, 128)
+        safe_author_label = self.trim_text(author_label, self.max_note_name_length)
+        safe_anchor_text = anchor_text if anchor_text is not None else doc['text'].get(start, end)
+        safe_anchor_text = str(safe_anchor_text)[:self.max_note_text_length]
         doc['notes'][note_tag] = {
             'id': str(note_id),
-            'text': note_text,
-            'approved_by': approved_by,
-            'dissapproved_by': dissapproved_by,
+            'text': safe_note_text,
+            'approved_by': safe_approved_by,
+            'dissapproved_by': safe_denied_by,
             'approved_note': None,
             'dissapproved_note': None,
-            'author_id': str(author_id).strip() if author_id else None,
-            'author_label': str(author_label).strip() if author_label else None,
-            'read_by': normalized_read_by,
+            'author_id': safe_author_id,
+            'author_label': safe_author_label,
+            'read_by': normalized_read_by[:64],
             'author_unread': bool(author_unread),
-            'created_at': created_at or datetime.now().isoformat(timespec='seconds'),
-            'anchor_text': anchor_text if anchor_text is not None else doc['text'].get(start, end),
+            'created_at': created_at or self.utc_timestamp(),
+            'anchor_text': safe_anchor_text,
             'anchor_line': anchor_line if anchor_line is not None else int(str(start).split('.')[0]),
         }
         self.apply_note_tag(doc, note_tag, start, end)
@@ -3558,9 +3777,9 @@ class NotepadX:
         if not note_data:
             return "break"
 
-        note_data['approved_by'] = approver.strip()
+        note_data['approved_by'] = self.trim_text(approver, self.max_note_name_length)
         note_data['dissapproved_by'] = None
-        note_data['approved_note'] = review_note.strip()
+        note_data['approved_note'] = self.trim_text(review_note, self.max_note_reply_length)
         note_data['dissapproved_note'] = None
         if note_data.get('author_id') and note_data.get('author_id') not in self.editor_aliases:
             note_data['author_unread'] = True
@@ -3593,9 +3812,9 @@ class NotepadX:
         if not note_data:
             return "break"
 
-        note_data['dissapproved_by'] = reviewer.strip()
+        note_data['dissapproved_by'] = self.trim_text(reviewer, self.max_note_name_length)
         note_data['approved_by'] = None
-        note_data['dissapproved_note'] = review_note.strip()
+        note_data['dissapproved_note'] = self.trim_text(review_note, self.max_note_reply_length)
         note_data['approved_note'] = None
         if note_data.get('author_id') and note_data.get('author_id') not in self.editor_aliases:
             note_data['author_unread'] = True
@@ -3713,7 +3932,8 @@ class NotepadX:
                 pid = int(pid)
             if not isinstance(pid, int) or pid <= 0:
                 pid = None
-            sanitized.append({'id': editor_id, 'label': label, 'pid': pid})
+            last_seen = self.normalize_optional_metadata(entry.get('last_seen'))
+            sanitized.append({'id': editor_id, 'label': label, 'pid': pid, 'last_seen': last_seen})
             seen_ids.add(editor_id)
         return sanitized
 
@@ -3729,10 +3949,14 @@ class NotepadX:
         return True
 
     def prune_inactive_shared_editors(self, editors):
-        return [
-            entry for entry in self.sanitize_shared_editors(editors)
-            if self.is_editor_process_alive(entry.get('pid'))
-        ]
+        now = datetime.utcnow()
+        active_editors = []
+        for entry in self.sanitize_shared_editors(editors):
+            last_seen = self.parse_iso_datetime(entry.get('last_seen'))
+            last_seen_recent = bool(last_seen and abs((now - last_seen).total_seconds()) <= self.shared_editor_stale_seconds)
+            if self.is_editor_process_alive(entry.get('pid')) or last_seen_recent:
+                active_editors.append(entry)
+        return active_editors
 
     def allocate_editor_label(self, editors):
         used_numbers = set()
@@ -3750,6 +3974,33 @@ class NotepadX:
     def get_doc_editor_label(self, doc):
         return doc.get('note_editor_label') or 'Notepad-X'
 
+    def refresh_doc_shared_editor_state(self, doc, force_write=False):
+        if not doc or not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+            return
+        sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
+        payload = self.load_shared_notes(sidecar_path)
+        editors = self.sanitize_shared_editors(payload.get('editors', []))
+        current_timestamp = self.utc_timestamp()
+        existing_editor = next((entry for entry in editors if entry.get('id') == self.editor_id), None)
+        if existing_editor is None:
+            existing_editor = {
+                'id': self.editor_id,
+                'label': self.allocate_editor_label(editors),
+                'pid': os.getpid(),
+                'last_seen': current_timestamp
+            }
+            editors.append(existing_editor)
+            force_write = True
+        else:
+            existing_editor['pid'] = os.getpid()
+            existing_editor['last_seen'] = current_timestamp
+        doc['note_editors'] = editors
+        doc['note_editor_label'] = existing_editor.get('label')
+        doc['note_active_editors'] = len(editors)
+        self.write_shared_notes(sidecar_path, payload.get('notes', []), len(editors), editors)
+        doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+        doc['note_sync_mtime'] = os.path.getmtime(sidecar_path) if os.path.exists(sidecar_path) else None
+
     def export_doc_notes(self, doc):
         exported = []
         for note_tag, note_data in doc['notes'].items():
@@ -3766,10 +4017,10 @@ class NotepadX:
                     'dissapproved_note': note_data.get('dissapproved_note'),
                     'author_id': note_data.get('author_id'),
                     'author_label': note_data.get('author_label'),
-                    'read_by': [str(editor_id) for editor_id in note_data.get('read_by', []) if str(editor_id).strip()],
+                    'read_by': [str(editor_id).strip()[:128] for editor_id in note_data.get('read_by', []) if str(editor_id).strip()][:64],
                     'author_unread': bool(note_data.get('author_unread')),
                     'created_at': note_data.get('created_at'),
-                    'anchor_text': note_data.get('anchor_text'),
+                    'anchor_text': (note_data.get('anchor_text') or '')[:self.max_note_text_length],
                     'anchor_line': note_data.get('anchor_line'),
                 })
         return exported
@@ -3787,7 +4038,7 @@ class NotepadX:
     def sanitize_note_payload(self, saved_note):
         if not isinstance(saved_note, dict):
             return None
-        note_text = str(saved_note.get('text', '')).strip()
+        note_text = self.trim_text(saved_note.get('text', ''), self.max_note_text_length)
         start = str(saved_note.get('start', '')).strip()
         end = str(saved_note.get('end', '')).strip()
         note_id = str(saved_note.get('id', '')).strip()
@@ -3806,16 +4057,16 @@ class NotepadX:
             'start': start,
             'end': end,
             'text': note_text,
-            'approved_by': self.normalize_optional_metadata(saved_note.get('approved_by')),
-            'dissapproved_by': self.normalize_optional_metadata(saved_note.get('dissapproved_by')),
-            'approved_note': self.normalize_optional_metadata(saved_note.get('approved_note')),
-            'dissapproved_note': self.normalize_optional_metadata(saved_note.get('dissapproved_note')),
-            'author_id': self.normalize_optional_metadata(saved_note.get('author_id')),
-            'author_label': self.normalize_optional_metadata(saved_note.get('author_label')),
-            'read_by': [str(editor_id).strip() for editor_id in read_by if str(editor_id).strip()],
+            'approved_by': self.trim_text(self.normalize_optional_metadata(saved_note.get('approved_by')), self.max_note_name_length),
+            'dissapproved_by': self.trim_text(self.normalize_optional_metadata(saved_note.get('dissapproved_by')), self.max_note_name_length),
+            'approved_note': self.trim_text(self.normalize_optional_metadata(saved_note.get('approved_note')), self.max_note_reply_length),
+            'dissapproved_note': self.trim_text(self.normalize_optional_metadata(saved_note.get('dissapproved_note')), self.max_note_reply_length),
+            'author_id': self.trim_text(self.normalize_optional_metadata(saved_note.get('author_id')), 128),
+            'author_label': self.trim_text(self.normalize_optional_metadata(saved_note.get('author_label')), self.max_note_name_length),
+            'read_by': [str(editor_id).strip()[:128] for editor_id in read_by if str(editor_id).strip()][:64],
             'author_unread': bool(saved_note.get('author_unread', False)),
             'created_at': self.normalize_optional_metadata(saved_note.get('created_at')),
-            'anchor_text': str(saved_note.get('anchor_text', '')),
+            'anchor_text': str(saved_note.get('anchor_text', ''))[:self.max_note_text_length],
             'anchor_line': anchor_line,
         }
 
@@ -3864,33 +4115,21 @@ class NotepadX:
         self.hide_note_popup(doc)
 
     def write_shared_notes(self, sidecar_path, notes_payload, active_editors=0, editors=None):
-        os.makedirs(os.path.dirname(sidecar_path), exist_ok=True)
-        fd, temp_path = tempfile.mkstemp(prefix='notepadx-notes-', suffix='.tmp', dir=os.path.dirname(sidecar_path))
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
-                sanitized_editors = self.prune_inactive_shared_editors(editors)
-                json.dump({
-                    'active_editors': len(sanitized_editors),
-                    'editors': sanitized_editors,
-                    'notes': notes_payload
-                }, temp_file, indent=2)
-            os.replace(temp_path, sidecar_path)
-            self.hide_support_file(sidecar_path)
-        finally:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
+        sanitized_editors = self.prune_inactive_shared_editors(editors)
+        payload = {
+            'active_editors': len(sanitized_editors),
+            'editors': sanitized_editors,
+            'notes': notes_payload if isinstance(notes_payload, list) else []
+        }
+        if not self.write_json_atomically(sidecar_path, payload, 'notepadx-notes-', 'write shared notes'):
+            raise OSError(f"Could not write note sidecar: {sidecar_path}")
+        self.hide_support_file(sidecar_path)
 
     def load_shared_notes(self, sidecar_path):
         if not os.path.exists(sidecar_path):
             return {'active_editors': 0, 'editors': [], 'notes': []}
-        try:
-            with open(sidecar_path, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            self.log_exception("load shared notes", exc)
+        payload = self.read_json_file(sidecar_path, "load shared notes", {'active_editors': 0, 'editors': [], 'notes': []})
+        if not isinstance(payload, dict):
             return {'active_editors': 0, 'editors': [], 'notes': []}
         notes = payload.get('notes', [])
         editors = self.prune_inactive_shared_editors(payload.get('editors', []))
@@ -3926,8 +4165,11 @@ class NotepadX:
                 self.write_shared_notes(sidecar_path, exported, doc.get('note_active_editors', 0), doc.get('note_editors', []))
                 doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
                 doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
-        except OSError:
-            pass
+        except PermissionError as exc:
+            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+        except OSError as exc:
+            self.log_exception("persist doc notes", exc)
+            self.show_filesystem_error("Code Notes", sidecar_path, exc)
         self.save_session()
 
     def restore_doc_notes(self, doc):
@@ -3995,28 +4237,12 @@ class NotepadX:
             return
 
         sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
-        payload = self.load_shared_notes(sidecar_path)
-        editors = self.sanitize_shared_editors(payload.get('editors', []))
-        existing_editor = next((entry for entry in editors if entry.get('id') == self.editor_id), None)
-        if existing_editor is None:
-            existing_editor = {
-                'id': self.editor_id,
-                'label': self.allocate_editor_label(editors),
-                'pid': os.getpid()
-            }
-            editors.append(existing_editor)
-        else:
-            existing_editor['pid'] = os.getpid()
-        doc['note_editors'] = editors
-        doc['note_editor_label'] = existing_editor.get('label')
-        doc['note_active_editors'] = len(editors)
         doc['notes_registered'] = True
         try:
-            self.write_shared_notes(sidecar_path, payload.get('notes', []), doc['note_active_editors'], editors)
-            doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
-            doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
-        except OSError:
+            self.refresh_doc_shared_editor_state(doc, force_write=True)
+        except OSError as exc:
             doc['notes_registered'] = False
+            self.log_exception("register doc for shared notes", exc)
         self.update_status()
 
     def unregister_doc_from_shared_notes(self, doc):
@@ -4038,8 +4264,8 @@ class NotepadX:
             self.write_shared_notes(sidecar_path, payload.get('notes', []), active_editors, editors)
             doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
             doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
-        except OSError:
-            pass
+        except OSError as exc:
+            self.log_exception("unregister doc from shared notes", exc)
         self.update_status()
 
     def poll_shared_notes(self):
@@ -4057,41 +4283,65 @@ class NotepadX:
                 if current_unread_count > previous_unread_count:
                     self.play_unread_note_sound()
                 doc['last_unread_count'] = current_unread_count
+            if doc.get('notes_registered'):
+                try:
+                    self.refresh_doc_shared_editor_state(doc)
+                except OSError as exc:
+                    self.log_exception("refresh shared editor state", exc)
         self.update_status()
 
         self.root.after(self.note_sync_interval_ms, self.poll_shared_notes)
 
     def load_content_into_doc(self, doc, file_path):
-        file_size = os.path.getsize(file_path)
+        try:
+            file_size = os.path.getsize(file_path)
+        except OSError as exc:
+            self.log_exception("load content into doc", exc)
+            messagebox.showerror("Open Failed", f"Notepad-X could not open:\n{file_path}\n\n{exc}", parent=self.root)
+            return
         doc['file_size_bytes'] = file_size
         self.set_large_file_mode(doc, file_size >= self.large_file_threshold_bytes)
-        doc['preview_mode'] = False
-        doc['virtual_mode'] = file_size >= self.huge_file_preview_threshold_bytes
+        doc['preview_mode'] = self.is_probably_binary_file(file_path)
+        doc['virtual_mode'] = file_size >= self.huge_file_preview_threshold_bytes and not doc['preview_mode']
 
         text = doc['text']
         text.configure(state='normal')
         text.delete('1.0', tk.END)
 
-        if doc['virtual_mode']:
-            text.insert(tk.END, "Indexing large file...\n")
-            self.root.update_idletasks()
-            doc['line_starts'], doc['file_size_bytes'] = self.build_line_index(file_path)
-            doc['total_file_lines'] = max(1, len(doc['line_starts']))
-            self.load_virtual_window(doc, 1)
-        else:
-            doc['line_starts'] = None
-            doc['total_file_lines'] = 1
-            doc['window_start_line'] = 1
-            doc['window_end_line'] = 1
-            text.configure(state='normal')
-            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                while True:
-                    chunk = f.read(self.file_load_chunk_size)
-                    if not chunk:
-                        break
-                    text.insert(tk.END, chunk)
-                    if doc['large_file_mode']:
-                        self.root.update_idletasks()
+        try:
+            if doc['preview_mode']:
+                with open(file_path, 'rb') as f:
+                    preview_bytes = f.read(self.huge_file_preview_bytes)
+                preview_text = preview_bytes.decode('utf-8', errors='replace')
+                text.insert(tk.END, preview_text)
+                doc['line_starts'] = None
+                doc['total_file_lines'] = max(1, int(text.index('end-1c').split('.')[0]))
+                doc['window_start_line'] = 1
+                doc['window_end_line'] = doc['total_file_lines']
+            elif doc['virtual_mode']:
+                text.insert(tk.END, "Indexing large file...\n")
+                self.root.update_idletasks()
+                doc['line_starts'], doc['file_size_bytes'] = self.build_line_index(file_path)
+                doc['total_file_lines'] = max(1, len(doc['line_starts']))
+                self.load_virtual_window(doc, 1)
+            else:
+                doc['line_starts'] = None
+                doc['total_file_lines'] = 1
+                doc['window_start_line'] = 1
+                doc['window_end_line'] = 1
+                text.configure(state='normal')
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    while True:
+                        chunk = f.read(self.file_load_chunk_size)
+                        if not chunk:
+                            break
+                        text.insert(tk.END, chunk)
+                        if doc['large_file_mode']:
+                            self.root.update_idletasks()
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            self.log_exception("load content into doc", exc)
+            messagebox.showerror("Open Failed", f"Notepad-X could not open:\n{file_path}\n\n{exc}", parent=self.root)
+            return
 
         text.edit_modified(False)
         text.mark_set(tk.INSERT, '1.0')
@@ -4100,6 +4350,7 @@ class NotepadX:
         doc['last_insert_index'] = '1.0'
         doc['last_yview'] = 0.0
         doc['last_xview'] = 0.0
+        self.update_doc_file_signature(doc)
         self.configure_syntax_highlighting(doc['frame'])
         self.restore_doc_notes(doc)
         self.register_doc_for_shared_notes(doc)
@@ -4126,7 +4377,7 @@ class NotepadX:
             if doc['file_path'] and os.path.exists(doc['file_path']):
                 open_files.append(doc['file_path'])
 
-        open_files = list(dict.fromkeys(open_files))
+        open_files = list(dict.fromkeys(open_files))[:self.max_session_files]
         open_files = [path for path in open_files if path not in self.closed_session_files]
         if selected_file not in open_files:
             selected_file = None
@@ -4141,7 +4392,7 @@ class NotepadX:
             'closed_session_files': [
                 path for path in self.closed_session_files
                 if isinstance(path, str)
-            ],
+            ][:self.max_session_files],
             'sound_enabled': bool(self.sound_enabled.get()),
             'status_bar_enabled': bool(self.status_bar_enabled.get()),
             'numbered_lines_enabled': bool(self.numbered_lines_enabled.get()),
@@ -4173,16 +4424,18 @@ class NotepadX:
             if not content.strip() and not doc['text'].edit_modified():
                 continue
             unsaved_tabs.append({
-                'untitled_name': doc.get('untitled_name') or self.next_untitled_name(),
+                'untitled_name': self.trim_text(doc.get('untitled_name') or self.next_untitled_name(), 120),
                 'content': content,
                 'modified': bool(doc['text'].edit_modified())
             })
+            if len(unsaved_tabs) >= self.max_recovery_tabs:
+                break
             if self.get_current_doc() == doc:
                 selected_untitled = doc.get('untitled_name')
         return {
             'unsaved_tabs': unsaved_tabs,
-            'selected_untitled': selected_untitled,
-            'timestamp': datetime.now().isoformat(timespec='seconds')
+            'selected_untitled': self.trim_text(selected_untitled, 120),
+            'timestamp': self.utc_timestamp()
         }
 
     def persist_recovery_state(self):
@@ -4199,21 +4452,9 @@ class NotepadX:
             return
         for attempt in range(2):
             try:
-                recovery_dir = os.path.dirname(self.recovery_path)
-                os.makedirs(recovery_dir, exist_ok=True)
-                fd, temp_path = tempfile.mkstemp(prefix='notepadx-recovery-', suffix='.tmp', dir=recovery_dir)
-                try:
-                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                        json.dump(recovery, f, indent=2)
-                    os.replace(temp_path, self.recovery_path)
-                finally:
-                    if os.path.exists(temp_path):
-                        try:
-                            os.remove(temp_path)
-                        except OSError:
-                            pass
-                self.hide_support_file(self.recovery_path)
-                return
+                if self.write_json_atomically(self.recovery_path, recovery, 'notepadx-recovery-', 'persist recovery state'):
+                    return
+                raise PermissionError(self.recovery_path)
             except PermissionError as exc:
                 if attempt == 0:
                     self.move_support_paths_to_user_dir()
@@ -4227,11 +4468,9 @@ class NotepadX:
     def restore_recovery_state(self):
         if self.isolated_session or not os.path.exists(self.recovery_path):
             return
-        try:
-            with open(self.recovery_path, 'r', encoding='utf-8') as f:
-                recovery = json.load(f)
-        except Exception as exc:
-            self.log_exception("restore recovery state", exc)
+        recovery = self.read_json_file(self.recovery_path, "restore recovery state", None)
+        recovery = self.sanitize_recovery_payload(recovery)
+        if recovery is None:
             return
         unsaved_tabs = recovery.get('unsaved_tabs', [])
         if not isinstance(unsaved_tabs, list) or not unsaved_tabs:
@@ -4276,20 +4515,9 @@ class NotepadX:
 
         for attempt in range(2):
             try:
-                session_dir = os.path.dirname(self.session_path)
-                os.makedirs(session_dir, exist_ok=True)
-                fd, temp_path = tempfile.mkstemp(prefix='notepadx-session-', suffix='.tmp', dir=session_dir)
-                try:
-                    with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                        json.dump(session, f, indent=2)
-                    os.replace(temp_path, self.session_path)
-                finally:
-                    if os.path.exists(temp_path):
-                        try:
-                            os.remove(temp_path)
-                        except OSError:
-                            pass
-                return
+                if self.write_json_atomically(self.session_path, session, 'notepadx-session-', 'save session'):
+                    return
+                raise PermissionError(self.session_path)
             except PermissionError as exc:
                 if attempt == 0:
                     self.move_support_paths_to_user_dir()
@@ -4306,26 +4534,15 @@ class NotepadX:
         if not os.path.exists(self.session_path):
             return
 
-        try:
-            with open(self.session_path, 'r', encoding='utf-8') as f:
-                session = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            self.log_exception("restore session", exc)
+        session = self.read_json_file(self.session_path, "restore session", None)
+        session = self.sanitize_session_payload(session)
+        if session is None:
             return
 
-        open_files = [
-            path for path in session.get('open_files', [])
-            if isinstance(path, str) and os.path.exists(path)
-        ]
-        self.closed_session_files = {
-            path for path in session.get('closed_session_files', [])
-            if isinstance(path, str)
-        }
+        open_files = list(session.get('open_files', []))
+        self.closed_session_files = set(session.get('closed_session_files', []))
         open_files = [path for path in open_files if path not in self.closed_session_files]
-        self.recent_files = [
-            path for path in session.get('recent_files', [])
-            if isinstance(path, str) and os.path.exists(path)
-        ][:self.max_recent_files]
+        self.recent_files = list(session.get('recent_files', []))[:self.max_recent_files]
         self.sound_enabled.set(bool(session.get('sound_enabled', True)))
         self.status_bar_enabled.set(bool(session.get('status_bar_enabled', True)))
         self.numbered_lines_enabled.set(bool(session.get('numbered_lines_enabled', True)))
@@ -5341,6 +5558,7 @@ class NotepadX:
             self.refresh_recent_files_menu()
             self.save_session()
             return False
+        file_path = os.path.abspath(file_path)
 
         for tab_id, doc in self.documents.items():
             if doc['file_path'] == file_path:
@@ -5399,7 +5617,10 @@ class NotepadX:
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
                 temp_file.write(content)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
             os.replace(temp_path, file_path)
+            return True
         finally:
             if os.path.exists(temp_path):
                 try:
@@ -5464,8 +5685,19 @@ class NotepadX:
             return False
 
         if doc['file_path']:
-            self.write_file_atomically(doc['file_path'], doc['text'].get('1.0', tk.END).rstrip('\n'))
+            if not self.confirm_external_file_change(doc):
+                return False
+            try:
+                self.write_file_atomically(doc['file_path'], doc['text'].get('1.0', tk.END).rstrip('\n'))
+            except PermissionError as exc:
+                self.show_filesystem_error("Save Failed", doc['file_path'], exc)
+                return False
+            except OSError as exc:
+                self.log_exception("save file", exc)
+                self.show_filesystem_error("Save Failed", doc['file_path'], exc)
+                return False
             doc['text'].edit_modified(False)
+            self.update_doc_file_signature(doc)
             self.add_recent_file(doc['file_path'])
             self.refresh_tab_title(doc['frame'])
             self.update_status()
@@ -5522,7 +5754,7 @@ class NotepadX:
             old_file_path = doc.get('file_path')
             if old_file_path and old_file_path != file_path:
                 self.unregister_doc_from_shared_notes(doc)
-            doc['file_path'] = file_path
+            doc['file_path'] = os.path.abspath(file_path)
             self.configure_syntax_highlighting(doc['frame'])
             self.set_active_document(doc['frame'])
             self.register_doc_for_shared_notes(doc)
@@ -5553,9 +5785,11 @@ class NotepadX:
             else:
                 self.write_file_atomically(output_path, doc['text'].get('1.0', tk.END).rstrip('\n'))
             messagebox.showinfo("Save Copy As", f"Copy saved to:\n{output_path}", parent=self.root)
+        except PermissionError as exc:
+            self.show_filesystem_error("Save Copy As", output_path, exc)
         except OSError as exc:
             self.log_exception("save copy as", exc)
-            messagebox.showerror("Save Copy As", str(exc), parent=self.root)
+            self.show_filesystem_error("Save Copy As", output_path, exc)
         return "break"
 
     def print_file(self, event=None):
@@ -5568,6 +5802,10 @@ class NotepadX:
             if not saved:
                 return "break"
             doc = self.get_current_doc()
+
+        if not self.path_looks_safe_for_shell(doc['file_path']):
+            messagebox.showerror("Print Failed", "That file path could not be sent to the Windows print command safely.", parent=self.root)
+            return "break"
 
         print_error = None
         try:
