@@ -725,6 +725,20 @@ class NotepadX:
         except tk.TclError:
             return
 
+        try:
+            if doc.get('virtual_mode'):
+                max_line_number = max(1, int(doc.get('total_file_lines', 1)))
+            else:
+                max_line_number = max(1, int(text.index('end-1c').split('.')[0]))
+        except (tk.TclError, TypeError, ValueError):
+            max_line_number = 1
+
+        gutter_font = tkfont.Font(family=self.font_family, size=max(9, self.current_font_size - 1))
+        desired_gutter_width = max(56, gutter_font.measure('9' * len(str(max_line_number))) + 24)
+        current_gutter_width = int(gutter.cget('width'))
+        if current_gutter_width != desired_gutter_width:
+            gutter.configure(width=desired_gutter_width)
+
         gutter.delete('all')
         gutter_height = max(gutter.winfo_height(), text.winfo_height(), 1)
         gutter_width = int(gutter.cget('width'))
@@ -757,7 +771,7 @@ class NotepadX:
                     anchor='e',
                     text=str(display_line),
                     fill=line_fg,
-                    font=(self.font_family, max(9, self.current_font_size - 1))
+                    font=gutter_font
                 )
                 index = text.index(f"{local_line + 1}.0")
         except tk.TclError:
