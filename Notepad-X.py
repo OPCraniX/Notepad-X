@@ -15,6 +15,10 @@ import traceback
 import time
 from datetime import datetime
 from ctypes import wintypes
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 try:
     from idlelib.colorizer import ColorDelegator
@@ -24,7 +28,7 @@ except ImportError:
     Percolator = None
 
 class NotepadX:
-    def __init__(self, isolated_session=False):
+    def __init__(self, isolated_session=False, startup_files=None):
         self.root = tk.Tk()
         self.root.title("Notepad-X")
         self.resource_dir = self.get_resource_dir()
@@ -72,12 +76,14 @@ class NotepadX:
         self.huge_file_preview_bytes = 2 * 1024 * 1024
         self.virtual_file_window_lines = 5000
         self.virtual_file_margin_lines = 800
-        self.session_path = os.path.join(self.app_dir, "Notepad-X.session.json")
+        config_dir = self.get_config_dir(self.app_dir)
+        os.makedirs(config_dir, exist_ok=True)
+        self.session_path = os.path.join(config_dir, "Notepad-X.session.json")
         if self.isolated_session:
-            self.session_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.session.json")
-        self.editor_identity_path = os.path.join(self.app_dir, "Notepad-X.editor.json")
+            self.session_path = os.path.join(config_dir, f"Notepad-X.{os.getpid()}.session.json")
+        self.editor_identity_path = os.path.join(config_dir, "Notepad-X.editor.json")
         if self.isolated_session:
-            self.editor_identity_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.editor.json")
+            self.editor_identity_path = os.path.join(config_dir, f"Notepad-X.{os.getpid()}.editor.json")
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
         self.help_path = os.path.join(self.resource_dir, "Notepad-X-help.txt")
@@ -106,6 +112,7 @@ class NotepadX:
         self.status_bar_enabled = tk.BooleanVar(value=True)
         self.numbered_lines_enabled = tk.BooleanVar(value=True)
         self.autocomplete_enabled = tk.BooleanVar(value=True)
+        self.edit_with_shell_enabled = tk.BooleanVar(value=False)
         self.search_all_tabs = tk.BooleanVar(value=False)
         self.note_filter = tk.StringVar(value='all')
         self.syntax_theme = tk.StringVar(value='Default')
@@ -140,6 +147,7 @@ class NotepadX:
         self.create_status_bar()
         self.restore_session()
         self.restore_recovery_state()
+        self.open_startup_files(startup_files or [])
 
         self.bind_keys()
         self.update_font()  # initial font
@@ -200,6 +208,13 @@ class NotepadX:
                 wintypes.LPCWSTR,
                 ctypes.c_int,
             ]
+            self.shell32.SHChangeNotify.restype = None
+            self.shell32.SHChangeNotify.argtypes = [
+                wintypes.LONG,
+                wintypes.UINT,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            ]
         except Exception:
             self.shell32 = None
 
@@ -214,6 +229,9 @@ class NotepadX:
 
     def get_emergency_support_dir(self):
         return os.path.join(tempfile.gettempdir(), 'Notepad-X')
+
+    def get_config_dir(self, base_dir):
+        return os.path.join(base_dir, 'cfg')
 
     def directory_is_writable(self, directory):
         try:
@@ -239,12 +257,14 @@ class NotepadX:
         fallback_dir = self.get_user_support_dir()
         os.makedirs(fallback_dir, exist_ok=True)
         self.app_dir = fallback_dir
-        self.session_path = os.path.join(self.app_dir, "Notepad-X.session.json")
+        config_dir = self.get_config_dir(self.app_dir)
+        os.makedirs(config_dir, exist_ok=True)
+        self.session_path = os.path.join(config_dir, "Notepad-X.session.json")
         if self.isolated_session:
-            self.session_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.session.json")
-        self.editor_identity_path = os.path.join(self.app_dir, "Notepad-X.editor.json")
+            self.session_path = os.path.join(config_dir, f"Notepad-X.{os.getpid()}.session.json")
+        self.editor_identity_path = os.path.join(config_dir, "Notepad-X.editor.json")
         if self.isolated_session:
-            self.editor_identity_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.editor.json")
+            self.editor_identity_path = os.path.join(config_dir, f"Notepad-X.{os.getpid()}.editor.json")
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
 
@@ -252,12 +272,14 @@ class NotepadX:
         fallback_dir = self.get_emergency_support_dir()
         os.makedirs(fallback_dir, exist_ok=True)
         self.app_dir = fallback_dir
-        self.session_path = os.path.join(self.app_dir, "Notepad-X.session.json")
+        config_dir = self.get_config_dir(self.app_dir)
+        os.makedirs(config_dir, exist_ok=True)
+        self.session_path = os.path.join(config_dir, "Notepad-X.session.json")
         if self.isolated_session:
-            self.session_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.session.json")
-        self.editor_identity_path = os.path.join(self.app_dir, "Notepad-X.editor.json")
+            self.session_path = os.path.join(config_dir, f"Notepad-X.{os.getpid()}.session.json")
+        self.editor_identity_path = os.path.join(config_dir, "Notepad-X.editor.json")
         if self.isolated_session:
-            self.editor_identity_path = os.path.join(self.app_dir, f"Notepad-X.{os.getpid()}.editor.json")
+            self.editor_identity_path = os.path.join(config_dir, f"Notepad-X.{os.getpid()}.editor.json")
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
 
@@ -356,7 +378,6 @@ class NotepadX:
             if os.path.exists(self.editor_identity_path):
                 with open(self.editor_identity_path, 'r', encoding='utf-8') as f:
                     identity = json.load(f)
-                self.hide_support_file(self.editor_identity_path)
                 if isinstance(identity, dict):
                     known_ids = identity.get('known_editor_ids', [])
                     if isinstance(known_ids, list):
@@ -382,7 +403,6 @@ class NotepadX:
                         'editor_id': self.editor_id,
                         'known_editor_ids': known_ids
                     }, f, indent=2)
-                self.hide_support_file(self.editor_identity_path)
                 return
             except PermissionError as exc:
                 if attempt == 0:
@@ -1468,6 +1488,119 @@ class NotepadX:
             self.hide_autocomplete_popup()
         self.save_session()
         return "break"
+
+    def get_edit_with_shell_extensions(self):
+        extensions = []
+        seen = set()
+        for label, pattern in self.get_save_filetypes():
+            if label in ('All Supported', 'All Files'):
+                continue
+            for token in str(pattern).split():
+                token = token.strip().lower()
+                if token.startswith('*.') and len(token) > 2:
+                    extension = f".{token[2:]}"
+                elif token.startswith('.') and len(token) > 1:
+                    extension = token
+                else:
+                    continue
+                if extension not in seen:
+                    seen.add(extension)
+                    extensions.append(extension)
+        return extensions
+
+    def get_windows_open_command(self):
+        if getattr(sys, 'frozen', False):
+            executable_path = os.path.abspath(sys.executable)
+            return f'"{executable_path}" "%1"'
+        interpreter_path = os.path.abspath(sys.executable)
+        script_path = os.path.abspath(__file__)
+        return f'"{interpreter_path}" "{script_path}" "%1"'
+
+    def delete_registry_tree(self, root, subkey_path):
+        try:
+            with winreg.OpenKey(root, subkey_path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+                while True:
+                    try:
+                        child_name = winreg.EnumKey(key, 0)
+                    except OSError:
+                        break
+                    self.delete_registry_tree(root, rf"{subkey_path}\{child_name}")
+            winreg.DeleteKey(root, subkey_path)
+        except FileNotFoundError:
+            pass
+
+    def set_edit_with_shell_for_extension(self, extension, enabled):
+        if os.name != 'nt' or winreg is None or not extension:
+            return
+        menu_key = rf"Software\Classes\SystemFileAssociations\{extension}\shell\EditWithNotepadX"
+        if enabled:
+            icon_source = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else self.icon_path)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, menu_key) as key:
+                winreg.SetValueEx(key, 'MUIVerb', 0, winreg.REG_SZ, 'Edit with Notepad-X')
+                winreg.SetValueEx(key, 'Icon', 0, winreg.REG_SZ, icon_source)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{menu_key}\command") as command_key:
+                winreg.SetValueEx(command_key, '', 0, winreg.REG_SZ, self.get_windows_open_command())
+        else:
+            self.delete_registry_tree(winreg.HKEY_CURRENT_USER, menu_key)
+
+    def notify_windows_shell_change(self):
+        if os.name != 'nt' or not self.shell32:
+            return
+        try:
+            self.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+        except Exception:
+            pass
+
+    def sync_edit_with_shell_menu(self, show_errors=False):
+        if os.name != 'nt' or winreg is None:
+            return True
+        try:
+            for extension in self.get_edit_with_shell_extensions():
+                self.set_edit_with_shell_for_extension(extension, bool(self.edit_with_shell_enabled.get()))
+            self.notify_windows_shell_change()
+            return True
+        except OSError as exc:
+            self.log_exception("sync edit with shell menu", exc)
+            if show_errors:
+                messagebox.showerror(
+                    "Edit with Notepad-X",
+                    "Notepad-X could not update the Windows Explorer context menu.\n\n"
+                    f"{exc}",
+                    parent=self.root
+                )
+            return False
+
+    def toggle_edit_with_shell(self):
+        current_value = bool(self.edit_with_shell_enabled.get())
+        previous_value = not current_value
+        if not self.sync_edit_with_shell_menu(show_errors=True):
+            self.edit_with_shell_enabled.set(previous_value)
+            return "break"
+        self.save_session()
+        return "break"
+
+    def open_startup_files(self, startup_files):
+        normalized_files = []
+
+        for raw_path in startup_files:
+            if not raw_path:
+                continue
+            candidate_path = os.path.abspath(raw_path)
+            if os.path.exists(candidate_path):
+                normalized_files.append(candidate_path)
+
+        opened_frames = []
+        for file_path in normalized_files:
+            if self.open_file_path(file_path):
+                current_doc = self.get_current_doc()
+                if current_doc:
+                    opened_frames.append(current_doc['frame'])
+
+        if opened_frames:
+            self.notebook.select(opened_frames[0])
+            self.set_active_document(opened_frames[0])
+            if self.text:
+                self.text.focus_set()
 
     def toggle_status_bar(self, event=None):
         if event is not None:
@@ -3736,6 +3869,7 @@ class NotepadX:
             'status_bar_enabled': bool(self.status_bar_enabled.get()),
             'numbered_lines_enabled': bool(self.numbered_lines_enabled.get()),
             'autocomplete_enabled': bool(self.autocomplete_enabled.get()),
+            'edit_with_shell_enabled': bool(self.edit_with_shell_enabled.get()),
             'syntax_theme': self.syntax_theme.get(),
         }
 
@@ -3875,7 +4009,6 @@ class NotepadX:
                             os.remove(temp_path)
                         except OSError:
                             pass
-                self.hide_support_file(self.session_path)
                 return
             except PermissionError as exc:
                 if attempt == 0:
@@ -3917,6 +4050,7 @@ class NotepadX:
         self.status_bar_enabled.set(bool(session.get('status_bar_enabled', True)))
         self.numbered_lines_enabled.set(bool(session.get('numbered_lines_enabled', True)))
         self.autocomplete_enabled.set(bool(session.get('autocomplete_enabled', True)))
+        self.edit_with_shell_enabled.set(bool(session.get('edit_with_shell_enabled', False)))
         self.syntax_theme.set(str(session.get('syntax_theme', 'Default')))
         if self.status_bar_enabled.get():
             self.status_frame.grid()
@@ -4240,6 +4374,7 @@ class NotepadX:
         view_menu.add_checkbutton(label="Status Bar", variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator="Ctrl+B")
         view_menu.add_checkbutton(label="Numbered Lines", variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
         view_menu.add_checkbutton(label="Autocomplete", variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
+        view_menu.add_checkbutton(label="Edit with Notepad-X", variable=self.edit_with_shell_enabled, command=self.toggle_edit_with_shell)
         view_menu.add_checkbutton(label="Word Wrap", variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
         view_menu.add_checkbutton(label="Sound", variable=self.sound_enabled, command=self.toggle_sound)
         syntax_theme_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
@@ -5430,5 +5565,7 @@ class NotepadX:
         dialog.grab_set()
 
 if __name__ == "__main__":
-    isolated_mode = '--isolated' in {arg.lower() for arg in sys.argv[1:]}
-    NotepadX(isolated_session=isolated_mode)
+    raw_args = sys.argv[1:]
+    isolated_mode = '--isolated' in {arg.lower() for arg in raw_args}
+    startup_files = [arg for arg in raw_args if arg.lower() != '--isolated']
+    NotepadX(isolated_session=isolated_mode, startup_files=startup_files)

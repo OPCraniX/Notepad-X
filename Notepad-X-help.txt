@@ -1,7 +1,7 @@
 Notepad-X Help
 
 Overview
-Notepad-X is a tabbed desktop text editor for plain text, source code, shared review notes, and safer handling of very large files. It keeps a Notepad-style workflow while adding project opening, syntax highlighting, note sync, recovery, and a built-in help viewer.
+Notepad-X is a tabbed desktop text editor for plain text, source code, shared review notes, and safer handling of very large files. It adds project opening, syntax highlighting, note sync, recovery, and a built-in help viewer.
 
 Main Window
 - The title bar shows Notepad-X and the active document name.
@@ -79,6 +79,7 @@ View Menu
 - Switch Tab: Moves to the next tab.
 - Status Bar: Shows or hides the status bar. The checkmark shows whether it is enabled.
 - Numbered Lines: Shows or hides the line number gutter. The checkmark shows whether it is enabled.
+- Edit with Notepad-X: Enables or disables a Windows Explorer right-click entry for supported text/code file types.
 - Word Wrap: Turns wrapping on or off. The checkmark shows whether it is enabled.
 - Sound: Enables or disables note sounds. The checkmark shows whether it is enabled.
 - Syntax Theme: Changes the highlight color palette. Available themes are Default, Soft, and Vivid.
@@ -262,12 +263,11 @@ Crash Logging
 Support Files
 - Notepad-X keeps several support files in its app directory.
 - These can include:
-  Notepad-X.session.json
-  Notepad-X.editor.json
+  cfg/Notepad-X.session.json
+  cfg/Notepad-X.editor.json
   Notepad-X.recovery.json
   Notepad-X.crash.log
   per-file *.notepadx.notes.json sidecars
-- On Windows, Notepad-X attempts to mark support files as hidden for a cleaner folder view.
 
 Zoom
 - Ctrl+Mouse Wheel zooms in and out.
@@ -317,7 +317,3 @@ Keyboard Shortcuts
 - Ctrl+-: Zoom out
 - Ctrl+Mouse Wheel: Zoom
 - F11: Full Screen
-
-Notes
-- This help file describes the current Notepad-X build in this folder.
-- If features change later, the help file should be regenerated so it stays accurate.

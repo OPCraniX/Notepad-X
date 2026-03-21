@@ -1,6 +1,6 @@
 # Notepad-X
 
-Notepad-X is a tabbed Windows text editor built with Tkinter for plain text, source code, shared code notes, and safer handling of large files.
+Notepad-X is a tabbed Windows text editor for plain text, source code, shared code notes, and safer handling of large files.
 
 It keeps a simple desktop-editor feel, but adds project opening, persistent sessions, syntax highlighting, live search, collaborative note sidecars, inline compare mode, recovery, and a built-in help viewer.
 
@@ -12,6 +12,7 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 - Drag-reorder tabs
 - GitHub-style line number gutter with click-to-copy line support
 - Local autocomplete popup with syntax keywords and current-document word matching
+- Optional `Edit with Notepad-X` Explorer right-click integration for supported text/code file types
 - Live Find and Find/Replace
 - Optional `Search across all tabs`
 - Syntax highlighting for many source and config formats
@@ -31,6 +32,7 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 - Word Wrap, Sound toggle, Full Screen, zoom controls, font picker, printing
 - `View > Numbered Lines` toggle with saved preference
 - `View > Autocomplete` toggle with saved preference
+- `View > Edit with Notepad-X` toggle with saved preference
 - Built-in Help viewer and About dialog
 
 ## Compare Mode
@@ -103,23 +105,6 @@ In large-file virtual mode:
 - direct saving is disabled
 - `Save Copy As` is available for copying the source file elsewhere
 
-## Included Assets
-
-- `gfx/Notepad-X.ico`
-- `audio/note.mp3`
-- `audio/delete_note.mp3`
-- `Notepad-X-help.txt`
-
-## Project Files
-
-Main app:
-
-- `Notepad-X.py`
-
-Help file:
-
-- `Notepad-X-help.txt`
-
 ## Requirements
 
 - Windows
@@ -130,14 +115,6 @@ Help file:
 
 ```powershell
 python Notepad-X.py
-```
-
-## Build EXE
-
-If you want to package it with PyInstaller:
-
-```powershell
-python -m PyInstaller --noconfirm --clean --onedir --windowed --name "Notepad-X" --icon "gfx\Notepad-X.ico" --add-data "gfx;gfx" --add-data "audio;audio" --add-data "Notepad-X-help.txt;." "Notepad-X.py"
 ```
 
 ## Main Shortcuts
@@ -172,16 +149,12 @@ python -m PyInstaller --noconfirm --clean --onedir --windowed --name "Notepad-X"
 
 ## Support Files
 
-Notepad-X keeps some support files next to the app, including:
+Notepad-X keeps support files for sessions, editor identity, recovery, crash logging, and shared notes.
 
-- `Notepad-X.session.json`
-- `Notepad-X.editor.json`
+These can include:
+
+- `cfg/Notepad-X.session.json`
+- `cfg/Notepad-X.editor.json`
 - `Notepad-X.recovery.json`
 - `Notepad-X.crash.log`
 - `*.notepadx.notes.json`
-
-On Windows, Notepad-X attempts to mark support files as hidden.
-
-## Notes
-
-Notepad-X is currently implemented as a single Python file for the main application logic. That keeps distribution simple, though it can be modularized further later if needed.
