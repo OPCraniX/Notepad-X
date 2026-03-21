@@ -1701,39 +1701,80 @@ class NotepadX:
 
     def get_find_target_widgets(self):
         widgets = []
+        seen = set()
+
+        def add_widget(widget):
+            if not widget:
+                return
+            try:
+                if not widget.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            widget_id = str(widget)
+            if widget_id in seen:
+                return
+            seen.add(widget_id)
+            widgets.append(widget)
+
         if self.search_all_tabs.get():
             for doc in self.documents.values():
                 if doc.get('virtual_mode') or doc.get('preview_mode'):
                     continue
-                widgets.append(doc['text'])
+                add_widget(doc.get('text'))
         elif self.text:
-            widgets.append(self.text)
+            add_widget(self.text)
 
         if self.compare_active and self.compare_view and self.compare_view.get('text'):
-            widgets.append(self.compare_view['text'])
+            add_widget(self.compare_view.get('text'))
         return widgets
 
     def clear_find_highlights(self):
-        widgets = [doc['text'] for doc in self.documents.values()]
+        widgets = []
+        seen = set()
+        for doc in self.documents.values():
+            widget = doc.get('text')
+            if not widget:
+                continue
+            widget_id = str(widget)
+            if widget_id in seen:
+                continue
+            seen.add(widget_id)
+            widgets.append(widget)
         if self.compare_view and self.compare_view.get('text'):
-            widgets.append(self.compare_view['text'])
+            widget = self.compare_view.get('text')
+            if widget and str(widget) not in seen:
+                widgets.append(widget)
         for widget in widgets:
-            widget.tag_remove(self.find_matches_tag, '1.0', tk.END)
-            widget.tag_remove(self.find_current_tag, '1.0', tk.END)
+            try:
+                if not widget.winfo_exists():
+                    continue
+                widget.tag_remove(self.find_matches_tag, '1.0', tk.END)
+                widget.tag_remove(self.find_current_tag, '1.0', tk.END)
+            except tk.TclError:
+                continue
 
     def highlight_matches_in_widget(self, text_widget, query):
-        text_widget.tag_remove(self.find_matches_tag, '1.0', tk.END)
-        text_widget.tag_remove(self.find_current_tag, '1.0', tk.END)
+        try:
+            if not text_widget or not text_widget.winfo_exists():
+                return
+            text_widget.tag_remove(self.find_matches_tag, '1.0', tk.END)
+            text_widget.tag_remove(self.find_current_tag, '1.0', tk.END)
+        except tk.TclError:
+            return
         if not query:
             return
         start = "1.0"
         while True:
-            pos = text_widget.search(query, start, stopindex=tk.END, nocase=True, exact=False)
-            if not pos:
+            try:
+                pos = text_widget.search(query, start, stopindex=tk.END, nocase=True, exact=False)
+                if not pos:
+                    break
+                end = f"{pos}+{len(query)}c"
+                text_widget.tag_add(self.find_matches_tag, pos, end)
+                start = end
+            except tk.TclError:
                 break
-            end = f"{pos}+{len(query)}c"
-            text_widget.tag_add(self.find_matches_tag, pos, end)
-            start = end
 
     def mirror_compare_current_match(self, doc, pos, end):
         if not self.compare_active or not self.compare_view:
@@ -1752,17 +1793,20 @@ class NotepadX:
             self.highlight_matches_in_widget(widget, query)
 
     def on_find_entry_change(self, event=None):
-        if self.find_panel_visible:
-            query = self.find_entry.get().strip()
-        elif self.replace_panel_visible:
-            query = self.replace_find_entry.get().strip()
-        else:
-            return
+        try:
+            if self.find_panel_visible:
+                query = self.find_entry.get().strip()
+            elif self.replace_panel_visible:
+                query = self.replace_find_entry.get().strip()
+            else:
+                return
 
-        self.highlight_all_matches(query)
-        if not query:
-            return
-        self.update_status()
+            self.highlight_all_matches(query)
+            if not query:
+                return
+            self.update_status()
+        except Exception as exc:
+            self.log_exception("live find change", exc)
 
     def replace_all(self):
         query = self.replace_find_entry.get().strip()
