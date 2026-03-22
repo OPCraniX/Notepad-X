@@ -8,6 +8,7 @@ import json
 import bisect
 import re
 import hashlib
+import base64
 import secrets
 import subprocess
 import tempfile
@@ -29,6 +30,13 @@ try:
     import winreg
 except ImportError:
     winreg = None
+
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.exceptions import InvalidTag
+except ImportError:
+    AESGCM = None
+    InvalidTag = Exception
 
 try:
     from idlelib.colorizer import ColorDelegator
@@ -113,6 +121,15 @@ class NotepadX:
         self.max_note_text_length = 4000
         self.max_note_name_length = 120
         self.max_note_reply_length = 1000
+        self.encryption_magic = b'NPXENC1'
+        self.encryption_version = 1
+        self.encryption_key_length = 32
+        self.encryption_nonce_length = 12
+        self.encryption_salt_length = 16
+        self.encryption_scrypt_n = 1 << 15
+        self.encryption_scrypt_r = 8
+        self.encryption_scrypt_p = 1
+        self.encryption_scrypt_maxmem = 128 * 1024 * 1024
         self.live_find_min_chars = 2
         self.live_find_max_matches_per_widget = 1000
         self.live_find_max_matches_typing = 150
@@ -445,6 +462,360 @@ class NotepadX:
                     os.remove(temp_path)
                 except OSError:
                     pass
+
+    def write_binary_atomically(self, file_path, payload_bytes, prefix, context_name):
+        directory = os.path.dirname(file_path) or '.'
+        os.makedirs(directory, exist_ok=True)
+        target_mode = None
+        if not self.is_windows:
+            try:
+                target_mode = stat.S_IMODE(os.stat(file_path).st_mode)
+            except OSError:
+                target_mode = 0o664
+        fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=directory)
+        try:
+            with os.fdopen(fd, 'wb') as temp_file:
+                temp_file.write(payload_bytes)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+            os.replace(temp_path, file_path)
+            if target_mode is not None:
+                os.chmod(file_path, target_mode)
+            return True
+        except OSError as exc:
+            self.log_exception(context_name, exc)
+            return False
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def encryption_available(self):
+        return AESGCM is not None
+
+    def create_encryption_header(self, original_name=None, salt=None):
+        return {
+            'format': 'Notepad-X Encrypted',
+            'version': self.encryption_version,
+            'cipher': 'AES-256-GCM',
+            'kdf': 'scrypt',
+            'n': self.encryption_scrypt_n,
+            'r': self.encryption_scrypt_r,
+            'p': self.encryption_scrypt_p,
+            'salt': base64.b64encode(salt or os.urandom(self.encryption_salt_length)).decode('ascii'),
+            'original_name': os.path.basename(original_name) if original_name else None,
+            'encoding': 'utf-8',
+        }
+
+    def derive_encryption_key(self, passphrase, header):
+        if not self.encryption_available():
+            raise RuntimeError("The cryptography package is required for encrypted files.")
+        passphrase_bytes = str(passphrase or '').encode('utf-8')
+        if not passphrase_bytes:
+            raise ValueError("A passphrase is required.")
+        salt_text = header.get('salt')
+        if not isinstance(salt_text, str) or not salt_text.strip():
+            raise ValueError("Encrypted file is missing its salt.")
+        salt = base64.b64decode(salt_text.encode('ascii'))
+        n = int(header.get('n', self.encryption_scrypt_n))
+        r = int(header.get('r', self.encryption_scrypt_r))
+        p = int(header.get('p', self.encryption_scrypt_p))
+        required_memory = (128 * n * r) + (256 * r * p)
+        maxmem = max(self.encryption_scrypt_maxmem, required_memory * 2)
+        try:
+            return hashlib.scrypt(
+                passphrase_bytes,
+                salt=salt,
+                n=n,
+                r=r,
+                p=p,
+                maxmem=maxmem,
+                dklen=self.encryption_key_length
+            )
+        except ValueError as exc:
+            if 'memory limit exceeded' in str(exc).lower():
+                raise RuntimeError(
+                    "Notepad-X could not derive the encryption key because the scrypt memory limit "
+                    "was exceeded on this machine."
+                ) from exc
+            raise
+
+    def build_encrypted_payload(self, header, nonce, ciphertext):
+        header_bytes = json.dumps(header, separators=(',', ':')).encode('utf-8')
+        return (
+            self.encryption_magic
+            + len(header_bytes).to_bytes(4, 'big')
+            + header_bytes
+            + nonce
+            + ciphertext
+        )
+
+    def parse_encrypted_payload(self, payload_bytes):
+        if not payload_bytes.startswith(self.encryption_magic):
+            return None
+        header_offset = len(self.encryption_magic)
+        if len(payload_bytes) < header_offset + 4:
+            raise ValueError("Encrypted file header is incomplete.")
+        header_length = int.from_bytes(payload_bytes[header_offset:header_offset + 4], 'big')
+        header_start = header_offset + 4
+        header_end = header_start + header_length
+        if header_length <= 0 or len(payload_bytes) < header_end + self.encryption_nonce_length:
+            raise ValueError("Encrypted file header is invalid.")
+        header = json.loads(payload_bytes[header_start:header_end].decode('utf-8'))
+        nonce_start = header_end
+        nonce_end = nonce_start + self.encryption_nonce_length
+        nonce = payload_bytes[nonce_start:nonce_end]
+        ciphertext = payload_bytes[nonce_end:]
+        if not isinstance(header, dict) or header.get('format') != 'Notepad-X Encrypted':
+            raise ValueError("Encrypted file header is invalid.")
+        if header.get('cipher') != 'AES-256-GCM' or header.get('kdf') != 'scrypt':
+            raise ValueError("Unsupported encrypted file settings.")
+        if not ciphertext:
+            raise ValueError("Encrypted file has no ciphertext.")
+        return header, nonce, ciphertext
+
+    def file_looks_encrypted(self, file_path):
+        try:
+            with open(file_path, 'rb') as encrypted_file:
+                return encrypted_file.read(len(self.encryption_magic)) == self.encryption_magic
+        except OSError:
+            return False
+
+    def show_encryption_unavailable(self, parent=None):
+        messagebox.showerror(
+            "Encryption Unavailable",
+            "Encrypted save/open needs the 'cryptography' Python package.\n\n"
+            "Install it on this machine to use Notepad-X encrypted files.",
+            parent=parent or self.root
+        )
+
+    def prompt_encryption_options(self, default_encrypt=False, parent=None):
+        parent = parent or self.root
+        dialog = tk.Toplevel(parent)
+        dialog.title("Save Encrypted Copy As")
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.configure(bg='#f0f0f0', padx=14, pady=12)
+
+        result = {'value': None}
+        encrypt_var = tk.BooleanVar(value=bool(default_encrypt))
+        show_var = tk.BooleanVar(value=False)
+        passphrase_var = tk.StringVar()
+        confirm_var = tk.StringVar()
+
+        tk.Checkbutton(
+            dialog,
+            text="Encrypt file",
+            variable=encrypt_var,
+            bg='#f0f0f0',
+            anchor='w'
+        ).pack(anchor='w', pady=(0, 8))
+
+        tk.Label(dialog, text="Passphrase:", bg='#f0f0f0', fg='black', font=('Segoe UI', 9)).pack(anchor='w')
+        passphrase_entry = tk.Entry(dialog, textvariable=passphrase_var, width=34, show='*')
+        passphrase_entry.pack(fill='x', pady=(0, 6))
+
+        tk.Label(dialog, text="Confirm passphrase:", bg='#f0f0f0', fg='black', font=('Segoe UI', 9)).pack(anchor='w')
+        confirm_entry = tk.Entry(dialog, textvariable=confirm_var, width=34, show='*')
+        confirm_entry.pack(fill='x', pady=(0, 6))
+
+        def update_visibility(*_args):
+            state = 'normal' if encrypt_var.get() else 'disabled'
+            passphrase_entry.configure(state=state, show='' if show_var.get() else '*')
+            confirm_entry.configure(state=state, show='' if show_var.get() else '*')
+
+        tk.Checkbutton(
+            dialog,
+            text="Show passphrase",
+            variable=show_var,
+            bg='#f0f0f0',
+            anchor='w',
+            command=update_visibility
+        ).pack(anchor='w')
+
+        button_row = tk.Frame(dialog, bg='#f0f0f0')
+        button_row.pack(fill='x', pady=(10, 0))
+
+        def submit(event=None):
+            if encrypt_var.get():
+                if not self.encryption_available():
+                    self.show_encryption_unavailable(dialog)
+                    return "break"
+                passphrase = passphrase_var.get()
+                confirm = confirm_var.get()
+                if not passphrase:
+                    messagebox.showinfo("Save Encrypted Copy As", "Enter a passphrase first.", parent=dialog)
+                    return "break"
+                if passphrase != confirm:
+                    messagebox.showinfo("Save Encrypted Copy As", "Passphrases do not match.", parent=dialog)
+                    return "break"
+                result['value'] = {'encrypt': True, 'passphrase': passphrase}
+            else:
+                result['value'] = {'encrypt': False, 'passphrase': None}
+            dialog.destroy()
+            return "break"
+
+        def cancel(event=None):
+            result['value'] = None
+            dialog.destroy()
+            return "break"
+
+        tk.Button(button_row, text="OK", width=10, command=submit).pack(side='left')
+        tk.Button(button_row, text="Cancel", width=10, command=cancel).pack(side='right')
+
+        dialog.bind('<Return>', submit)
+        dialog.bind('<Escape>', cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.update_idletasks()
+        update_visibility()
+        self.center_window(dialog)
+        dialog.lift()
+        dialog.attributes('-topmost', True)
+        dialog.grab_set()
+        if encrypt_var.get():
+            passphrase_entry.focus_force()
+        else:
+            dialog.focus_force()
+        try:
+            dialog.wait_visibility()
+            dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
+            parent.wait_window(dialog)
+            return result['value']
+        finally:
+            self.hide_autocomplete_popup()
+
+    def prompt_open_passphrase(self, file_path, parent=None):
+        parent = parent or self.root
+        dialog = tk.Toplevel(parent)
+        dialog.title("Open Encrypted File")
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.configure(bg='#f0f0f0', padx=14, pady=12)
+
+        result = {'value': None}
+        show_var = tk.BooleanVar(value=False)
+        passphrase_var = tk.StringVar()
+
+        tk.Label(
+            dialog,
+            text=f"Passphrase for:\n{os.path.basename(file_path)}",
+            bg='#f0f0f0',
+            fg='black',
+            justify='left',
+            font=('Segoe UI', 9)
+        ).pack(anchor='w', pady=(0, 8))
+
+        passphrase_entry = tk.Entry(dialog, textvariable=passphrase_var, width=34, show='*')
+        passphrase_entry.pack(fill='x', pady=(0, 6))
+
+        def update_visibility(*_args):
+            passphrase_entry.configure(show='' if show_var.get() else '*')
+
+        tk.Checkbutton(
+            dialog,
+            text="Show passphrase",
+            variable=show_var,
+            bg='#f0f0f0',
+            anchor='w',
+            command=update_visibility
+        ).pack(anchor='w')
+
+        button_row = tk.Frame(dialog, bg='#f0f0f0')
+        button_row.pack(fill='x', pady=(10, 0))
+
+        def submit(event=None):
+            result['value'] = passphrase_var.get()
+            dialog.destroy()
+            return "break"
+
+        def cancel(event=None):
+            result['value'] = None
+            dialog.destroy()
+            return "break"
+
+        tk.Button(button_row, text="OK", width=10, command=submit).pack(side='left')
+        tk.Button(button_row, text="Cancel", width=10, command=cancel).pack(side='right')
+
+        dialog.bind('<Return>', submit)
+        dialog.bind('<Escape>', cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.update_idletasks()
+        update_visibility()
+        self.center_window(dialog)
+        dialog.lift()
+        dialog.attributes('-topmost', True)
+        dialog.grab_set()
+        passphrase_entry.focus_force()
+        try:
+            dialog.wait_visibility()
+            dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
+            parent.wait_window(dialog)
+            return result['value']
+        finally:
+            self.hide_autocomplete_popup()
+
+    def insert_text_content(self, doc, content):
+        text = doc['text']
+        doc['line_starts'] = None
+        doc['total_file_lines'] = 1
+        doc['window_start_line'] = 1
+        doc['window_end_line'] = 1
+        text.configure(state='normal')
+        for offset in range(0, len(content), self.file_load_chunk_size):
+            text.insert(tk.END, content[offset:offset + self.file_load_chunk_size])
+            if doc.get('large_file_mode'):
+                self.root.update_idletasks()
+        doc['total_file_lines'] = max(1, int(text.index('end-1c').split('.')[0]))
+        doc['window_end_line'] = doc['total_file_lines']
+
+    def write_encrypted_text_file(self, file_path, text_content, passphrase=None, header=None, key=None, original_name=None):
+        if not self.encryption_available():
+            raise RuntimeError("Encryption support is unavailable.")
+        encryption_header = dict(header or {})
+        if key is None:
+            encryption_header = self.create_encryption_header(original_name=original_name or file_path)
+            key = self.derive_encryption_key(passphrase, encryption_header)
+        else:
+            if not encryption_header:
+                raise ValueError("Encrypted file metadata is missing.")
+            encryption_header['original_name'] = encryption_header.get('original_name') or os.path.basename(original_name or file_path)
+        plaintext_bytes = str(text_content).encode('utf-8')
+        nonce = os.urandom(self.encryption_nonce_length)
+        ciphertext = AESGCM(key).encrypt(nonce, plaintext_bytes, self.encryption_magic)
+        payload_bytes = self.build_encrypted_payload(encryption_header, nonce, ciphertext)
+        if not self.write_binary_atomically(file_path, payload_bytes, 'notepadx-encrypted-', 'write encrypted file'):
+            raise OSError(f"Could not write encrypted file: {file_path}")
+        return encryption_header, key
+
+    def read_encrypted_text_file(self, file_path):
+        if not self.file_looks_encrypted(file_path):
+            return None
+        if not self.encryption_available():
+            self.show_encryption_unavailable(self.root)
+            raise OSError("Encryption support is unavailable.")
+        with open(file_path, 'rb') as encrypted_file:
+            payload_bytes = encrypted_file.read()
+        header, nonce, ciphertext = self.parse_encrypted_payload(payload_bytes)
+        while True:
+            passphrase = self.prompt_open_passphrase(file_path, parent=self.root)
+            if passphrase is None:
+                raise OSError("Encrypted file open cancelled.")
+            try:
+                key = self.derive_encryption_key(passphrase, header)
+                plaintext_bytes = AESGCM(key).decrypt(nonce, ciphertext, self.encryption_magic)
+                return plaintext_bytes.decode(header.get('encoding') or 'utf-8'), header, key
+            except RuntimeError:
+                raise
+            except (InvalidTag, ValueError, UnicodeDecodeError):
+                retry = messagebox.askretrycancel(
+                    "Open Encrypted File",
+                    "That passphrase did not unlock the encrypted file.",
+                    parent=self.root
+                )
+                if not retry:
+                    raise OSError("Encrypted file open cancelled.")
 
     def get_file_signature(self, file_path):
         try:
@@ -2077,6 +2448,8 @@ class NotepadX:
         self.root.bind('<Control-Shift-S>', self.save_all)
         self.root.bind('<Control-Shift-q>', lambda e: self.save_copy_as())
         self.root.bind('<Control-Shift-Q>', lambda e: self.save_copy_as())
+        self.root.bind('<Control-Shift-e>', lambda e: self.save_encrypted_copy())
+        self.root.bind('<Control-Shift-E>', lambda e: self.save_encrypted_copy())
         self.root.bind('<Control-Shift-X>', self.ctrl_shift_x)
         self.root.bind('<Control-Shift-x>', self.ctrl_shift_x)
         self.root.bind_all('<Control-Shift-X>', self.ctrl_shift_x)
@@ -2928,6 +3301,9 @@ class NotepadX:
             'last_yview': 0.0,
             'last_xview': 0.0,
             'file_signature': None,
+            'encrypted_file': False,
+            'encryption_header': None,
+            'encryption_key': None,
         }
         self.apply_syntax_tag_colors(text)
         self.configure_syntax_highlighting(tab_frame)
@@ -5335,17 +5711,34 @@ class NotepadX:
         except OSError as exc:
             self.log_exception("load content into doc", exc)
             messagebox.showerror("Open Failed", f"Notepad-X could not open:\n{file_path}\n\n{exc}", parent=self.root)
-            return
+            return False
+        doc['encrypted_file'] = False
+        doc['encryption_header'] = None
+        doc['encryption_key'] = None
         doc['file_size_bytes'] = file_size
-        self.set_large_file_mode(doc, file_size >= self.large_file_threshold_bytes)
-        doc['preview_mode'] = self.is_probably_binary_file(file_path)
-        doc['virtual_mode'] = file_size >= self.huge_file_preview_threshold_bytes and not doc['preview_mode']
 
         text = doc['text']
         text.configure(state='normal')
         text.delete('1.0', tk.END)
 
         try:
+            encrypted_result = self.read_encrypted_text_file(file_path) if self.file_looks_encrypted(file_path) else None
+            if encrypted_result is not None:
+                plaintext, encryption_header, encryption_key = encrypted_result
+                plaintext_size = len(plaintext.encode('utf-8'))
+                doc['file_size_bytes'] = plaintext_size
+                self.set_large_file_mode(doc, plaintext_size >= self.large_file_threshold_bytes)
+                doc['preview_mode'] = False
+                doc['virtual_mode'] = False
+                self.insert_text_content(doc, plaintext)
+                doc['encrypted_file'] = True
+                doc['encryption_header'] = encryption_header
+                doc['encryption_key'] = encryption_key
+            else:
+                self.set_large_file_mode(doc, file_size >= self.large_file_threshold_bytes)
+                doc['preview_mode'] = self.is_probably_binary_file(file_path)
+                doc['virtual_mode'] = file_size >= self.huge_file_preview_threshold_bytes and not doc['preview_mode']
+
             if doc['preview_mode']:
                 with open(file_path, 'rb') as f:
                     preview_bytes = f.read(self.huge_file_preview_bytes)
@@ -5362,23 +5755,27 @@ class NotepadX:
                 doc['total_file_lines'] = max(1, len(doc['line_starts']))
                 self.load_virtual_window(doc, 1)
             else:
-                doc['line_starts'] = None
-                doc['total_file_lines'] = 1
-                doc['window_start_line'] = 1
-                doc['window_end_line'] = 1
-                text.configure(state='normal')
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                    while True:
-                        chunk = f.read(self.file_load_chunk_size)
-                        if not chunk:
-                            break
-                        text.insert(tk.END, chunk)
-                        if doc['large_file_mode']:
-                            self.root.update_idletasks()
+                if not doc['encrypted_file']:
+                    self.insert_text_content(doc, '')
+                    text.delete('1.0', tk.END)
+                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                        while True:
+                            chunk = f.read(self.file_load_chunk_size)
+                            if not chunk:
+                                break
+                            text.insert(tk.END, chunk)
+                            if doc['large_file_mode']:
+                                self.root.update_idletasks()
+                    doc['total_file_lines'] = max(1, int(text.index('end-1c').split('.')[0]))
+                    doc['window_end_line'] = doc['total_file_lines']
+        except RuntimeError as exc:
+            self.log_exception("load content into doc", exc)
+            messagebox.showerror("Open Failed", str(exc), parent=self.root)
+            return False
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             self.log_exception("load content into doc", exc)
             messagebox.showerror("Open Failed", f"Notepad-X could not open:\n{file_path}\n\n{exc}", parent=self.root)
-            return
+            return False
 
         text.edit_modified(False)
         text.mark_set(tk.INSERT, '1.0')
@@ -5396,6 +5793,7 @@ class NotepadX:
             self.refresh_compare_panel()
         if str(doc['frame']) == self.notebook.select():
             self.update_status()
+        return True
 
     def get_session_state(self):
         current_doc = self.get_current_doc()
@@ -5609,7 +6007,13 @@ class NotepadX:
         for file_path in open_files:
             tab_id = self.create_tab(file_path=file_path, select=False)
             doc = self.documents[str(tab_id)]
-            self.load_content_into_doc(doc, file_path)
+            if not self.load_content_into_doc(doc, file_path):
+                try:
+                    self.notebook.forget(doc['frame'])
+                except tk.TclError:
+                    pass
+                self.documents.pop(str(tab_id), None)
+                continue
             restored_tabs[file_path] = doc['frame']
 
         selected_file = session.get('selected_file')
@@ -5891,8 +6295,9 @@ class NotepadX:
         file_menu.add_command(label="New Tab", command=self.new_tab, accelerator="Ctrl+T")
         file_menu.add_command(label="Close Tab", command=self.close_current_tab, accelerator="Ctrl+Shift+T")
         file_menu.add_command(label="Save", command=self.save, accelerator="Ctrl+S")
-        file_menu.add_command(label="Save all", command=self.save_all, accelerator="Ctrl+Shift+S")
-        file_menu.add_command(label="Save Copy As", command=self.save_copy_as, accelerator="Ctrl+Shift+Q")
+        file_menu.add_command(label="Save All", command=self.save_all, accelerator="Ctrl+Shift+S")
+        file_menu.add_command(label="Save As", command=self.save_copy_as, accelerator="Ctrl+Shift+Q")
+        file_menu.add_command(label="Save As Encrypted", command=self.save_encrypted_copy, accelerator="Ctrl+Shift+E")
         file_menu.add_command(label="Print", command=self.print_file, accelerator="Ctrl+P")
         file_menu.add_command(label="Export Notes", command=self.export_notes_report, accelerator="Ctrl+E")
         file_menu.add_separator()
@@ -6607,12 +7012,20 @@ class NotepadX:
         current_doc = self.get_current_doc()
         if current_doc and not current_doc['file_path'] and not current_doc['text'].edit_modified():
             current_doc['file_path'] = file_path
-            self.load_content_into_doc(current_doc, file_path)
+            if not self.load_content_into_doc(current_doc, file_path):
+                current_doc['file_path'] = None
+                return False
             self.set_active_document(current_doc['frame'])
         else:
             tab_id = self.create_tab(file_path=file_path, select=True)
             new_doc = self.documents[str(tab_id)]
-            self.load_content_into_doc(new_doc, file_path)
+            if not self.load_content_into_doc(new_doc, file_path):
+                try:
+                    self.notebook.forget(new_doc['frame'])
+                except tk.TclError:
+                    pass
+                self.documents.pop(str(tab_id), None)
+                return False
             self.set_active_document(tab_id)
 
         self.add_recent_file(file_path)
@@ -6672,8 +7085,8 @@ class NotepadX:
                 except OSError as exc:
                     self.log_exception("cleanup temp save file", exc)
 
-    def get_save_filetypes(self):
-        return [
+    def get_save_filetypes(self, include_encrypted=False):
+        filetypes = [
             ("All Supported", "*.txt *.md .gitignore *.py *.pyw *.c *.cpp *.cxx *.cc *.h *.hpp *.hxx *.hh *.cs *.rs *.java *.js *.html *.htm *.php *.xml *.sql *.css *.json *.ini *.bat *.cmd *.sh *.asm *.s *.tex *.vb *.vbs *.pas *.pl *.pm *.diff *.patch *.nsi *.nsh *.iss *.rc *.as *.mx *.asp *.aspx *.au3 *.ml *.mli *.sml *.thy *.for *.f *.f90 *.f95 *.f2k *.lsp *.lisp *.mak *.m *.nfo *.st *.xsd *.xsml *.xsl *.kml"),
             ("Text Document", "*.txt"),
             ("Markdown", "*.md"),
@@ -6715,6 +7128,9 @@ class NotepadX:
             ("TeX", "*.tex"),
             ("All Files", "*.*"),
         ]
+        if include_encrypted:
+            return [("Notepad-X Encrypted", "*.npxe"), *filetypes]
+        return filetypes
 
     def save(self, event=None):
         doc = self.get_current_doc()
@@ -6732,9 +7148,25 @@ class NotepadX:
             if not self.confirm_external_file_change(doc):
                 return False
             try:
-                self.write_file_atomically(doc['file_path'], doc['text'].get('1.0', tk.END).rstrip('\n'))
+                text_content = doc['text'].get('1.0', tk.END).rstrip('\n')
+                if doc.get('encrypted_file'):
+                    self.write_encrypted_text_file(
+                        doc['file_path'],
+                        text_content,
+                        header=doc.get('encryption_header'),
+                        key=doc.get('encryption_key'),
+                        original_name=doc.get('file_path')
+                    )
+                else:
+                    self.write_file_atomically(doc['file_path'], text_content)
             except PermissionError as exc:
                 self.show_filesystem_error("Save Failed", doc['file_path'], exc)
+                return False
+            except RuntimeError as exc:
+                messagebox.showerror("Save Failed", str(exc), parent=self.root)
+                return False
+            except ValueError as exc:
+                messagebox.showerror("Save Failed", str(exc), parent=self.root)
                 return False
             except OSError as exc:
                 self.log_exception("save file", exc)
@@ -6812,7 +7244,7 @@ class NotepadX:
         suggested_name = self.get_doc_name(doc['frame'])
         output_path = filedialog.asksaveasfilename(
             parent=self.root,
-            title="Save Copy As",
+            title="Save As",
             initialfile=suggested_name,
             filetypes=self.get_save_filetypes()
         )
@@ -6831,9 +7263,59 @@ class NotepadX:
             messagebox.showinfo("Save Copy As", f"Copy saved to:\n{output_path}", parent=self.root)
         except PermissionError as exc:
             self.show_filesystem_error("Save Copy As", output_path, exc)
+        except RuntimeError as exc:
+            messagebox.showerror("Save Copy As", str(exc), parent=self.root)
+        except ValueError as exc:
+            messagebox.showerror("Save Copy As", str(exc), parent=self.root)
         except OSError as exc:
             self.log_exception("save copy as", exc)
             self.show_filesystem_error("Save Copy As", output_path, exc)
+        return "break"
+
+    def save_encrypted_copy(self):
+        doc = self.get_current_doc()
+        if not doc:
+            return "break"
+        encryption_options = self.prompt_encryption_options(default_encrypt=True, parent=self.root)
+        if encryption_options is None or not encryption_options.get('encrypt'):
+            return "break"
+        suggested_name = self.get_doc_name(doc['frame'])
+        suggested_encrypted_name = suggested_name if suggested_name.lower().endswith('.npxe') else f"{suggested_name}.npxe"
+        output_path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Save Encrypted Copy",
+            initialfile=suggested_encrypted_name,
+            defaultextension=".npxe",
+            filetypes=self.get_save_filetypes(include_encrypted=True)
+        )
+        if not output_path:
+            return "break"
+        if not output_path.lower().endswith('.npxe'):
+            output_path = f"{output_path}.npxe"
+        try:
+            if doc.get('virtual_mode') or doc.get('preview_mode'):
+                messagebox.showinfo(
+                    "Save Encrypted Copy",
+                    "Encryption is not available for buffered large-file or preview tabs.",
+                    parent=self.root
+                )
+                return "break"
+            self.write_encrypted_text_file(
+                output_path,
+                doc['text'].get('1.0', tk.END).rstrip('\n'),
+                passphrase=encryption_options.get('passphrase'),
+                original_name=suggested_name
+            )
+            messagebox.showinfo("Save Encrypted Copy", f"Encrypted copy saved to:\n{output_path}", parent=self.root)
+        except PermissionError as exc:
+            self.show_filesystem_error("Save Encrypted Copy", output_path, exc)
+        except RuntimeError as exc:
+            messagebox.showerror("Save Encrypted Copy", str(exc), parent=self.root)
+        except ValueError as exc:
+            messagebox.showerror("Save Encrypted Copy", str(exc), parent=self.root)
+        except OSError as exc:
+            self.log_exception("save encrypted copy", exc)
+            self.show_filesystem_error("Save Encrypted Copy", output_path, exc)
         return "break"
 
     def print_file(self, event=None):
