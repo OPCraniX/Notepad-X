@@ -18,6 +18,7 @@ import stat
 import socket
 from datetime import datetime, timezone
 from ctypes import wintypes
+from types import SimpleNamespace
 
 try:
     import resource
@@ -2784,6 +2785,7 @@ class NotepadX:
         self.compare_text.bind('<Motion>', self.remember_hovered_editor, add='+')
         self.compare_text.bind('<Button-1>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<ButtonRelease-1>', self.remember_compare_focus, add='+')
+        self.compare_text.bind('<Button-3>', self.show_compare_context_menu)
         self.compare_text.bind('<F3>', self.find_next)
         self.compare_text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         self.compare_text.bind('<Control-Shift-x>', self.ctrl_shift_x)
@@ -2812,6 +2814,7 @@ class NotepadX:
         self.compare_text.tag_config(self.find_current_tag, background='#ff8c42', foreground='black')
         self.apply_syntax_tag_colors(self.compare_text)
         self.raise_find_tags(self.compare_text)
+        self.create_text_context_menu(self.compare_container, doc_override=self.compare_view, action_tab_id='__compare__')
 
         self.text = None
         self.create_tab()
@@ -3866,26 +3869,54 @@ class NotepadX:
         scrollbar.set(first, last)
         self.update_line_number_gutter(self.compare_view)
 
-    def create_text_context_menu(self, tab_id):
-        doc = self.documents.get(str(tab_id))
+    def sync_compare_note_tags(self, source_doc=None):
+        if not self.compare_active or not self.compare_view:
+            return
+        source_doc = source_doc or (self.documents.get(self.compare_source_tab) if self.compare_source_tab else None)
+        compare_text = self.compare_view.get('text')
+        if not source_doc or not compare_text:
+            return
+        try:
+            for tag_name in list(compare_text.tag_names()):
+                if tag_name.startswith('note_'):
+                    compare_text.tag_delete(tag_name)
+        except tk.TclError:
+            return
+        for note_tag, note_data in source_doc.get('notes', {}).items():
+            try:
+                ranges = source_doc['text'].tag_ranges(note_tag)
+                if len(ranges) < 2:
+                    continue
+                highlight_color = self.get_note_color_hex(note_data.get('color'))
+                compare_text.tag_add(note_tag, str(ranges[0]), str(ranges[1]))
+                compare_text.tag_config(note_tag, background=highlight_color, foreground='black')
+                compare_text.tag_bind(note_tag, '<Button-1>', lambda e, frame=source_doc['frame'], tag=note_tag: self.open_note_from_tag(e, frame, tag))
+                compare_text.tag_bind(note_tag, '<Enter>', lambda e, text=compare_text: text.config(cursor='hand2'))
+                compare_text.tag_bind(note_tag, '<Leave>', lambda e, text=compare_text: text.config(cursor='xterm'))
+            except tk.TclError:
+                continue
+
+    def create_text_context_menu(self, tab_id, doc_override=None, action_tab_id=None):
+        doc = doc_override or self.documents.get(str(tab_id))
         if not doc:
             return
 
+        action_target = action_tab_id if action_tab_id is not None else tab_id
         menu = tk.Menu(self.root, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         note_color_menu = tk.Menu(menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         for color_key in ('yellow', 'green', 'red'):
             note_color_menu.add_command(
                 label=self.get_note_color_label(color_key),
-                command=lambda value=color_key, frame=tab_id: self.run_context_menu_action(lambda: self.set_note_color(value, frame))
+                command=lambda value=color_key, frame=action_target: self.run_context_menu_action(lambda: self.set_note_color(value, frame))
             )
-        menu.add_command(label="Cut", command=lambda: self.run_context_menu_action(self.cut_or_close_panel))
-        menu.add_command(label="Copy", command=lambda: self.run_context_menu_action(self.copy))
-        menu.add_command(label="Paste", command=lambda: self.run_context_menu_action(self.paste))
+        menu.add_command(label="Cut", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.cut))
+        menu.add_command(label="Copy", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.copy))
+        menu.add_command(label="Paste", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.paste))
         menu.add_separator()
-        menu.add_command(label="Select All", command=lambda: self.run_context_menu_action(self.select_all))
-        menu.add_command(label="Add note", command=lambda frame=tab_id: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
+        menu.add_command(label="Select All", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.select_all))
+        menu.add_command(label="Add note", command=lambda frame=action_target: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
         menu.add_cascade(label="Note Color", menu=note_color_menu)
-        menu.add_command(label="Remove note", command=lambda frame=tab_id: self.run_context_menu_action(lambda: self.remove_note(frame)))
+        menu.add_command(label="Remove note", command=lambda frame=action_target: self.run_context_menu_action(lambda: self.remove_note(frame)))
         doc['context_menu'] = menu
         doc['context_note_color_menu'] = note_color_menu
 
@@ -3898,6 +3929,52 @@ class NotepadX:
                 return callback()
             except Exception as exc:
                 self.log_exception("context menu action", exc)
+        return "break"
+
+    def get_context_action_target_widget(self, action_target):
+        if action_target == '__compare__':
+            return self.get_compare_text_widget()
+
+        doc = self.documents.get(str(action_target))
+        if not doc:
+            return None
+
+        target_widget = doc.get('context_target_widget')
+        if isinstance(target_widget, tk.Text):
+            try:
+                if target_widget.winfo_exists():
+                    return target_widget
+            except tk.TclError:
+                pass
+        return doc.get('text')
+
+    def invoke_context_menu_widget_action(self, callback, target_widget):
+        if target_widget is None:
+            return "break"
+        try:
+            try:
+                if target_widget.winfo_exists():
+                    target_widget.focus_force()
+            except tk.TclError:
+                pass
+            self.set_last_active_editor_widget(target_widget)
+            return callback(SimpleNamespace(widget=target_widget))
+        except Exception as exc:
+            self.log_exception("context menu widget action", exc)
+            return "break"
+
+    def run_context_menu_widget_action(self, action_target, callback):
+        target_widget = self.get_context_action_target_widget(action_target)
+        self.dismiss_context_menu()
+        if target_widget is None:
+            return "break"
+        try:
+            self.root.after(
+                1,
+                lambda widget=target_widget, handler=callback: self.invoke_context_menu_widget_action(handler, widget)
+            )
+        except tk.TclError:
+            return self.invoke_context_menu_widget_action(callback, target_widget)
         return "break"
 
     def dismiss_context_menu(self, event=None):
@@ -3977,20 +4054,39 @@ class NotepadX:
 
     def show_text_context_menu(self, event, tab_id):
         doc = self.documents.get(str(tab_id))
+        return self.show_context_menu_for_doc(event, doc, select_tab=True)
+
+    def show_compare_context_menu(self, event):
+        doc = self.documents.get(self.compare_source_tab) if self.compare_source_tab else None
+        return self.show_context_menu_for_doc(event, doc, select_tab=False)
+
+    def show_context_menu_for_doc(self, event, doc, select_tab):
         if not doc:
             return "break"
 
-        self.notebook.select(doc['frame'])
-        self.set_active_document(doc['frame'])
+        if select_tab:
+            self.notebook.select(doc['frame'])
+            self.set_active_document(doc['frame'])
 
-        selection_ranges = self.text.tag_ranges('sel')
+        target_widget = event.widget if isinstance(getattr(event, 'widget', None), tk.Text) else doc['text']
+        if not isinstance(target_widget, tk.Text):
+            target_widget = doc['text']
+        try:
+            target_widget.focus_force()
+        except tk.TclError:
+            pass
+        self.set_last_active_editor_widget(target_widget)
+
+        selection_ranges = target_widget.tag_ranges('sel')
         note_state = 'normal' if len(selection_ranges) >= 2 and str(selection_ranges[0]) != str(selection_ranges[1]) else 'disabled'
 
-        index = self.text.index(f"@{event.x},{event.y}")
-        clicked_note_tags = [tag for tag in self.text.tag_names(index) if tag in doc['notes']]
+        index = target_widget.index(f"@{event.x},{event.y}")
+        clicked_note_tags = [tag for tag in target_widget.tag_names(index) if tag in doc['notes']]
         doc['context_note_tag'] = clicked_note_tags[-1] if clicked_note_tags else None
+        doc['context_target_widget'] = target_widget
 
-        if self.current_doc_is_large_readonly():
+        is_readonly_target = bool(doc.get('preview_mode') or doc.get('virtual_mode'))
+        if is_readonly_target:
             doc['context_menu'].entryconfig("Cut", state='disabled')
             doc['context_menu'].entryconfig("Paste", state='disabled')
             note_state = 'disabled'
@@ -4274,16 +4370,21 @@ class NotepadX:
         return "break"
 
     def add_note_to_selection(self, tab_id=None, event=None):
-        doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
+        if tab_id == '__compare__':
+            doc = self.documents.get(self.compare_source_tab) if self.compare_source_tab else None
+        else:
+            doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
         if not doc or self.current_doc_is_large_readonly():
             return "break"
 
-        self.notebook.select(doc['frame'])
-        self.set_active_document(doc['frame'])
+        selection_widget = doc.get('context_target_widget')
+        compare_widget = self.get_compare_text_widget()
+        if selection_widget is None or not isinstance(selection_widget, tk.Text):
+            selection_widget = compare_widget if tab_id == '__compare__' else doc['text']
 
         try:
-            start = self.text.index('sel.first')
-            end = self.text.index('sel.last')
+            start = selection_widget.index('sel.first')
+            end = selection_widget.index('sel.last')
         except tk.TclError:
             messagebox.showinfo("Add Note", "Select some text first.", parent=self.root)
             return "break"
@@ -4322,6 +4423,8 @@ class NotepadX:
             read_by=[self.editor_id]
         )
         self.persist_doc_notes(doc)
+        if self.compare_active and self.compare_source_tab == str(doc['frame']):
+            self.sync_compare_note_tags(doc)
         return "break"
 
     def create_note_tag(
@@ -4380,7 +4483,10 @@ class NotepadX:
         doc['text'].tag_bind(note_tag, '<Leave>', lambda e, text=doc['text']: text.config(cursor='xterm'))
 
     def set_note_color(self, color_key, tab_id=None):
-        doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
+        if tab_id == '__compare__':
+            doc = self.documents.get(self.compare_source_tab) if self.compare_source_tab else None
+        else:
+            doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
         if not doc or not doc.get('context_note_tag'):
             return "break"
 
@@ -4395,10 +4501,15 @@ class NotepadX:
             doc['text'].tag_remove(note_tag, '1.0', tk.END)
             self.apply_note_tag(doc, note_tag, str(ranges[0]), str(ranges[1]))
         self.persist_doc_notes(doc)
+        if self.compare_active and self.compare_source_tab == str(doc['frame']):
+            self.sync_compare_note_tags(doc)
         return "break"
 
     def remove_note(self, tab_id=None):
-        doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
+        if tab_id == '__compare__':
+            doc = self.documents.get(self.compare_source_tab) if self.compare_source_tab else None
+        else:
+            doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
         if not doc or not doc.get('context_note_tag'):
             return "break"
 
@@ -4411,6 +4522,8 @@ class NotepadX:
         doc['context_note_tag'] = None
         self.hide_note_popup(doc)
         self.persist_doc_notes(doc)
+        if self.compare_active and self.compare_source_tab == str(doc['frame']):
+            self.sync_compare_note_tags(doc)
         self.play_delete_note_sound()
         return "break"
 
@@ -6022,6 +6135,7 @@ class NotepadX:
         except (tk.TclError, TypeError, ValueError):
             pass
         self.configure_syntax_for_doc(compare_doc)
+        self.sync_compare_note_tags(doc)
         self.update_line_number_gutter(compare_doc)
         self.update_status()
 
