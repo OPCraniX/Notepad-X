@@ -108,7 +108,8 @@ class NotepadX:
         self.live_find_max_matches_typing = 150
         self.recent_files = []
         self.closed_session_files = set()
-        self.note_sync_interval_ms = 2000
+        self.note_sync_interval_ms = 150
+        self.note_editor_heartbeat_interval_ms = 2000
         self.kernel32 = None
         self.psapi = None
         if self.is_windows:
@@ -153,6 +154,9 @@ class NotepadX:
         self.autocomplete_doc_id = None
         self.autocomplete_start_index = None
         self.autocomplete_prefix = ""
+        self.autocomplete_suspended = 0
+        self.active_context_menu = None
+        self.context_menu_posted_at = 0.0
         self.hovered_editor_widget = None
         self.sync_page_navigation_enabled = tk.BooleanVar(value=False)
 
@@ -1618,38 +1622,46 @@ class NotepadX:
         return "break"
 
     def goto_next_unread_note(self):
-        doc = self.get_current_doc()
-        if not doc or doc.get('virtual_mode') or doc.get('preview_mode'):
-            return "break"
+        try:
+            doc = self.get_current_doc()
+            if not doc or doc.get('virtual_mode') or doc.get('preview_mode'):
+                return "break"
 
-        unread_tags = self.get_unread_note_tags(doc)
-        if not unread_tags:
-            return "break"
+            text_widget = doc.get('text')
+            if not text_widget:
+                return "break"
 
-        note_tag = unread_tags[0]
-        ranges = self.text.tag_ranges(note_tag)
-        if len(ranges) < 2:
-            return "break"
+            unread_tags = self.get_unread_note_tags(doc)
+            if not unread_tags:
+                return "break"
 
-        start = str(ranges[0])
-        end = str(ranges[1])
-        self.text.tag_remove('sel', '1.0', tk.END)
-        self.text.tag_add('sel', start, end)
-        self.text.mark_set(tk.INSERT, end)
-        self.text.see(start)
-        self.mark_note_as_read(doc, note_tag)
-        note_data = doc['notes'].get(note_tag)
-        if note_data:
-            bbox = self.text.bbox(start)
-            if bbox:
-                x, y, width, height = bbox
-                self.show_note_popup(
-                    doc,
-                    note_data,
-                    self.text.winfo_rootx() + x + width,
-                    self.text.winfo_rooty() + y + height
-                )
-        self.update_status()
+            note_tag = unread_tags[0]
+            ranges = text_widget.tag_ranges(note_tag)
+            if len(ranges) < 2:
+                return "break"
+
+            start = str(ranges[0])
+            end = str(ranges[1])
+            text_widget.tag_remove('sel', '1.0', tk.END)
+            text_widget.tag_add('sel', start, end)
+            text_widget.mark_set(tk.INSERT, end)
+            text_widget.see(start)
+            self.set_last_active_editor_widget(text_widget)
+            self.mark_note_as_read(doc, note_tag)
+            note_data = doc['notes'].get(note_tag)
+            if note_data:
+                bbox = text_widget.bbox(start)
+                if bbox:
+                    x, y, width, height = bbox
+                    self.show_note_popup(
+                        doc,
+                        note_data,
+                        text_widget.winfo_rootx() + x + width,
+                        text_widget.winfo_rooty() + y + height
+                    )
+            self.update_status()
+        except Exception as exc:
+            self.log_exception("goto next unread note", exc)
         return "break"
 
     def get_ordered_note_tags(self, doc):
@@ -1679,51 +1691,54 @@ class NotepadX:
         return True
 
     def goto_next_note(self, event=None):
-        doc = self.get_current_doc()
-        if not doc or doc.get('virtual_mode') or doc.get('preview_mode'):
-            return "break"
+        try:
+            doc = self.get_current_doc()
+            if not doc or doc.get('virtual_mode') or doc.get('preview_mode'):
+                return "break"
 
-        text_widget = doc.get('text')
-        if not text_widget:
-            return "break"
+            text_widget = doc.get('text')
+            if not text_widget:
+                return "break"
 
-        ordered_tags = self.get_ordered_note_tags(doc)
-        if not ordered_tags:
-            doc['last_note_cycle_tag'] = None
-            return "break"
+            ordered_tags = self.get_ordered_note_tags(doc)
+            if not ordered_tags:
+                doc['last_note_cycle_tag'] = None
+                return "break"
 
-        last_tag = doc.get('last_note_cycle_tag')
-        if last_tag in ordered_tags:
-            note_tag = ordered_tags[(ordered_tags.index(last_tag) + 1) % len(ordered_tags)]
-        else:
-            note_tag = ordered_tags[0]
+            last_tag = doc.get('last_note_cycle_tag')
+            if last_tag in ordered_tags:
+                note_tag = ordered_tags[(ordered_tags.index(last_tag) + 1) % len(ordered_tags)]
+            else:
+                note_tag = ordered_tags[0]
 
-        ranges = text_widget.tag_ranges(note_tag)
-        if len(ranges) < 2:
-            doc['last_note_cycle_tag'] = None
-            return "break"
+            ranges = text_widget.tag_ranges(note_tag)
+            if len(ranges) < 2:
+                doc['last_note_cycle_tag'] = None
+                return "break"
 
-        start = str(ranges[0])
-        end = str(ranges[1])
-        text_widget.tag_remove('sel', '1.0', tk.END)
-        text_widget.tag_add('sel', start, end)
-        text_widget.mark_set(tk.INSERT, end)
-        text_widget.see(start)
-        self.set_last_active_editor_widget(text_widget)
-        doc['last_note_cycle_tag'] = note_tag
-        self.mark_note_as_read(doc, note_tag)
-        note_data = doc['notes'].get(note_tag)
-        if note_data:
-            bbox = text_widget.bbox(start)
-            if bbox:
-                x, y, width, height = bbox
-                self.show_note_popup(
-                    doc,
-                    note_data,
-                    text_widget.winfo_rootx() + x + width,
-                    text_widget.winfo_rooty() + y + height
-                )
-        self.update_status()
+            start = str(ranges[0])
+            end = str(ranges[1])
+            text_widget.tag_remove('sel', '1.0', tk.END)
+            text_widget.tag_add('sel', start, end)
+            text_widget.mark_set(tk.INSERT, end)
+            text_widget.see(start)
+            self.set_last_active_editor_widget(text_widget)
+            doc['last_note_cycle_tag'] = note_tag
+            self.mark_note_as_read(doc, note_tag)
+            note_data = doc['notes'].get(note_tag)
+            if note_data:
+                bbox = text_widget.bbox(start)
+                if bbox:
+                    x, y, width, height = bbox
+                    self.show_note_popup(
+                        doc,
+                        note_data,
+                        text_widget.winfo_rootx() + x + width,
+                        text_widget.winfo_rooty() + y + height
+                    )
+            self.update_status()
+        except Exception as exc:
+            self.log_exception("goto next note", exc)
         return "break"
 
     def get_find_target_widgets(self):
@@ -2010,6 +2025,8 @@ class NotepadX:
         self.root.bind('<Control-A>', self.select_all)
         self.root.bind_all('<Control-b>', self.toggle_status_bar)
         self.root.bind_all('<Control-B>', self.toggle_status_bar)
+        self.root.bind_all('<ButtonRelease-1>', self.maybe_dismiss_transient_ui, add='+')
+        self.root.bind_all('<ButtonRelease-3>', self.maybe_dismiss_transient_ui, add='+')
         self.root.bind('<Control-d>', self.insert_date)
         self.root.bind('<Control-D>', self.insert_date)
         self.root.bind('<Control-Shift-D>', self.insert_time_date)
@@ -2410,6 +2427,9 @@ class NotepadX:
             return False
 
     def update_autocomplete_popup(self, doc):
+        if self.autocomplete_suspended > 0:
+            self.hide_autocomplete_popup()
+            return
         if not self.autocomplete_enabled.get() or not doc:
             self.hide_autocomplete_popup()
             return
@@ -2825,9 +2845,11 @@ class NotepadX:
             'context_note_tag': None,
             'note_sync_mtime': None,
             'note_sync_signature': None,
+            'note_editors_signature': None,
             'note_active_editors': 0,
             'note_editors': [],
             'note_editor_label': None,
+            'note_last_heartbeat_at': 0.0,
             'last_unread_count': 0,
             'notes_registered': False,
             'last_note_cycle_tag': None,
@@ -3785,16 +3807,102 @@ class NotepadX:
             return
 
         menu = tk.Menu(self.root, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
-        menu.add_command(label="Cut", command=self.cut_or_close_panel)
-        menu.add_command(label="Copy", command=self.copy)
-        menu.add_command(label="Paste", command=self.paste)
+        menu.add_command(label="Cut", command=lambda: self.run_context_menu_action(self.cut_or_close_panel))
+        menu.add_command(label="Copy", command=lambda: self.run_context_menu_action(self.copy))
+        menu.add_command(label="Paste", command=lambda: self.run_context_menu_action(self.paste))
         menu.add_separator()
-        menu.add_command(label="Select All", command=self.select_all)
-        menu.add_command(label="Add note", command=lambda frame=tab_id: self.add_note_to_selection(frame))
-        menu.add_command(label="Allow change", command=lambda frame=tab_id: self.approve_note(frame))
-        menu.add_command(label="Deny change", command=lambda frame=tab_id: self.dissapprove_note(frame))
-        menu.add_command(label="Remove note", command=lambda frame=tab_id: self.remove_note(frame))
+        menu.add_command(label="Select All", command=lambda: self.run_context_menu_action(self.select_all))
+        menu.add_command(label="Add note", command=lambda frame=tab_id: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
+        menu.add_command(label="Allow change", command=lambda frame=tab_id: self.run_context_menu_action(lambda: self.approve_note(frame)))
+        menu.add_command(label="Deny change", command=lambda frame=tab_id: self.run_context_menu_action(lambda: self.dissapprove_note(frame)))
+        menu.add_command(label="Remove note", command=lambda frame=tab_id: self.run_context_menu_action(lambda: self.remove_note(frame)))
         doc['context_menu'] = menu
+
+    def run_context_menu_action(self, callback):
+        self.dismiss_context_menu()
+        try:
+            self.root.after(1, callback)
+        except tk.TclError:
+            try:
+                return callback()
+            except Exception as exc:
+                self.log_exception("context menu action", exc)
+        return "break"
+
+    def dismiss_context_menu(self, event=None):
+        menu = getattr(self, 'active_context_menu', None)
+        if menu is None:
+            return None
+        try:
+            menu.unpost()
+        except tk.TclError:
+            pass
+        self.active_context_menu = None
+        self.context_menu_posted_at = 0.0
+        return None
+
+    def is_note_popup_widget(self, widget):
+        if widget is None:
+            return False
+        current = widget
+        while current is not None:
+            for doc in self.documents.values():
+                if doc.get('note_popup') == current:
+                    return True
+            parent_name = getattr(current, 'master', None)
+            if parent_name is None:
+                break
+            current = parent_name
+        return False
+
+    def dismiss_note_popups(self):
+        for doc in self.documents.values():
+            self.hide_note_popup(doc)
+        return None
+
+    def click_is_on_note(self, event=None):
+        widget = getattr(event, 'widget', None)
+        if not isinstance(widget, tk.Text):
+            return False
+        doc = self.get_doc_for_text_widget(widget)
+        if not doc or not doc.get('notes'):
+            return False
+        try:
+            index = widget.index(f"@{event.x},{event.y}")
+            return any(tag in doc['notes'] for tag in widget.tag_names(index))
+        except tk.TclError:
+            return False
+
+    def maybe_dismiss_transient_ui(self, event=None):
+        menu = getattr(self, 'active_context_menu', None)
+        widget = getattr(event, 'widget', None)
+        if isinstance(widget, tk.Menu):
+            return None
+        if menu is not None and (time.monotonic() - float(getattr(self, 'context_menu_posted_at', 0.0) or 0.0)) < 0.25:
+            return None
+        if self.is_note_popup_widget(widget):
+            if menu is not None:
+                try:
+                    self.root.after_idle(self.dismiss_context_menu)
+                except tk.TclError:
+                    self.dismiss_context_menu()
+            return None
+        if self.click_is_on_note(event):
+            if menu is not None:
+                try:
+                    self.root.after_idle(self.dismiss_context_menu)
+                except tk.TclError:
+                    self.dismiss_context_menu()
+            return None
+        try:
+            self.root.after_idle(self.dismiss_context_menu)
+        except tk.TclError:
+            self.dismiss_context_menu()
+        try:
+            self.root.after_idle(self.dismiss_note_popups)
+        except tk.TclError:
+            self.dismiss_note_popups()
+        return None
 
     def show_text_context_menu(self, event, tab_id):
         doc = self.documents.get(str(tab_id))
@@ -3833,6 +3941,9 @@ class NotepadX:
         doc['context_menu'].entryconfig("Deny change", state=dissapprove_state)
         doc['context_menu'].entryconfig("Remove note", state=note_action_state)
         try:
+            self.dismiss_context_menu()
+            self.active_context_menu = doc['context_menu']
+            self.context_menu_posted_at = time.monotonic()
             doc['context_menu'].tk_popup(event.x_root, event.y_root)
         finally:
             doc['context_menu'].grab_release()
@@ -3950,6 +4061,8 @@ class NotepadX:
 
     def prompt_note_input(self, title, prompt, initialvalue="", parent=None):
         parent = parent or self.root
+        self.hide_autocomplete_popup()
+        self.autocomplete_suspended += 1
         dialog = tk.Toplevel(parent)
         dialog.title(title)
         dialog.transient(parent)
@@ -3976,14 +4089,17 @@ class NotepadX:
         def submit(event=None):
             result['value'] = value_var.get()
             dialog.destroy()
+            return "break"
 
         def cancel(event=None):
             result['value'] = None
             dialog.destroy()
+            return "break"
 
         tk.Button(button_row, text="OK", width=10, command=submit).pack(side='left')
         tk.Button(button_row, text="Cancel", width=10, command=cancel).pack(side='right')
 
+        entry.bind('<Return>', submit)
         dialog.bind('<Return>', submit)
         dialog.bind('<Escape>', cancel)
         dialog.protocol("WM_DELETE_WINDOW", cancel)
@@ -3999,10 +4115,14 @@ class NotepadX:
         dialog.grab_set()
         entry.focus_force()
         entry.selection_range(0, tk.END)
-        dialog.wait_visibility()
-        dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
-        parent.wait_window(dialog)
-        return result['value']
+        try:
+            dialog.wait_visibility()
+            dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
+            parent.wait_window(dialog)
+            return result['value']
+        finally:
+            self.autocomplete_suspended = max(0, self.autocomplete_suspended - 1)
+            self.hide_autocomplete_popup()
 
     def export_notes_report(self):
         doc = self.get_current_doc()
@@ -4120,7 +4240,7 @@ class NotepadX:
             author_label=author_name,
             read_by=[self.editor_id]
         )
-        self.persist_doc_notes(doc)
+        self.sync_single_note_to_sidecar(doc, note_tag=note_tag, fallback_start=start, fallback_end=end)
         return "break"
 
     def create_note_tag(
@@ -4193,6 +4313,11 @@ class NotepadX:
         if not doc or not doc.get('context_note_tag'):
             return "break"
 
+        note_tag = doc.get('context_note_tag')
+        note_data = doc['notes'].get(note_tag)
+        if not note_data:
+            return "break"
+
         self.hide_note_popup(doc)
         approver = self.prompt_note_input("Allow Change", "Name:", parent=self.root)
         if not approver:
@@ -4201,7 +4326,6 @@ class NotepadX:
         if review_note is None:
             return "break"
 
-        note_tag = doc['context_note_tag']
         note_data = doc['notes'].get(note_tag)
         if not note_data:
             return "break"
@@ -4210,6 +4334,12 @@ class NotepadX:
         note_data['dissapproved_by'] = None
         note_data['approved_note'] = self.trim_text(review_note, self.max_note_reply_length)
         note_data['dissapproved_note'] = None
+        read_by = [str(editor_id) for editor_id in note_data.get('read_by', []) if str(editor_id).strip()]
+        if self.editor_id not in read_by:
+            read_by.append(self.editor_id)
+        note_data['read_by'] = read_by
+        if note_data.get('author_id') in self.editor_aliases:
+            note_data['author_unread'] = False
         if note_data.get('author_id') and note_data.get('author_id') not in self.editor_aliases:
             note_data['author_unread'] = True
             note_data['read_by'] = [
@@ -4220,12 +4350,17 @@ class NotepadX:
         if len(ranges) >= 2:
             doc['text'].tag_remove(note_tag, '1.0', tk.END)
             self.apply_note_tag(doc, note_tag, str(ranges[0]), str(ranges[1]))
-        self.persist_doc_notes(doc)
+        self.sync_single_note_to_sidecar(doc, note_tag=note_tag)
         return "break"
 
     def dissapprove_note(self, tab_id=None):
         doc = self.documents.get(str(tab_id)) if tab_id is not None else self.get_current_doc()
         if not doc or not doc.get('context_note_tag'):
+            return "break"
+
+        note_tag = doc.get('context_note_tag')
+        note_data = doc['notes'].get(note_tag)
+        if not note_data:
             return "break"
 
         self.hide_note_popup(doc)
@@ -4236,7 +4371,6 @@ class NotepadX:
         if review_note is None:
             return "break"
 
-        note_tag = doc['context_note_tag']
         note_data = doc['notes'].get(note_tag)
         if not note_data:
             return "break"
@@ -4245,6 +4379,12 @@ class NotepadX:
         note_data['approved_by'] = None
         note_data['dissapproved_note'] = self.trim_text(review_note, self.max_note_reply_length)
         note_data['approved_note'] = None
+        read_by = [str(editor_id) for editor_id in note_data.get('read_by', []) if str(editor_id).strip()]
+        if self.editor_id not in read_by:
+            read_by.append(self.editor_id)
+        note_data['read_by'] = read_by
+        if note_data.get('author_id') in self.editor_aliases:
+            note_data['author_unread'] = False
         if note_data.get('author_id') and note_data.get('author_id') not in self.editor_aliases:
             note_data['author_unread'] = True
             note_data['read_by'] = [
@@ -4255,7 +4395,7 @@ class NotepadX:
         if len(ranges) >= 2:
             doc['text'].tag_remove(note_tag, '1.0', tk.END)
             self.apply_note_tag(doc, note_tag, str(ranges[0]), str(ranges[1]))
-        self.persist_doc_notes(doc)
+        self.sync_single_note_to_sidecar(doc, note_tag=note_tag)
         return "break"
 
     def remove_note(self, tab_id=None):
@@ -4264,12 +4404,14 @@ class NotepadX:
             return "break"
 
         note_tag = doc['context_note_tag']
+        removed_note = doc['notes'].get(note_tag, {})
+        removed_note_id = removed_note.get('id')
         doc['text'].tag_delete(note_tag)
         doc['text'].config(cursor='xterm')
         doc['notes'].pop(note_tag, None)
         doc['context_note_tag'] = None
         self.hide_note_popup(doc)
-        self.persist_doc_notes(doc)
+        self.sync_single_note_to_sidecar(doc, remove_note_id=removed_note_id)
         self.play_delete_note_sound()
         return "break"
 
@@ -4332,19 +4474,102 @@ class NotepadX:
             note_data['read_by'] = read_by
             changed = True
         if changed and doc.get('file_path') and not doc.get('virtual_mode') and not doc.get('preview_mode'):
-            self.persist_doc_notes(doc)
+            self.sync_single_note_to_sidecar(doc, note_tag=note_tag)
 
-    def get_notes_sidecar_path(self, file_path):
+    def get_canonical_document_filename(self, file_path):
         directory = os.path.dirname(file_path)
         filename = os.path.basename(file_path)
-        return os.path.join(directory, f"{filename}.notepadx.notes.json")
+        try:
+            if os.path.isdir(directory):
+                directory_entries = os.listdir(directory)
+                exact_match = next((entry for entry in directory_entries if entry == filename), None)
+                if exact_match:
+                    return exact_match
+                casefold_match = next((entry for entry in directory_entries if entry.lower() == filename.lower()), None)
+                if casefold_match:
+                    return casefold_match
+        except OSError:
+            pass
+        return filename
+
+    def resolve_sidecar_path(self, file_path, suffix):
+        directory = os.path.dirname(file_path)
+        preferred_filename = self.get_canonical_document_filename(file_path)
+        return os.path.join(directory, f"{preferred_filename}{suffix}")
+
+    def get_sidecar_variants(self, sidecar_path):
+        directory = os.path.dirname(sidecar_path)
+        target_name = os.path.basename(sidecar_path)
+        variants = []
+        seen = set()
+        try:
+            if os.path.isdir(directory):
+                for entry in os.listdir(directory):
+                    if entry.lower() != target_name.lower():
+                        continue
+                    full_path = os.path.join(directory, entry)
+                    normalized = os.path.normcase(os.path.abspath(full_path))
+                    if normalized in seen:
+                        continue
+                    seen.add(normalized)
+                    variants.append(full_path)
+        except OSError:
+            pass
+        if not variants:
+            return [sidecar_path]
+        canonical_normalized = os.path.normcase(os.path.abspath(sidecar_path))
+        variants.sort(key=lambda path: (
+            0 if os.path.normcase(os.path.abspath(path)) == canonical_normalized else 1,
+            path.lower()
+        ))
+        return variants
+
+    def cleanup_duplicate_sidecar_variants(self, canonical_path):
+        canonical_normalized = os.path.normcase(os.path.abspath(canonical_path))
+        for variant_path in self.get_sidecar_variants(canonical_path):
+            if os.path.normcase(os.path.abspath(variant_path)) == canonical_normalized:
+                continue
+            try:
+                os.remove(variant_path)
+            except OSError:
+                pass
+
+    def get_notes_sidecar_path(self, file_path):
+        return self.resolve_sidecar_path(file_path, ".notepadx.notes.json")
+
+    def get_editors_sidecar_path(self, file_path):
+        return self.resolve_sidecar_path(file_path, ".notepadx.editors.json")
+
+    def get_sidecar_file_signature(self, sidecar_path):
+        signatures = []
+        for variant_path in self.get_sidecar_variants(sidecar_path):
+            if not os.path.exists(variant_path):
+                continue
+            try:
+                stat = os.stat(variant_path)
+            except OSError:
+                continue
+            signatures.append((
+                os.path.basename(variant_path).lower(),
+                stat.st_mtime_ns,
+                stat.st_size
+            ))
+        if not signatures:
+            return None
+        signatures.sort()
+        return tuple(signatures)
 
     def get_notes_sidecar_signature(self, sidecar_path):
-        try:
-            stat = os.stat(sidecar_path)
-        except OSError:
-            return None
-        return (stat.st_mtime_ns, stat.st_size)
+        return self.get_sidecar_file_signature(sidecar_path)
+
+    def get_editors_sidecar_signature(self, sidecar_path):
+        return self.get_sidecar_file_signature(sidecar_path)
+
+    def apply_shared_editors_to_doc(self, doc, shared_editors_payload):
+        doc['note_editors'] = self.sanitize_shared_editors(shared_editors_payload.get('editors', []))
+        doc['note_active_editors'] = max(shared_editors_payload.get('active_editors', 0), len(doc['note_editors']))
+        existing_editor = next((entry for entry in doc['note_editors'] if entry.get('id') == self.editor_id), None)
+        doc['note_editor_label'] = existing_editor.get('label') if existing_editor else None
 
     def sanitize_shared_editors(self, editors):
         sanitized = []
@@ -4406,8 +4631,8 @@ class NotepadX:
     def refresh_doc_shared_editor_state(self, doc, force_write=False):
         if not doc or not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
             return
-        sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
-        payload = self.load_shared_notes(sidecar_path)
+        sidecar_path = self.get_editors_sidecar_path(doc['file_path'])
+        payload = self.load_shared_editors(sidecar_path)
         editors = self.sanitize_shared_editors(payload.get('editors', []))
         current_timestamp = self.utc_timestamp()
         existing_editor = next((entry for entry in editors if entry.get('id') == self.editor_id), None)
@@ -4426,33 +4651,109 @@ class NotepadX:
         doc['note_editors'] = editors
         doc['note_editor_label'] = existing_editor.get('label')
         doc['note_active_editors'] = len(editors)
-        self.write_shared_notes(sidecar_path, payload.get('notes', []), len(editors), editors)
-        doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
-        doc['note_sync_mtime'] = os.path.getmtime(sidecar_path) if os.path.exists(sidecar_path) else None
+        self.write_shared_editors(sidecar_path, editors)
+        doc['note_editors_signature'] = self.get_editors_sidecar_signature(sidecar_path)
+        doc['note_last_heartbeat_at'] = time.monotonic()
 
     def export_doc_notes(self, doc):
         exported = []
         for note_tag, note_data in doc['notes'].items():
-            ranges = doc['text'].tag_ranges(note_tag)
-            if len(ranges) >= 2:
-                exported.append({
-                    'id': note_data.get('id'),
-                    'start': str(ranges[0]),
-                    'end': str(ranges[1]),
-                    'text': note_data['text'],
-                    'approved_by': note_data.get('approved_by'),
-                    'dissapproved_by': note_data.get('dissapproved_by'),
-                    'approved_note': note_data.get('approved_note'),
-                    'dissapproved_note': note_data.get('dissapproved_note'),
-                    'author_id': note_data.get('author_id'),
-                    'author_label': note_data.get('author_label'),
-                    'read_by': [str(editor_id).strip()[:128] for editor_id in note_data.get('read_by', []) if str(editor_id).strip()][:64],
-                    'author_unread': bool(note_data.get('author_unread')),
-                    'created_at': note_data.get('created_at'),
-                    'anchor_text': (note_data.get('anchor_text') or '')[:self.max_note_text_length],
-                    'anchor_line': note_data.get('anchor_line'),
-                })
+            exported_note = self.build_exported_note(doc, note_tag)
+            if exported_note is not None:
+                exported.append(exported_note)
         return exported
+
+    def build_exported_note(self, doc, note_tag, fallback_start=None, fallback_end=None):
+        if not doc or note_tag not in doc.get('notes', {}):
+            return None
+        note_data = doc['notes'][note_tag]
+        ranges = doc['text'].tag_ranges(note_tag)
+        if len(ranges) >= 2:
+            start = str(ranges[0])
+            end = str(ranges[1])
+        else:
+            start = str(fallback_start).strip() if fallback_start else None
+            end = str(fallback_end).strip() if fallback_end else None
+            if not start or not end:
+                return None
+        return {
+            'id': note_data.get('id'),
+            'start': start,
+            'end': end,
+            'text': note_data['text'],
+            'approved_by': note_data.get('approved_by'),
+            'dissapproved_by': note_data.get('dissapproved_by'),
+            'approved_note': note_data.get('approved_note'),
+            'dissapproved_note': note_data.get('dissapproved_note'),
+            'author_id': note_data.get('author_id'),
+            'author_label': note_data.get('author_label'),
+            'read_by': [str(editor_id).strip()[:128] for editor_id in note_data.get('read_by', []) if str(editor_id).strip()][:64],
+            'author_unread': bool(note_data.get('author_unread')),
+            'created_at': note_data.get('created_at'),
+            'anchor_text': (note_data.get('anchor_text') or '')[:self.max_note_text_length],
+            'anchor_line': note_data.get('anchor_line'),
+        }
+
+    def sync_single_note_to_sidecar(self, doc, note_tag=None, remove_note_id=None, fallback_start=None, fallback_end=None):
+        if not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+            return
+
+        sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
+        try:
+            payload = self.load_shared_notes(sidecar_path)
+            notes = payload.get('notes', [])
+            if not isinstance(notes, list):
+                notes = []
+
+            target_note_id = None
+            if note_tag is not None:
+                note_data = doc.get('notes', {}).get(note_tag)
+                if note_data:
+                    target_note_id = str(note_data.get('id', '')).strip() or None
+            if remove_note_id is not None:
+                target_note_id = str(remove_note_id).strip() or target_note_id
+
+            existing_note = None
+            if target_note_id:
+                for note in notes:
+                    if str(note.get('id', '')).strip() == target_note_id:
+                        existing_note = dict(note)
+                        break
+                notes = [note for note in notes if str(note.get('id', '')).strip() != target_note_id]
+
+            if note_tag is not None:
+                exported_note = self.build_exported_note(doc, note_tag, fallback_start=fallback_start, fallback_end=fallback_end)
+                if exported_note is None and existing_note is not None:
+                    local_note = doc.get('notes', {}).get(note_tag)
+                    if local_note:
+                        exported_note = dict(existing_note)
+                        exported_note.update({
+                            'text': local_note.get('text'),
+                            'approved_by': local_note.get('approved_by'),
+                            'dissapproved_by': local_note.get('dissapproved_by'),
+                            'approved_note': local_note.get('approved_note'),
+                            'dissapproved_note': local_note.get('dissapproved_note'),
+                            'author_id': local_note.get('author_id'),
+                            'author_label': local_note.get('author_label'),
+                            'read_by': [str(editor_id).strip()[:128] for editor_id in local_note.get('read_by', []) if str(editor_id).strip()][:64],
+                            'author_unread': bool(local_note.get('author_unread')),
+                            'created_at': local_note.get('created_at'),
+                            'anchor_text': (local_note.get('anchor_text') or '')[:self.max_note_text_length],
+                            'anchor_line': local_note.get('anchor_line'),
+                        })
+                if exported_note is not None:
+                    notes.append(exported_note)
+
+            self.write_shared_notes(sidecar_path, notes, doc.get('note_active_editors', 0), doc.get('note_editors', []))
+            doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
+            doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+            doc['note_last_heartbeat_at'] = time.monotonic()
+            doc['last_unread_count'] = self.get_unread_note_count(doc)
+        except PermissionError as exc:
+            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+        except OSError as exc:
+            self.log_exception("sync single note to sidecar", exc)
+            self.show_filesystem_error("Code Notes", sidecar_path, exc)
 
     def normalize_optional_metadata(self, value):
         if value is None:
@@ -4499,6 +4800,26 @@ class NotepadX:
             'anchor_line': anchor_line,
         }
 
+    def dedupe_notes_payload(self, notes):
+        if not isinstance(notes, list):
+            return []
+        deduped = []
+        by_id = {}
+        for note in notes:
+            sanitized_note = self.sanitize_note_payload(note)
+            if sanitized_note is None:
+                continue
+            note_id = str(sanitized_note.get('id', '')).strip()
+            if note_id:
+                if note_id in by_id:
+                    deduped[by_id[note_id]] = sanitized_note
+                else:
+                    by_id[note_id] = len(deduped)
+                    deduped.append(sanitized_note)
+            else:
+                deduped.append(sanitized_note)
+        return deduped
+
     def resolve_note_range(self, doc, saved_note):
         start = saved_note.get('start')
         end = saved_note.get('end')
@@ -4544,43 +4865,102 @@ class NotepadX:
         self.hide_note_popup(doc)
 
     def write_shared_notes(self, sidecar_path, notes_payload, active_editors=0, editors=None):
-        sanitized_editors = self.prune_inactive_shared_editors(editors)
         payload = {
-            'active_editors': len(sanitized_editors),
-            'editors': sanitized_editors,
-            'notes': notes_payload if isinstance(notes_payload, list) else []
+            'notes': self.dedupe_notes_payload(notes_payload)
         }
         if not self.write_json_atomically(sidecar_path, payload, 'notepadx-notes-', 'write shared notes'):
             raise OSError(f"Could not write note sidecar: {sidecar_path}")
+        self.cleanup_duplicate_sidecar_variants(sidecar_path)
         self.hide_support_file(sidecar_path)
 
     def load_shared_notes(self, sidecar_path):
-        if not os.path.exists(sidecar_path):
+        variant_paths = [path for path in self.get_sidecar_variants(sidecar_path) if os.path.exists(path)]
+        if not variant_paths:
             return {'active_editors': 0, 'editors': [], 'notes': []}
-        payload = self.read_json_file(sidecar_path, "load shared notes", {'active_editors': 0, 'editors': [], 'notes': []})
-        if not isinstance(payload, dict):
-            return {'active_editors': 0, 'editors': [], 'notes': []}
-        notes = payload.get('notes', [])
-        editors = self.prune_inactive_shared_editors(payload.get('editors', []))
-        sanitized_notes = []
-        dirty_payload = False
-        for note in notes if isinstance(notes, list) else []:
-            sanitized_note = self.sanitize_note_payload(note)
-            if sanitized_note is not None:
-                sanitized_notes.append(sanitized_note)
-                if sanitized_note != note:
-                    dirty_payload = True
+        try:
+            variant_paths.sort(key=lambda path: (os.path.getmtime(path), path.lower()))
+        except OSError:
+            variant_paths.sort(key=lambda path: path.lower())
+
+        original_notes = []
+        embedded_editors = []
+        dirty_payload = len(variant_paths) > 1
+        for variant_path in variant_paths:
+            payload = self.read_json_file(variant_path, "load shared notes", {'active_editors': 0, 'editors': [], 'notes': []})
+            if not isinstance(payload, dict):
+                dirty_payload = True
+                continue
+            notes = payload.get('notes', [])
+            if isinstance(notes, list):
+                original_notes.extend(notes)
             else:
                 dirty_payload = True
+            embedded = payload.get('editors', [])
+            if isinstance(embedded, list):
+                embedded_editors.extend(embedded)
+
+        sanitized_notes = self.dedupe_notes_payload(original_notes)
+        if sanitized_notes != original_notes:
+            dirty_payload = True
+        editors = self.prune_inactive_shared_editors(embedded_editors)
         if dirty_payload:
             try:
                 self.write_shared_notes(sidecar_path, sanitized_notes, len(editors), editors)
+                self.cleanup_duplicate_sidecar_variants(sidecar_path)
             except OSError as exc:
                 self.log_exception("rewrite sanitized shared notes", exc)
         return {
             'active_editors': len(editors),
             'editors': editors,
             'notes': sanitized_notes
+        }
+
+    def write_shared_editors(self, sidecar_path, editors):
+        sanitized_editors = self.prune_inactive_shared_editors(editors)
+        payload = {
+            'active_editors': len(sanitized_editors),
+            'editors': sanitized_editors
+        }
+        if not self.write_json_atomically(sidecar_path, payload, 'notepadx-editors-', 'write shared editors'):
+            raise OSError(f"Could not write editor sidecar: {sidecar_path}")
+        self.cleanup_duplicate_sidecar_variants(sidecar_path)
+        self.hide_support_file(sidecar_path)
+
+    def load_shared_editors(self, sidecar_path, fallback_payload=None):
+        variant_paths = [path for path in self.get_sidecar_variants(sidecar_path) if os.path.exists(path)]
+        if variant_paths:
+            try:
+                variant_paths.sort(key=lambda path: (os.path.getmtime(path), path.lower()), reverse=True)
+            except OSError:
+                variant_paths.sort(key=lambda path: path.lower(), reverse=True)
+            merged_editors = []
+            dirty_payload = len(variant_paths) > 1
+            for variant_path in variant_paths:
+                payload = self.read_json_file(variant_path, "load shared editors", {'active_editors': 0, 'editors': []})
+                if not isinstance(payload, dict):
+                    dirty_payload = True
+                    continue
+                editors = payload.get('editors', [])
+                if isinstance(editors, list):
+                    merged_editors.extend(editors)
+                else:
+                    dirty_payload = True
+            editors = self.prune_inactive_shared_editors(merged_editors)
+            if dirty_payload:
+                try:
+                    self.write_shared_editors(sidecar_path, editors)
+                    self.cleanup_duplicate_sidecar_variants(sidecar_path)
+                except OSError as exc:
+                    self.log_exception("rewrite sanitized shared editors", exc)
+            return {
+                'active_editors': len(editors),
+                'editors': editors
+            }
+        fallback_payload = fallback_payload if isinstance(fallback_payload, dict) else {}
+        editors = self.prune_inactive_shared_editors(fallback_payload.get('editors', []))
+        return {
+            'active_editors': len(editors),
+            'editors': editors
         }
 
     def persist_doc_notes(self, doc):
@@ -4594,6 +4974,7 @@ class NotepadX:
                 self.write_shared_notes(sidecar_path, exported, doc.get('note_active_editors', 0), doc.get('note_editors', []))
                 doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
                 doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+                doc['note_last_heartbeat_at'] = time.monotonic()
         except PermissionError as exc:
             self.show_filesystem_error("Code Notes", sidecar_path, exc)
         except OSError as exc:
@@ -4606,16 +4987,16 @@ class NotepadX:
             return
 
         sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
+        editors_sidecar_path = self.get_editors_sidecar_path(doc['file_path'])
         shared_payload = self.load_shared_notes(sidecar_path)
+        shared_editors_payload = self.load_shared_editors(editors_sidecar_path, fallback_payload=shared_payload)
         saved_notes = shared_payload.get('notes', [])
-        doc['note_editors'] = self.sanitize_shared_editors(shared_payload.get('editors', []))
-        doc['note_active_editors'] = max(shared_payload.get('active_editors', 0), len(doc['note_editors']))
-        existing_editor = next((entry for entry in doc['note_editors'] if entry.get('id') == self.editor_id), None)
-        doc['note_editor_label'] = existing_editor.get('label') if existing_editor else None
+        self.apply_shared_editors_to_doc(doc, shared_editors_payload)
         self.clear_doc_notes(doc)
         if not saved_notes:
             doc['note_sync_mtime'] = os.path.getmtime(sidecar_path) if os.path.exists(sidecar_path) else None
             doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+            doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
             return
 
         for saved_note in saved_notes:
@@ -4659,6 +5040,7 @@ class NotepadX:
                 restored_note['dissapproved_note'] = dissapproved_note
         doc['note_sync_mtime'] = os.path.getmtime(sidecar_path) if os.path.exists(sidecar_path) else None
         doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+        doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
         doc['last_unread_count'] = self.get_unread_note_count(doc)
 
     def register_doc_for_shared_notes(self, doc):
@@ -4679,7 +5061,8 @@ class NotepadX:
             return
 
         sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
-        payload = self.load_shared_notes(sidecar_path)
+        editors_sidecar_path = self.get_editors_sidecar_path(doc['file_path'])
+        payload = self.load_shared_editors(editors_sidecar_path)
         editors = [
             entry for entry in self.sanitize_shared_editors(payload.get('editors', []))
             if entry.get('id') != self.editor_id
@@ -4690,36 +5073,62 @@ class NotepadX:
         doc['note_editor_label'] = None
         doc['notes_registered'] = False
         try:
-            self.write_shared_notes(sidecar_path, payload.get('notes', []), active_editors, editors)
-            doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
-            doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+            self.write_shared_editors(editors_sidecar_path, editors)
+            doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
         except OSError as exc:
             self.log_exception("unregister doc from shared notes", exc)
         self.update_status()
 
     def poll_shared_notes(self):
-        for doc in self.documents.values():
-            if not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
-                continue
-
-            sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
-            current_signature = self.get_notes_sidecar_signature(sidecar_path)
-            current_mtime = current_signature[0] / 1_000_000_000 if current_signature else None
-            if current_signature != doc.get('note_sync_signature') or current_mtime != doc.get('note_sync_mtime'):
-                previous_unread_count = self.get_unread_note_count(doc)
-                self.restore_doc_notes(doc)
-                current_unread_count = self.get_unread_note_count(doc)
-                if current_unread_count > previous_unread_count:
-                    self.play_unread_note_sound()
-                doc['last_unread_count'] = current_unread_count
-            if doc.get('notes_registered'):
+        try:
+            now = time.monotonic()
+            heartbeat_interval = max(0.25, self.note_editor_heartbeat_interval_ms / 1000.0)
+            status_dirty = False
+            for doc in list(self.documents.values()):
                 try:
-                    self.refresh_doc_shared_editor_state(doc)
-                except OSError as exc:
-                    self.log_exception("refresh shared editor state", exc)
-        self.update_status()
+                    if not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+                        continue
 
-        self.root.after(self.note_sync_interval_ms, self.poll_shared_notes)
+                    notes_sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
+                    editors_sidecar_path = self.get_editors_sidecar_path(doc['file_path'])
+                    current_note_signature = self.get_notes_sidecar_signature(notes_sidecar_path)
+                    current_editors_signature = self.get_editors_sidecar_signature(editors_sidecar_path)
+
+                    if current_note_signature != doc.get('note_sync_signature'):
+                        previous_unread_count = self.get_unread_note_count(doc)
+                        self.restore_doc_notes(doc)
+                        current_unread_count = self.get_unread_note_count(doc)
+                        if current_unread_count > previous_unread_count:
+                            self.play_unread_note_sound()
+                        doc['last_unread_count'] = current_unread_count
+                        status_dirty = True
+                    elif current_editors_signature != doc.get('note_editors_signature'):
+                        shared_editors_payload = self.load_shared_editors(editors_sidecar_path)
+                        self.apply_shared_editors_to_doc(doc, shared_editors_payload)
+                        doc['note_editors_signature'] = current_editors_signature
+                        status_dirty = True
+                    if doc.get('notes_registered'):
+                        try:
+                            last_heartbeat = float(doc.get('note_last_heartbeat_at', 0.0) or 0.0)
+                            if (now - last_heartbeat) >= heartbeat_interval:
+                                self.refresh_doc_shared_editor_state(doc)
+                                status_dirty = True
+                        except OSError as exc:
+                            self.log_exception("refresh shared editor state", exc)
+                except Exception as exc:
+                    self.log_exception("poll shared notes doc", exc)
+            try:
+                if status_dirty:
+                    self.update_status()
+            except Exception as exc:
+                self.log_exception("poll shared notes status", exc)
+        except Exception as exc:
+            self.log_exception("poll shared notes", exc)
+        finally:
+            try:
+                self.root.after(self.note_sync_interval_ms, self.poll_shared_notes)
+            except Exception as exc:
+                self.log_exception("reschedule poll shared notes", exc)
 
     def load_content_into_doc(self, doc, file_path):
         try:
