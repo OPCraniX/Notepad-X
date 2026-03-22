@@ -140,16 +140,9 @@ Notepad-X also treats binary-like files more cautiously:
 
 ## Requirements
 
-- Windows or Linux
-- Python 3.11 recommended
+- Python 3.11
 - Tkinter available in the Python install
 - `cryptography` installed if you want `.npxe` encrypted files
-
-## Run
-
-```powershell
-python Notepad-X.py
-```
 
 ## Main Shortcuts
 
