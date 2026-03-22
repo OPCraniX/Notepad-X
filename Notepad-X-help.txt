@@ -89,10 +89,6 @@ View Menu
 - Normal editable tabs can also be edited from the compare pane on the right.
 - Close Compare Tabs: Closes the compare pane.
 
-Help Menu
-- Help Contents: Opens this document inside Notepad-X.
-- About Notepad-X: Opens the About dialog.
-
 Opening Files
 - Files are loaded as text with replacement for unreadable characters when needed.
 - Opening a file moves the caret to line 1, column 1, clears any old selection, and scrolls to the top.
@@ -284,10 +280,6 @@ Printing
 - Print uses the Windows file print action on the saved file path.
 - If the current tab has never been saved, Notepad-X prompts you to save it first.
 - File paths are validated before Notepad-X hands them off to Windows print integration.
-
-Help Viewer
-- Help Contents opens this file in a scrollable built-in text viewer.
-- The help viewer is read-only.
 
 Keyboard Shortcuts
 - Ctrl+W: Open
