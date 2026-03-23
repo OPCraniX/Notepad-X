@@ -49,11 +49,18 @@ class NotepadX:
     def __init__(self, isolated_session=False, startup_files=None):
         self.root = tk.Tk()
         self.root.title("Notepad-X")
+        self.isolated_session = isolated_session
+        self.startup_files = list(startup_files or [])
+        self.init_config()
+        self.init_runtime()
+        self.init_ui()
+        self.root.mainloop()
+
+    def init_config(self):
         self.is_windows = os.name == 'nt'
         self.is_linux = sys.platform.startswith('linux')
         self.resource_dir = self.get_resource_dir()
         self.app_dir = self.get_app_dir()
-        self.isolated_session = isolated_session
         self.machine_profile_slug = self.get_machine_profile_slug()
         self.icon_path = self.resolve_gfx_path("Notepad-X.ico")
         self.splash_path = self.resolve_gfx_path("splash.png")
@@ -62,19 +69,7 @@ class NotepadX:
         self.note_sound_path = self.resolve_audio_path("note.mp3")
         self.delete_note_sound_path = self.resolve_audio_path("delete_note.mp3")
         self.window_icon_image = None
-        
-        # Try to set window icon
-        self.apply_window_icon(self.root)
-        
-        self.root.geometry("1500x700")
-        self.root.configure(bg='#1e1e1e')
-        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
-        # Grid layout
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
-
-        # Dark theme colors
         self.bg_color     = '#1e1e1e'
         self.fg_color     = '#d4d4d4'
         self.text_bg      = '#0d1117'
@@ -142,18 +137,7 @@ class NotepadX:
         self.note_editor_heartbeat_interval_ms = 1500
         self.kernel32 = None
         self.psapi = None
-        if self.is_windows:
-            self.kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-            self.psapi = ctypes.WinDLL('psapi', use_last_error=True)
-        self.configure_memory_api()
-        self.configure_sound_api()
-        self.known_editor_ids = self.load_known_editor_ids()
-        self.editor_id = self.generate_editor_id()
-        self.editor_aliases = set(self.known_editor_ids)
-        self.editor_aliases.add(self.editor_id)
-        self.persist_editor_identity()
 
-        # Font size control
         self.base_font_size = 13
         self.current_font_size = self.base_font_size
         self.font_family = 'Courier New'
@@ -189,31 +173,49 @@ class NotepadX:
         self.context_menu_posted_at = 0.0
         self.hovered_editor_widget = None
         self.sync_page_navigation_enabled = tk.BooleanVar(value=False)
-        # Panel visibility flags
         self.find_panel_visible = False
         self.replace_panel_visible = False
         self.fullscreen = False
         self.fullscreen_panel_restore = False
 
+    def init_runtime(self):
+        self.kernel32 = None
+        self.psapi = None
+        if self.is_windows:
+            self.kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            self.psapi = ctypes.WinDLL('psapi', use_last_error=True)
+        self.configure_memory_api()
+        self.configure_sound_api()
+        self.known_editor_ids = self.load_known_editor_ids()
+        self.editor_id = self.generate_editor_id()
+        self.editor_aliases = set(self.known_editor_ids)
+        self.editor_aliases.add(self.editor_id)
+        self.persist_editor_identity()
+
         self.setup_exception_handling()
 
-        # Create UI in logical order
+    def init_ui(self):
+        self.apply_window_icon(self.root)
+        self.root.geometry("1500x700")
+        self.root.configure(bg='#1e1e1e')
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
         self.create_text_widget()
         self.create_bottom_panels()
         self.create_menu()
         self.create_status_bar()
         self.restore_session()
         self.restore_recovery_state()
-        self.open_startup_files(startup_files or [])
+        self.open_startup_files(self.startup_files)
 
         self.bind_keys()
-        self.update_font()  # initial font
+        self.update_font()
         self.update_clock()
         self.update_memory_usage()
         self.poll_shared_notes()
         self.center_window(self.root)
-
-        self.root.mainloop()
 
     class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
         _fields_ = [
@@ -6469,8 +6471,8 @@ class NotepadX:
         edit_menu.add_separator()
         edit_menu.add_command(label="Find", command=self.show_find_panel, accelerator="Ctrl+F")
         edit_menu.add_command(label="Find Next", command=self.find_next, accelerator="F3")
-        edit_menu.add_command(label="Cycle Notes", command=self.goto_next_note, accelerator="F4")
         edit_menu.add_command(label="Replace", command=self.show_replace_panel, accelerator="Ctrl+R")
+        edit_menu.add_command(label="Cycle Notes", command=self.goto_next_note, accelerator="F4")
         note_filter_menu = tk.Menu(edit_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         edit_menu.add_cascade(label="Filter Notes", menu=note_filter_menu)
         note_filter_menu.add_radiobutton(label="All", variable=self.note_filter, value='all')
