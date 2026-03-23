@@ -45,6 +45,170 @@ except ImportError:
     ColorDelegator = None
     Percolator = None
 
+DEFAULT_LOCALE_STRINGS = {
+    "app.name": "Notepad-X",
+    "app.about_title": "About Notepad-X",
+    "app.help_title": "Notepad-X Help",
+    "app.compare_title": "Compare With Tab",
+    "about.heading": "Notepad-X",
+    "about.tagline": "Built because Microsoft forgot what Notepad was supposed to be.",
+    "common.close": "Close",
+    "common.compare": "Compare",
+    "common.clear_list": "Clear list",
+    "common.empty": "(Empty)",
+    "common.ok": "OK",
+    "context.cut": "Cut",
+    "context.copy": "Copy",
+    "context.paste": "Paste",
+    "context.select_all": "Select All",
+    "context.add_note": "Add note",
+    "context.respond": "Respond",
+    "context.remove_note": "Remove note",
+    "menu.file": "File",
+    "menu.file.open": "Open",
+    "menu.file.open_project": "Open Project",
+    "menu.file.recent": "Recent",
+    "menu.file.new_tab": "New Tab",
+    "menu.file.close_tab": "Close Tab",
+    "menu.file.save": "Save",
+    "menu.file.save_all": "Save All",
+    "menu.file.save_as": "Save As",
+    "menu.file.save_as_encrypted": "Save As Encrypted",
+    "menu.file.print": "Print",
+    "menu.file.export_notes": "Export Notes",
+    "menu.file.exit": "Exit",
+    "menu.edit": "Edit",
+    "menu.edit.undo": "Undo",
+    "menu.edit.redo": "Redo",
+    "menu.edit.cut": "Cut",
+    "menu.edit.copy": "Copy",
+    "menu.edit.paste": "Paste",
+    "menu.edit.select_all": "Select All",
+    "menu.edit.find": "Find",
+    "menu.edit.find_next": "Find Next",
+    "menu.edit.find_previous": "Find Previous",
+    "menu.edit.replace": "Replace",
+    "menu.edit.cycle_notes": "Cycle Notes",
+    "menu.edit.filter_notes": "Filter Notes",
+    "menu.edit.goto_line": "Go To Line",
+    "menu.edit.top_of_document": "Top of Document",
+    "menu.edit.bottom_of_document": "Bottom of Document",
+    "menu.edit.sync_page_navigation": "Sync PgUp/PgDn in Compare",
+    "menu.edit.date": "Date",
+    "menu.edit.time_date": "Time/Date",
+    "menu.edit.font": "Font",
+    "menu.edit.language": "Language",
+    "menu.view": "View",
+    "menu.view.full_screen": "Full Screen",
+    "menu.view.switch_tab": "Switch Tab",
+    "menu.view.status_bar": "Status Bar",
+    "menu.view.numbered_lines": "Numbered Lines",
+    "menu.view.autocomplete": "Autocomplete",
+    "menu.view.edit_with_notepadx": "Edit with Notepad-X",
+    "menu.view.word_wrap": "Word Wrap",
+    "menu.view.sound": "Sound",
+    "menu.view.syntax_theme": "Syntax Theme",
+    "menu.view.syntax_mode": "Syntax Mode",
+    "menu.view.compare_tabs": "Compare Tabs",
+    "menu.view.close_compare_tabs": "Close Compare Tabs",
+    "menu.help": "Help",
+    "menu.help.contents": "Help Contents",
+    "menu.help.about": "About Notepad-X",
+    "note.filter.all": "All",
+    "note.filter.unread": "Unread",
+    "note.filter.yellow": "Yellow",
+    "note.filter.green": "Green",
+    "note.filter.red": "Red",
+    "note.filter.blue": "Light Blue",
+    "note.popup.title": "Code note",
+    "note.popup.author": "Author",
+    "note.popup.author_id": "Author ID",
+    "note.popup.created": "Created",
+    "note.popup.responses": "Responses",
+    "note.prompt.add_title": "Add Note",
+    "note.prompt.author": "Author:",
+    "note.prompt.note": "Note:",
+    "note.prompt.select_text_first": "Select some text first.",
+    "note.prompt.author_required": "Enter an author name first.",
+    "note.prompt.respond_title": "Respond",
+    "note.prompt.name": "Name:",
+    "note.prompt.response": "Response:",
+    "note.prompt.response_color": "Response Color",
+    "note.prompt.name_required": "Enter a name first.",
+    "status.initial": "Ln 1 of 1, Col 1 | 0 characters | UTF-8 | Normal",
+    "status.memory_initial": " | Memory used: 0MB",
+    "status.synced": "| Notes Synced",
+    "status.line": "Ln",
+    "status.col": "Col",
+    "status.of": "of",
+    "status.characters": "characters",
+    "status.bytes": "bytes",
+    "status.encoding": "UTF-8",
+    "status.mode.normal": "Normal",
+    "status.mode.virtual": "Virtual",
+    "status.mode.preview": "Preview",
+    "status.main": "{line_label} {row} {of_label} {total_lines}, {col_label} {col} | {char_info} | {encoding} | {zoom_text}{mode_suffix}",
+    "status.char_count": "{total_chars} {characters_label}",
+    "status.selected_char_count": "{selected_count} {of_label} {total_chars} {characters_label}",
+    "status.byte_count": "{total_bytes} {bytes_label}",
+    "status.memory": " | Memory used: {memory_mb}MB",
+    "status.editor_id": " | ID: {editor_id}",
+    "status.unread_tail": " | {unread_count} unread (F3 to view) | ({active_editors} editing)",
+    "compare.need_two_tabs": "Open at least two tabs to compare.",
+    "compare.choose_prompt": "Choose a tab to compare with the current one:",
+    "compare.header": "Comparing with: {title}",
+    "help.open_failed": "Unable to open the Notepad-X help file.",
+    "help.not_found": "Notepad-X help file not found.",
+    "syntax.theme.default": "Default",
+    "syntax.theme.soft": "Soft",
+    "syntax.theme.vivid": "Vivid",
+    "syntax.mode.auto": "Auto",
+    "syntax.mode.plain": "Plain Text",
+    "syntax.mode.python": "Python",
+    "syntax.mode.c": "C",
+    "syntax.mode.cpp": "C++",
+    "syntax.mode.rust": "Rust",
+    "syntax.mode.java": "Java",
+    "syntax.mode.javascript": "JavaScript",
+    "syntax.mode.html": "HTML",
+    "syntax.mode.php": "PHP",
+    "syntax.mode.xml": "XML",
+    "syntax.mode.sql": "SQL",
+    "accel.open": "Ctrl+W",
+    "accel.open_project": "Ctrl+Shift+W",
+    "accel.new_tab": "Ctrl+T",
+    "accel.close_tab": "Ctrl+Shift+T",
+    "accel.save": "Ctrl+S",
+    "accel.save_all": "Ctrl+Shift+S",
+    "accel.save_as": "Ctrl+Shift+Q",
+    "accel.save_as_encrypted": "Ctrl+Shift+E",
+    "accel.print": "Ctrl+P",
+    "accel.export_notes": "Ctrl+E",
+    "accel.exit": "Ctrl+Shift+X",
+    "accel.undo": "Ctrl+Z",
+    "accel.redo": "Ctrl+Shift+Z",
+    "accel.cut": "Ctrl+X",
+    "accel.copy": "Ctrl+C",
+    "accel.paste": "Ctrl+V",
+    "accel.select_all": "Ctrl+A",
+    "accel.find": "Ctrl+F",
+    "accel.find_next": "F3",
+    "accel.find_previous": "Shift+F3",
+    "accel.replace": "Ctrl+R",
+    "accel.cycle_notes": "F4",
+    "accel.goto_line": "Ctrl+G",
+    "accel.top_of_document": "Ctrl+PgUp",
+    "accel.bottom_of_document": "Ctrl+PgDn",
+    "accel.date": "Ctrl+D",
+    "accel.time_date": "Ctrl+Shift+D",
+    "accel.font": "Ctrl+Shift+F",
+    "accel.full_screen": "F11",
+    "accel.switch_tab": "Ctrl+Tab",
+    "accel.status_bar": "Ctrl+B",
+    "accel.compare_tabs": "Ctrl+Q",
+    "accel.close_compare_tabs": "Ctrl+Shift+X"
+}
+
 class NotepadX:
     def __init__(self, isolated_session=False, startup_files=None):
         self.root = tk.Tk()
@@ -52,6 +216,7 @@ class NotepadX:
         self.isolated_session = isolated_session
         self.startup_files = list(startup_files or [])
         self.init_config()
+        self.root.title(self.app_name)
         self.init_runtime()
         self.init_ui()
         self.root.mainloop()
@@ -108,11 +273,21 @@ class NotepadX:
         self.virtual_file_margin_lines = 800
         config_dir = self.get_config_dir(self.app_dir)
         os.makedirs(config_dir, exist_ok=True)
+        self.locale_code = 'en_us'
+        self.locale_path = self.get_locale_file_path(self.locale_code, config_dir=config_dir)
+        self.locale_strings = self.load_locale_strings(self.locale_path)
+        self.app_name = self.tr('app.name', 'Notepad-X')
         self.session_path = self.build_session_path(config_dir)
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
         self.help_path = os.path.join(self.resource_dir, "Notepad-X-help.txt")
+        self.note_color_labels = {
+            'yellow': self.tr('note.filter.yellow', 'Yellow'),
+            'green': self.tr('note.filter.green', 'Green'),
+            'red': self.tr('note.filter.red', 'Red'),
+            'blue': self.tr('note.filter.blue', 'Light Blue'),
+        }
         self.max_recent_files = 10
         self.max_session_files = 100
         self.max_recovery_tabs = 20
@@ -154,6 +329,7 @@ class NotepadX:
         self.note_filter = tk.StringVar(value='all')
         self.syntax_theme = tk.StringVar(value='Default')
         self.syntax_mode_selection = tk.StringVar(value='auto')
+        self.language_selection = tk.StringVar(value=self.locale_code)
         self.recovery_job = None
         self.find_change_job = None
         self.compare_active = False
@@ -318,6 +494,101 @@ class NotepadX:
 
     def get_config_dir(self, base_dir):
         return os.path.join(base_dir, 'cfg')
+
+    def load_locale_strings(self, locale_path):
+        strings = dict(DEFAULT_LOCALE_STRINGS)
+        if not os.path.exists(locale_path):
+            try:
+                with open(locale_path, 'w', encoding='utf-8') as f:
+                    json.dump(strings, f, ensure_ascii=False, indent=2)
+            except OSError:
+                return strings
+        try:
+            with open(locale_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                for key, value in payload.items():
+                    if isinstance(key, str) and isinstance(value, str):
+                        strings[key] = value
+        except (OSError, json.JSONDecodeError):
+            pass
+        return strings
+
+    def tr(self, key, default=None, **kwargs):
+        value = self.locale_strings.get(key, default if default is not None else key)
+        if not isinstance(value, str):
+            value = str(value)
+        if kwargs:
+            try:
+                return value.format(**kwargs)
+            except Exception:
+                return value
+        return value
+
+    def get_locale_file_path(self, locale_code, config_dir=None):
+        safe_code = str(locale_code or 'en_us').strip().lower()
+        config_dir = config_dir or (os.path.dirname(self.locale_path) if getattr(self, 'locale_path', None) else self.get_config_dir(self.app_dir))
+        candidate = os.path.join(config_dir, f'{safe_code}.cfg')
+        try:
+            for entry in os.listdir(config_dir):
+                if not entry.lower().endswith('.cfg'):
+                    continue
+                if os.path.splitext(entry)[0].strip().lower() == safe_code:
+                    return os.path.join(config_dir, entry)
+        except OSError:
+            pass
+        return candidate
+
+    def get_available_language_codes(self):
+        config_dir = os.path.dirname(self.locale_path) if getattr(self, 'locale_path', None) else self.get_config_dir(self.app_dir)
+        codes = []
+        try:
+            for entry in os.listdir(config_dir):
+                if not entry.lower().endswith('.cfg'):
+                    continue
+                code = os.path.splitext(entry)[0].strip().lower()
+                if code:
+                    codes.append(code)
+        except OSError:
+            pass
+        if 'en_us' not in codes:
+            codes.append('en_us')
+        return sorted(set(codes), key=lambda value: (value != 'en_us', value))
+
+    def apply_locale(self, locale_code, persist=True):
+        target_code = str(locale_code or 'en_us').strip().lower()
+        target_path = self.get_locale_file_path(target_code)
+        if not os.path.exists(target_path):
+            target_code = 'en_us'
+            target_path = self.get_locale_file_path(target_code)
+        self.locale_code = target_code
+        self.locale_path = target_path
+        self.locale_strings = self.load_locale_strings(self.locale_path)
+        self.app_name = self.tr('app.name', 'Notepad-X')
+        self.note_color_labels = {
+            'yellow': self.tr('note.filter.yellow', 'Yellow'),
+            'green': self.tr('note.filter.green', 'Green'),
+            'red': self.tr('note.filter.red', 'Red'),
+            'blue': self.tr('note.filter.blue', 'Light Blue'),
+        }
+        if hasattr(self, 'language_selection'):
+            self.language_selection.set(self.locale_code)
+        if hasattr(self, 'menu'):
+            self.create_menu()
+        if hasattr(self, 'status'):
+            self.status.config(text=self.tr('status.initial', "Ln 1 of 1, Col 1 | 0 characters | UTF-8 | Normal"))
+        if hasattr(self, 'status_tail'):
+            self.status_tail.config(text=self.tr('status.memory_initial', " | Memory used: 0MB"))
+        if hasattr(self, 'status_sync'):
+            self.status_sync.config(text="")
+        if hasattr(self, 'compare_title'):
+            self.refresh_compare_header()
+        if hasattr(self, 'root'):
+            self.update_window_title()
+        if hasattr(self, 'text'):
+            self.update_status()
+        if persist and hasattr(self, 'save_session'):
+            self.save_session()
 
     def get_machine_profile_slug(self):
         user_name = os.environ.get('USERNAME') or os.environ.get('USER') or 'user'
@@ -958,6 +1229,9 @@ class NotepadX:
         except (TypeError, ValueError):
             current_font_size = self.base_font_size
         current_font_size = max(self.min_font_size, min(self.max_font_size, current_font_size))
+        locale_code = str(session.get('locale_code', self.locale_code)).strip().lower()
+        if not os.path.exists(self.get_locale_file_path(locale_code)):
+            locale_code = self.locale_code
 
         return {
             'open_files': open_files,
@@ -972,6 +1246,7 @@ class NotepadX:
             'edit_with_shell_enabled': bool(session.get('edit_with_shell_enabled', False)),
             'current_font_size': current_font_size,
             'syntax_theme': syntax_theme,
+            'locale_code': locale_code,
             'compare_file': compare_file,
             'compare_base_file': compare_base_file,
         }
@@ -1299,7 +1574,7 @@ class NotepadX:
 
         self.status = tk.Label(
             self.status_left,
-            text="Ln 1 of 1, Col 1 | 0 characters | UTF-8 | Normal",
+            text=self.tr('status.initial', "Ln 1 of 1, Col 1 | 0 characters | UTF-8 | Normal"),
             anchor='w',
             bg='#2d2d2d',
             fg='#d4d4d4',
@@ -1321,7 +1596,7 @@ class NotepadX:
 
         self.status_tail = tk.Label(
             self.status_left,
-            text=" | Memory used: 0MB",
+            text=self.tr('status.memory_initial', " | Memory used: 0MB"),
             anchor='w',
             bg='#2d2d2d',
             fg='#d4d4d4',
@@ -1381,7 +1656,7 @@ class NotepadX:
 
     def get_zoom_text(self):
         if self.current_font_size == self.base_font_size:
-            return "Normal"
+            return self.tr('status.mode.normal', 'Normal')
         percent = round((self.current_font_size / self.base_font_size) * 100)
         return f"+{percent-100}%" if percent > 100 else f"{percent-100}%"
 
@@ -1394,7 +1669,12 @@ class NotepadX:
             row = doc['window_start_line'] + row - 1
             total_lines = doc['total_file_lines']
             total_chars = doc['file_size_bytes']
-            char_info = f"{total_chars:,} bytes"
+            char_info = self.tr(
+                'status.byte_count',
+                '{total_bytes} {bytes_label}',
+                total_bytes=f"{total_chars:,}",
+                bytes_label=self.tr('status.bytes', 'bytes')
+            )
         else:
             full_content = text_widget.get('1.0', 'end-1c')
             total_lines = int(text_widget.index('end-1c').split('.')[0])
@@ -1405,18 +1685,43 @@ class NotepadX:
                 selected_count = len(text_widget.get(sel_start, sel_end))
             except tk.TclError:
                 selected_count = 0
-            char_info = f"{selected_count:,} of {total_chars:,} characters" if selected_count > 0 else f"{total_chars:,} characters"
+            if selected_count > 0:
+                char_info = self.tr(
+                    'status.selected_char_count',
+                    '{selected_count} {of_label} {total_chars} {characters_label}',
+                    selected_count=f"{selected_count:,}",
+                    of_label=self.tr('status.of', 'of'),
+                    total_chars=f"{total_chars:,}",
+                    characters_label=self.tr('status.characters', 'characters')
+                )
+            else:
+                char_info = self.tr(
+                    'status.char_count',
+                    '{total_chars} {characters_label}',
+                    total_chars=f"{total_chars:,}",
+                    characters_label=self.tr('status.characters', 'characters')
+                )
 
         zoom_text = self.get_zoom_text()
         mode_suffix = ""
         if doc and doc.get('virtual_mode'):
-            mode_suffix = " | Virtual"
+            mode_suffix = f" | {self.tr('status.mode.virtual', 'Virtual')}"
         elif doc and doc.get('preview_mode'):
-            mode_suffix = " | Preview"
+            mode_suffix = f" | {self.tr('status.mode.preview', 'Preview')}"
 
-        return (
-            f"Ln {row} of {total_lines}, Col {col} | "
-            f"{char_info} | UTF-8 | {zoom_text}{mode_suffix}"
+        return self.tr(
+            'status.main',
+            '{line_label} {row} {of_label} {total_lines}, {col_label} {col} | {char_info} | {encoding} | {zoom_text}{mode_suffix}',
+            line_label=self.tr('status.line', 'Ln'),
+            row=row,
+            of_label=self.tr('status.of', 'of'),
+            total_lines=total_lines,
+            col_label=self.tr('status.col', 'Col'),
+            col=col,
+            char_info=char_info,
+            encoding=self.tr('status.encoding', 'UTF-8'),
+            zoom_text=zoom_text,
+            mode_suffix=mode_suffix
         )
 
     def update_status(self):
@@ -1426,18 +1731,20 @@ class NotepadX:
         status_main_text = self.build_editor_status_text(current_doc, self.text)
         editor_label_text = ""
         if current_doc and current_doc.get('file_path'):
-            editor_label_text = f" | ID: Notepad-X-{self.editor_id}"
+            editor_label_text = self.tr('status.editor_id', ' | ID: {editor_id}', editor_id=f"Notepad-X-{self.editor_id}")
         shared_notes_tail = ""
         if current_doc and current_doc.get('file_path'):
             unread_count = self.get_unread_note_count(current_doc)
-            shared_notes_tail = (
-                f" | {unread_count} unread (F3 to view) | "
-                f"({current_doc.get('note_active_editors', 0)} editing)"
+            shared_notes_tail = self.tr(
+                'status.unread_tail',
+                ' | {unread_count} unread (F3 to view) | ({active_editors} editing)',
+                unread_count=unread_count,
+                active_editors=current_doc.get('note_active_editors', 0)
             )
         status_main_text = f"{status_main_text}{editor_label_text}"
-        status_tail_text = f"{shared_notes_tail} | Memory used: {self.memory_used_mb}MB"
+        status_tail_text = f"{shared_notes_tail}{self.tr('status.memory', ' | Memory used: {memory_mb}MB', memory_mb=self.memory_used_mb)}"
         self.status.config(text=status_main_text)
-        self.status_sync.config(text="| Notes Synced" if current_doc and current_doc.get('file_path') else "")
+        self.status_sync.config(text=self.tr('status.synced', '| Notes Synced') if current_doc and current_doc.get('file_path') else "")
         self.status_tail.config(text=status_tail_text)
 
         if hasattr(self, 'compare_status') and self.compare_view and self.compare_active:
@@ -2674,7 +2981,10 @@ class NotepadX:
                 title = widget.title()
             except tk.TclError:
                 continue
-            if title in {"Notepad-X Help", "About Notepad-X"}:
+            if title in {
+                self.tr('app.help_title', 'Notepad-X Help'),
+                self.tr('app.about_title', 'About Notepad-X')
+            }:
                 try:
                     widget.destroy()
                     return True
@@ -4414,14 +4724,14 @@ class NotepadX:
 
         action_target = action_tab_id if action_tab_id is not None else tab_id
         menu = tk.Menu(self.root, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
-        menu.add_command(label="Cut", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.cut))
-        menu.add_command(label="Copy", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.copy))
-        menu.add_command(label="Paste", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.paste))
+        menu.add_command(label=self.tr('context.cut', 'Cut'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.cut))
+        menu.add_command(label=self.tr('context.copy', 'Copy'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.copy))
+        menu.add_command(label=self.tr('context.paste', 'Paste'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.paste))
         menu.add_separator()
-        menu.add_command(label="Select All", command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.select_all))
-        menu.add_command(label="Add note", command=lambda frame=action_target: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
-        menu.add_command(label="Respond", command=lambda frame=action_target: self.run_context_menu_action(lambda: self.respond_to_note(frame)))
-        menu.add_command(label="Remove note", command=lambda frame=action_target: self.run_context_menu_action(lambda: self.remove_note(frame)))
+        menu.add_command(label=self.tr('context.select_all', 'Select All'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.select_all))
+        menu.add_command(label=self.tr('context.add_note', 'Add note'), command=lambda frame=action_target: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
+        menu.add_command(label=self.tr('context.respond', 'Respond'), command=lambda frame=action_target: self.run_context_menu_action(lambda: self.respond_to_note(frame)))
+        menu.add_command(label=self.tr('context.remove_note', 'Remove note'), command=lambda frame=action_target: self.run_context_menu_action(lambda: self.remove_note(frame)))
         doc['context_menu'] = menu
 
     def run_context_menu_action(self, callback):
@@ -4591,17 +4901,17 @@ class NotepadX:
 
         is_readonly_target = bool(doc.get('preview_mode') or doc.get('virtual_mode'))
         if is_readonly_target:
-            doc['context_menu'].entryconfig("Cut", state='disabled')
-            doc['context_menu'].entryconfig("Paste", state='disabled')
+            doc['context_menu'].entryconfig(self.tr('context.cut', 'Cut'), state='disabled')
+            doc['context_menu'].entryconfig(self.tr('context.paste', 'Paste'), state='disabled')
             note_state = 'disabled'
         else:
-            doc['context_menu'].entryconfig("Cut", state='normal')
-            doc['context_menu'].entryconfig("Paste", state='normal')
+            doc['context_menu'].entryconfig(self.tr('context.cut', 'Cut'), state='normal')
+            doc['context_menu'].entryconfig(self.tr('context.paste', 'Paste'), state='normal')
 
-        doc['context_menu'].entryconfig("Add note", state=note_state)
+        doc['context_menu'].entryconfig(self.tr('context.add_note', 'Add note'), state=note_state)
         note_action_state = 'normal' if doc.get('context_note_tag') else 'disabled'
-        doc['context_menu'].entryconfig("Respond", state=note_action_state)
-        doc['context_menu'].entryconfig("Remove note", state=note_action_state)
+        doc['context_menu'].entryconfig(self.tr('context.respond', 'Respond'), state=note_action_state)
+        doc['context_menu'].entryconfig(self.tr('context.remove_note', 'Remove note'), state=note_action_state)
         try:
             self.dismiss_context_menu()
             self.active_context_menu = doc['context_menu']
@@ -4633,7 +4943,7 @@ class NotepadX:
 
         tk.Label(
             frame,
-            text="Code note",
+            text=self.tr('note.popup.title', 'Code note'),
             bg='#1f2430',
             fg=highlight_color,
             font=('Segoe UI', 9, 'bold'),
@@ -4642,11 +4952,11 @@ class NotepadX:
 
         meta_parts = []
         if note_data.get('author_label'):
-            meta_parts.append(f"Author: {note_data['author_label']}")
+            meta_parts.append(f"{self.tr('note.popup.author', 'Author')}: {note_data['author_label']}")
         elif note_data.get('author_id'):
-            meta_parts.append(f"Author ID: {note_data['author_id']}")
+            meta_parts.append(f"{self.tr('note.popup.author_id', 'Author ID')}: {note_data['author_id']}")
         if note_data.get('created_at'):
-            meta_parts.append(f"Created: {self.format_note_timestamp(note_data.get('created_at'))}")
+            meta_parts.append(f"{self.tr('note.popup.created', 'Created')}: {self.format_note_timestamp(note_data.get('created_at'))}")
         if meta_parts:
             tk.Label(
                 frame,
@@ -4675,7 +4985,7 @@ class NotepadX:
             tk.Frame(frame, bg=highlight_color, height=1).pack(fill='x', padx=10, pady=(0, 6))
             tk.Label(
                 frame,
-                text="Responses",
+                text=self.tr('note.popup.responses', 'Responses'),
                 bg='#1f2430',
                 fg='#c9d1d9',
                 font=('Segoe UI', 8, 'bold'),
@@ -4944,20 +5254,37 @@ class NotepadX:
             start = selection_widget.index('sel.first')
             end = selection_widget.index('sel.last')
         except tk.TclError:
-            messagebox.showinfo("Add Note", "Select some text first.", parent=self.root)
+            messagebox.showinfo(
+                self.tr('note.prompt.add_title', 'Add Note'),
+                self.tr('note.prompt.select_text_first', 'Select some text first.'),
+                parent=self.root
+            )
             return "break"
 
         self.hide_note_popup(doc)
         suggested_author = getattr(self, 'note_author_name', '') or ''
-        author_name = self.prompt_note_input("Add Note", "Author:", initialvalue=suggested_author, parent=self.root)
+        author_name = self.prompt_note_input(
+            self.tr('note.prompt.add_title', 'Add Note'),
+            self.tr('note.prompt.author', 'Author:'),
+            initialvalue=suggested_author,
+            parent=self.root
+        )
         if author_name is None:
             return "break"
         author_name = self.trim_text(author_name, self.max_note_name_length)
         if not author_name:
-            messagebox.showinfo("Add Note", "Enter an author name first.", parent=self.root)
+            messagebox.showinfo(
+                self.tr('note.prompt.add_title', 'Add Note'),
+                self.tr('note.prompt.author_required', 'Enter an author name first.'),
+                parent=self.root
+            )
             return "break"
         self.note_author_name = author_name
-        note_input = self.prompt_note_input("Add Note", "Note:", parent=self.root)
+        note_input = self.prompt_note_input(
+            self.tr('note.prompt.add_title', 'Add Note'),
+            self.tr('note.prompt.note', 'Note:'),
+            parent=self.root
+        )
         if not note_input:
             return "break"
 
@@ -5047,23 +5374,40 @@ class NotepadX:
             return "break"
 
         suggested_author = getattr(self, 'note_author_name', '') or ''
-        author_name = self.prompt_note_input("Respond", "Name:", initialvalue=suggested_author, parent=self.root)
+        author_name = self.prompt_note_input(
+            self.tr('note.prompt.respond_title', 'Respond'),
+            self.tr('note.prompt.name', 'Name:'),
+            initialvalue=suggested_author,
+            parent=self.root
+        )
         if author_name is None:
             return "break"
         author_name = self.trim_text(author_name, self.max_note_name_length)
         if not author_name:
-            messagebox.showinfo("Respond", "Enter a name first.", parent=self.root)
+            messagebox.showinfo(
+                self.tr('note.prompt.respond_title', 'Respond'),
+                self.tr('note.prompt.name_required', 'Enter a name first.'),
+                parent=self.root
+            )
             return "break"
         self.note_author_name = author_name
 
-        response_text = self.prompt_note_input("Respond", "Response:", parent=self.root)
+        response_text = self.prompt_note_input(
+            self.tr('note.prompt.respond_title', 'Respond'),
+            self.tr('note.prompt.response', 'Response:'),
+            parent=self.root
+        )
         if response_text is None:
             return "break"
         response_text = self.trim_text(response_text, self.max_note_text_length)
         if not response_text:
             return "break"
 
-        response_color = self.prompt_note_color(title="Response Color", initialvalue=note_data.get('color', 'yellow'), parent=self.root)
+        response_color = self.prompt_note_color(
+            title=self.tr('note.prompt.response_color', 'Response Color'),
+            initialvalue=note_data.get('color', 'yellow'),
+            parent=self.root
+        )
         if not response_color:
             return "break"
 
@@ -6085,6 +6429,7 @@ class NotepadX:
             'edit_with_shell_enabled': bool(self.edit_with_shell_enabled.get()),
             'current_font_size': int(self.current_font_size),
             'syntax_theme': self.syntax_theme.get(),
+            'locale_code': self.locale_code,
             'compare_file': compare_file,
             'compare_base_file': compare_base_file,
         }
@@ -6227,6 +6572,7 @@ class NotepadX:
         self.sync_page_navigation_enabled.set(bool(session.get('sync_page_navigation_enabled', False)))
         saved_edit_with_shell = bool(session.get('edit_with_shell_enabled', False))
         self.edit_with_shell_enabled.set(saved_edit_with_shell or self.is_edit_with_shell_registered())
+        self.apply_locale(session.get('locale_code', self.locale_code), persist=False)
         saved_font_size = session.get('current_font_size', self.base_font_size)
         try:
             self.current_font_size = max(self.min_font_size, min(self.max_font_size, int(saved_font_size)))
@@ -6305,7 +6651,7 @@ class NotepadX:
         self.recent_files = valid_recent_files[:self.max_recent_files]
 
         if not self.recent_files:
-            self.recent_menu.add_command(label="(Empty)", state='disabled')
+            self.recent_menu.add_command(label=self.tr('common.empty', '(Empty)'), state='disabled')
             return
 
         for file_path in self.recent_files:
@@ -6315,7 +6661,19 @@ class NotepadX:
             )
 
         self.recent_menu.add_separator()
-        self.recent_menu.add_command(label="Clear list", command=self.clear_recent_files)
+        self.recent_menu.add_command(label=self.tr('common.clear_list', 'Clear list'), command=self.clear_recent_files)
+
+    def refresh_language_menu(self):
+        if not hasattr(self, 'language_menu') or self.language_menu is None:
+            return
+        self.language_menu.delete(0, tk.END)
+        for language_code in self.get_available_language_codes():
+            self.language_menu.add_radiobutton(
+                label=language_code,
+                variable=self.language_selection,
+                value=language_code,
+                command=lambda code=language_code: self.apply_locale(code)
+            )
 
     def next_untitled_name(self):
         used_numbers = set()
@@ -6352,7 +6710,7 @@ class NotepadX:
             self.text = None
             self.current_file = None
             self.syntax_mode_selection.set('auto')
-            self.root.title("Notepad-X")
+            self.root.title(self.app_name)
             return
         self.text = doc['text']
         self.current_file = doc['file_path']
@@ -6400,12 +6758,12 @@ class NotepadX:
     def update_window_title(self):
         doc = self.get_current_doc()
         if not doc:
-            self.root.title("Notepad-X")
+            self.root.title(self.app_name)
             return
         title = self.get_doc_name(doc['frame'])
         if doc['text'].edit_modified():
             title += " *"
-        self.root.title(f"Notepad-X - {title}")
+        self.root.title(f"{self.app_name} - {title}")
 
     def on_text_modified(self, tab_id):
         if str(tab_id) not in self.documents:
@@ -6523,83 +6881,87 @@ class NotepadX:
 
     # ─── Menu ────────────────────────────────────────────────────
     def create_menu(self):
+        t = self.tr
         self.menu = tk.Menu(self.root, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a', activeforeground='white')
         self.root.config(menu=self.menu)
 
         file_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
-        self.menu.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Open", command=self.open_file, accelerator="Ctrl+W")
-        file_menu.add_command(label="Open Project", command=self.open_project, accelerator="Ctrl+Shift+W")
+        self.menu.add_cascade(label=t('menu.file', 'File'), menu=file_menu)
+        file_menu.add_command(label=t('menu.file.open', 'Open'), command=self.open_file, accelerator=t('accel.open', 'Ctrl+W'))
+        file_menu.add_command(label=t('menu.file.open_project', 'Open Project'), command=self.open_project, accelerator=t('accel.open_project', 'Ctrl+Shift+W'))
         self.recent_menu = tk.Menu(file_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                                    activebackground='#3a3a3a')
-        file_menu.add_cascade(label="Recent", menu=self.recent_menu)
+        file_menu.add_cascade(label=t('menu.file.recent', 'Recent'), menu=self.recent_menu)
         self.refresh_recent_files_menu()
-        file_menu.add_command(label="New Tab", command=self.new_tab, accelerator="Ctrl+T")
-        file_menu.add_command(label="Close Tab", command=self.close_current_tab, accelerator="Ctrl+Shift+T")
-        file_menu.add_command(label="Save", command=self.save, accelerator="Ctrl+S")
-        file_menu.add_command(label="Save All", command=self.save_all, accelerator="Ctrl+Shift+S")
-        file_menu.add_command(label="Save As", command=self.save_copy_as, accelerator="Ctrl+Shift+Q")
-        file_menu.add_command(label="Save As Encrypted", command=self.save_encrypted_copy, accelerator="Ctrl+Shift+E")
-        file_menu.add_command(label="Print", command=self.print_file, accelerator="Ctrl+P")
-        file_menu.add_command(label="Export Notes", command=self.export_notes_report, accelerator="Ctrl+E")
+        file_menu.add_command(label=t('menu.file.new_tab', 'New Tab'), command=self.new_tab, accelerator=t('accel.new_tab', 'Ctrl+T'))
+        file_menu.add_command(label=t('menu.file.close_tab', 'Close Tab'), command=self.close_current_tab, accelerator=t('accel.close_tab', 'Ctrl+Shift+T'))
+        file_menu.add_command(label=t('menu.file.save', 'Save'), command=self.save, accelerator=t('accel.save', 'Ctrl+S'))
+        file_menu.add_command(label=t('menu.file.save_all', 'Save All'), command=self.save_all, accelerator=t('accel.save_all', 'Ctrl+Shift+S'))
+        file_menu.add_command(label=t('menu.file.save_as', 'Save As'), command=self.save_copy_as, accelerator=t('accel.save_as', 'Ctrl+Shift+Q'))
+        file_menu.add_command(label=t('menu.file.save_as_encrypted', 'Save As Encrypted'), command=self.save_encrypted_copy, accelerator=t('accel.save_as_encrypted', 'Ctrl+Shift+E'))
+        file_menu.add_command(label=t('menu.file.print', 'Print'), command=self.print_file, accelerator=t('accel.print', 'Ctrl+P'))
+        file_menu.add_command(label=t('menu.file.export_notes', 'Export Notes'), command=self.export_notes_report, accelerator=t('accel.export_notes', 'Ctrl+E'))
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.exit_app, accelerator="Ctrl+Shift+X")
+        file_menu.add_command(label=t('menu.file.exit', 'Exit'), command=self.exit_app, accelerator=t('accel.exit', 'Ctrl+Shift+X'))
 
         edit_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
-        self.menu.add_cascade(label="Edit", menu=edit_menu)
-        edit_menu.add_command(label="Undo", command=self.undo, accelerator="Ctrl+Z")
-        edit_menu.add_command(label="Redo", command=self.redo, accelerator="Ctrl+Shift+Z")
+        self.menu.add_cascade(label=t('menu.edit', 'Edit'), menu=edit_menu)
+        edit_menu.add_command(label=t('menu.edit.undo', 'Undo'), command=self.undo, accelerator=t('accel.undo', 'Ctrl+Z'))
+        edit_menu.add_command(label=t('menu.edit.redo', 'Redo'), command=self.redo, accelerator=t('accel.redo', 'Ctrl+Shift+Z'))
         edit_menu.add_separator()
-        edit_menu.add_command(label="Cut",  command=self.cut,  accelerator="Ctrl+X")
-        edit_menu.add_command(label="Copy", command=self.copy, accelerator="Ctrl+C")
-        edit_menu.add_command(label="Paste", command=self.paste, accelerator="Ctrl+V")
-        edit_menu.add_command(label="Select All", command=self.select_all, accelerator="Ctrl+A")
+        edit_menu.add_command(label=t('menu.edit.cut', 'Cut'),  command=self.cut,  accelerator=t('accel.cut', 'Ctrl+X'))
+        edit_menu.add_command(label=t('menu.edit.copy', 'Copy'), command=self.copy, accelerator=t('accel.copy', 'Ctrl+C'))
+        edit_menu.add_command(label=t('menu.edit.paste', 'Paste'), command=self.paste, accelerator=t('accel.paste', 'Ctrl+V'))
+        edit_menu.add_command(label=t('menu.edit.select_all', 'Select All'), command=self.select_all, accelerator=t('accel.select_all', 'Ctrl+A'))
         edit_menu.add_separator()
-        edit_menu.add_command(label="Find", command=self.show_find_panel, accelerator="Ctrl+F")
-        edit_menu.add_command(label="Find Next", command=self.find_next, accelerator="F3")
-        edit_menu.add_command(label="Find Previous", command=self.find_previous, accelerator="Shift+F3")
-        edit_menu.add_command(label="Replace", command=self.show_replace_panel, accelerator="Ctrl+R")
-        edit_menu.add_command(label="Cycle Notes", command=self.goto_next_note, accelerator="F4")
+        edit_menu.add_command(label=t('menu.edit.find', 'Find'), command=self.show_find_panel, accelerator=t('accel.find', 'Ctrl+F'))
+        edit_menu.add_command(label=t('menu.edit.find_next', 'Find Next'), command=self.find_next, accelerator=t('accel.find_next', 'F3'))
+        edit_menu.add_command(label=t('menu.edit.find_previous', 'Find Previous'), command=self.find_previous, accelerator=t('accel.find_previous', 'Shift+F3'))
+        edit_menu.add_command(label=t('menu.edit.replace', 'Replace'), command=self.show_replace_panel, accelerator=t('accel.replace', 'Ctrl+R'))
+        edit_menu.add_command(label=t('menu.edit.cycle_notes', 'Cycle Notes'), command=self.goto_next_note, accelerator=t('accel.cycle_notes', 'F4'))
         note_filter_menu = tk.Menu(edit_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
-        edit_menu.add_cascade(label="Filter Notes", menu=note_filter_menu)
-        note_filter_menu.add_radiobutton(label="All", variable=self.note_filter, value='all')
-        note_filter_menu.add_radiobutton(label="Unread", variable=self.note_filter, value='unread')
-        note_filter_menu.add_radiobutton(label="Yellow", variable=self.note_filter, value='yellow')
-        note_filter_menu.add_radiobutton(label="Green", variable=self.note_filter, value='green')
-        note_filter_menu.add_radiobutton(label="Red", variable=self.note_filter, value='red')
-        note_filter_menu.add_radiobutton(label="Light Blue", variable=self.note_filter, value='blue')
+        edit_menu.add_cascade(label=t('menu.edit.filter_notes', 'Filter Notes'), menu=note_filter_menu)
+        note_filter_menu.add_radiobutton(label=t('note.filter.all', 'All'), variable=self.note_filter, value='all')
+        note_filter_menu.add_radiobutton(label=t('note.filter.unread', 'Unread'), variable=self.note_filter, value='unread')
+        note_filter_menu.add_radiobutton(label=t('note.filter.yellow', 'Yellow'), variable=self.note_filter, value='yellow')
+        note_filter_menu.add_radiobutton(label=t('note.filter.green', 'Green'), variable=self.note_filter, value='green')
+        note_filter_menu.add_radiobutton(label=t('note.filter.red', 'Red'), variable=self.note_filter, value='red')
+        note_filter_menu.add_radiobutton(label=t('note.filter.blue', 'Light Blue'), variable=self.note_filter, value='blue')
         edit_menu.add_separator()
-        edit_menu.add_command(label="Go To Line", command=self.goto_line_dialog, accelerator="Ctrl+G")
-        edit_menu.add_command(label="Top of Document", command=self.goto_document_start, accelerator="Ctrl+PgUp")
-        edit_menu.add_command(label="Bottom of Document", command=self.goto_document_end, accelerator="Ctrl+PgDn")
-        edit_menu.add_checkbutton(label="Sync PgUp/PgDn in Compare", variable=self.sync_page_navigation_enabled, command=self.save_session)
-        edit_menu.add_command(label="Date", command=self.insert_date, accelerator="Ctrl+D")
-        edit_menu.add_command(label="Time/Date", command=self.insert_time_date, accelerator="Ctrl+Shift+D")
-        edit_menu.add_command(label="Font", command=self.show_font_dialog, accelerator="Ctrl+Shift+F")
+        edit_menu.add_command(label=t('menu.edit.goto_line', 'Go To Line'), command=self.goto_line_dialog, accelerator=t('accel.goto_line', 'Ctrl+G'))
+        edit_menu.add_command(label=t('menu.edit.top_of_document', 'Top of Document'), command=self.goto_document_start, accelerator=t('accel.top_of_document', 'Ctrl+PgUp'))
+        edit_menu.add_command(label=t('menu.edit.bottom_of_document', 'Bottom of Document'), command=self.goto_document_end, accelerator=t('accel.bottom_of_document', 'Ctrl+PgDn'))
+        edit_menu.add_checkbutton(label=t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), variable=self.sync_page_navigation_enabled, command=self.save_session)
+        edit_menu.add_command(label=t('menu.edit.date', 'Date'), command=self.insert_date, accelerator=t('accel.date', 'Ctrl+D'))
+        edit_menu.add_command(label=t('menu.edit.time_date', 'Time/Date'), command=self.insert_time_date, accelerator=t('accel.time_date', 'Ctrl+Shift+D'))
+        edit_menu.add_command(label=t('menu.edit.font', 'Font'), command=self.show_font_dialog, accelerator=t('accel.font', 'Ctrl+Shift+F'))
+        self.language_menu = tk.Menu(edit_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a', postcommand=self.refresh_language_menu)
+        edit_menu.add_cascade(label=t('menu.edit.language', 'Language'), menu=self.language_menu)
+        self.refresh_language_menu()
         view_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
-        self.menu.add_cascade(label="View", menu=view_menu)
-        view_menu.add_command(label="Full Screen", command=self.toggle_fullscreen, accelerator="F11")
-        view_menu.add_command(label="Switch Tab", command=self.switch_tab_right, accelerator="Ctrl+Tab")
-        view_menu.add_checkbutton(label="Status Bar", variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator="Ctrl+B")
-        view_menu.add_checkbutton(label="Numbered Lines", variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
-        view_menu.add_checkbutton(label="Autocomplete", variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
-        view_menu.add_checkbutton(label="Edit with Notepad-X", variable=self.edit_with_shell_enabled, command=self.toggle_edit_with_shell)
-        view_menu.add_checkbutton(label="Word Wrap", variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
-        view_menu.add_checkbutton(label="Sound", variable=self.sound_enabled, command=self.toggle_sound)
+        self.menu.add_cascade(label=t('menu.view', 'View'), menu=view_menu)
+        view_menu.add_command(label=t('menu.view.full_screen', 'Full Screen'), command=self.toggle_fullscreen, accelerator=t('accel.full_screen', 'F11'))
+        view_menu.add_command(label=t('menu.view.switch_tab', 'Switch Tab'), command=self.switch_tab_right, accelerator=t('accel.switch_tab', 'Ctrl+Tab'))
+        view_menu.add_checkbutton(label=t('menu.view.status_bar', 'Status Bar'), variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator=t('accel.status_bar', 'Ctrl+B'))
+        view_menu.add_checkbutton(label=t('menu.view.numbered_lines', 'Numbered Lines'), variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
+        view_menu.add_checkbutton(label=t('menu.view.autocomplete', 'Autocomplete'), variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
+        view_menu.add_checkbutton(label=t('menu.view.edit_with_notepadx', 'Edit with Notepad-X'), variable=self.edit_with_shell_enabled, command=self.toggle_edit_with_shell)
+        view_menu.add_checkbutton(label=t('menu.view.word_wrap', 'Word Wrap'), variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
+        view_menu.add_checkbutton(label=t('menu.view.sound', 'Sound'), variable=self.sound_enabled, command=self.toggle_sound)
         syntax_theme_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
-        view_menu.add_cascade(label="Syntax Theme", menu=syntax_theme_menu)
-        for theme_name in ('Default', 'Soft', 'Vivid'):
-            syntax_theme_menu.add_radiobutton(label=theme_name, variable=self.syntax_theme, value=theme_name, command=lambda name=theme_name: self.set_syntax_theme(name))
+        view_menu.add_cascade(label=t('menu.view.syntax_theme', 'Syntax Theme'), menu=syntax_theme_menu)
+        for theme_name, theme_key in (('Default', 'syntax.theme.default'), ('Soft', 'syntax.theme.soft'), ('Vivid', 'syntax.theme.vivid')):
+            syntax_theme_menu.add_radiobutton(label=t(theme_key, theme_name), variable=self.syntax_theme, value=theme_name, command=lambda name=theme_name: self.set_syntax_theme(name))
         syntax_mode_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
-        view_menu.add_cascade(label="Syntax Mode", menu=syntax_mode_menu)
+        view_menu.add_cascade(label=t('menu.view.syntax_mode', 'Syntax Mode'), menu=syntax_mode_menu)
         for mode_label, mode_value in (
-            ('Auto', 'auto'), ('Plain Text', 'plain'), ('Python', 'python'), ('C', 'c'),
-            ('C++', 'cpp'), ('Rust', 'rust'), ('Java', 'java'), ('JavaScript', 'javascript'),
-            ('HTML', 'html'), ('PHP', 'php'), ('XML', 'xml'), ('SQL', 'sql')
+            (t('syntax.mode.auto', 'Auto'), 'auto'), (t('syntax.mode.plain', 'Plain Text'), 'plain'), (t('syntax.mode.python', 'Python'), 'python'), (t('syntax.mode.c', 'C'), 'c'),
+            (t('syntax.mode.cpp', 'C++'), 'cpp'), (t('syntax.mode.rust', 'Rust'), 'rust'), (t('syntax.mode.java', 'Java'), 'java'), (t('syntax.mode.javascript', 'JavaScript'), 'javascript'),
+            (t('syntax.mode.html', 'HTML'), 'html'), (t('syntax.mode.php', 'PHP'), 'php'), (t('syntax.mode.xml', 'XML'), 'xml'), (t('syntax.mode.sql', 'SQL'), 'sql')
         ):
             syntax_mode_menu.add_radiobutton(
                 label=mode_label,
@@ -6607,18 +6969,18 @@ class NotepadX:
                 value=mode_value,
                 command=lambda value=mode_value: self.set_current_syntax_override(value)
             )
-        view_menu.add_command(label="Compare Tabs", command=self.show_split_compare, accelerator="Ctrl+Q")
-        view_menu.add_command(label="Close Compare Tabs", command=self.close_compare_panel, accelerator="Ctrl+Shift+X")
+        view_menu.add_command(label=t('menu.view.compare_tabs', 'Compare Tabs'), command=self.show_split_compare, accelerator=t('accel.compare_tabs', 'Ctrl+Q'))
+        view_menu.add_command(label=t('menu.view.close_compare_tabs', 'Close Compare Tabs'), command=self.close_compare_panel, accelerator=t('accel.close_compare_tabs', 'Ctrl+Shift+X'))
 
         help_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
-        self.menu.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(label="Help Contents", command=self.show_help_contents)
-        help_menu.add_command(label="About Notepad-X", command=self.show_about_dialog)
+        self.menu.add_cascade(label=t('menu.help', 'Help'), menu=help_menu)
+        help_menu.add_command(label=t('menu.help.contents', 'Help Contents'), command=self.show_help_contents)
+        help_menu.add_command(label=t('menu.help.about', 'About Notepad-X'), command=self.show_about_dialog)
 
     def show_help_contents(self):
         dialog = tk.Toplevel(self.root)
-        dialog.title("Notepad-X Help")
+        dialog.title(self.tr('app.help_title', 'Notepad-X Help'))
         dialog.transient(self.root)
         dialog.configure(bg=self.bg_color)
         dialog.geometry("900x650")
@@ -6655,16 +7017,16 @@ class NotepadX:
                 with open(self.help_path, 'r', encoding='utf-8') as f:
                     content = f.read()
             except OSError:
-                content = "Unable to open the Notepad-X help file."
+                content = self.tr('help.open_failed', 'Unable to open the Notepad-X help file.')
         else:
-            content = "Notepad-X help file not found."
+            content = self.tr('help.not_found', 'Notepad-X help file not found.')
 
         help_text.insert('1.0', content)
         help_text.configure(state='disabled')
 
         close_button = tk.Button(
             dialog,
-            text="Close",
+            text=self.tr('common.close', 'Close'),
             command=dialog.destroy,
             bg='#2d2d2d',
             fg=self.fg_color,
@@ -6689,7 +7051,11 @@ class NotepadX:
     def show_split_compare(self):
         current_doc = self.get_current_doc()
         if not current_doc or len(self.documents) < 2:
-            messagebox.showinfo("Compare With Tab", "Open at least two tabs to compare.", parent=self.root)
+            messagebox.showinfo(
+                self.tr('app.compare_title', 'Compare With Tab'),
+                self.tr('compare.need_two_tabs', 'Open at least two tabs to compare.'),
+                parent=self.root
+            )
             return "break"
         choices = []
         for tab_id, doc in self.documents.items():
@@ -6697,10 +7063,15 @@ class NotepadX:
                 continue
             choices.append((self.get_doc_name(doc['frame']), doc))
         dialog = tk.Toplevel(self.root)
-        dialog.title("Compare With Tab")
+        dialog.title(self.tr('app.compare_title', 'Compare With Tab'))
         dialog.transient(self.root)
         dialog.configure(bg=self.bg_color, padx=12, pady=12)
-        tk.Label(dialog, text="Choose a tab to compare with the current one:", bg=self.bg_color, fg=self.fg_color).pack(anchor='w', pady=(0, 8))
+        tk.Label(
+            dialog,
+            text=self.tr('compare.choose_prompt', 'Choose a tab to compare with the current one:'),
+            bg=self.bg_color,
+            fg=self.fg_color
+        ).pack(anchor='w', pady=(0, 8))
         listbox = tk.Listbox(dialog, width=50, height=min(10, len(choices)))
         for label, _ in choices:
             listbox.insert(tk.END, label)
@@ -6714,7 +7085,7 @@ class NotepadX:
             dialog.destroy()
             self.start_inline_compare(other_doc)
 
-        tk.Button(dialog, text="Compare", command=open_compare).pack(pady=(10, 0))
+        tk.Button(dialog, text=self.tr('common.compare', 'Compare'), command=open_compare).pack(pady=(10, 0))
         listbox.bind('<Double-Button-1>', open_compare)
         listbox.focus_set()
         self.center_window(dialog)
@@ -6726,7 +7097,7 @@ class NotepadX:
         if not doc:
             self.close_compare_panel()
             return
-        self.compare_title.config(text=f"Comparing with: {self.get_doc_title(doc['frame'])}")
+        self.compare_title.config(text=self.tr('compare.header', 'Comparing with: {title}', title=self.get_doc_title(doc['frame'])))
 
     def schedule_compare_refresh(self):
         if self.compare_refresh_job:
@@ -6856,7 +7227,7 @@ class NotepadX:
 
     def show_about_dialog(self):
         dialog = tk.Toplevel(self.root)
-        dialog.title("About Notepad-X")
+        dialog.title(self.tr('app.about_title', 'About Notepad-X'))
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.configure(bg=self.bg_color, padx=24, pady=20)
@@ -6906,7 +7277,7 @@ class NotepadX:
 
         tk.Label(
             content,
-            text=f"Notepad-X {self.app_version}",
+            text=f"{self.tr('about.heading', 'Notepad-X')} {self.app_version}",
             bg=self.bg_color,
             fg=self.fg_color,
             font=('Segoe UI', 16, 'bold')
@@ -6914,7 +7285,7 @@ class NotepadX:
 
         tk.Label(
             content,
-            text="Built because Microsoft forgot what Notepad was supposed to be.",
+            text=self.tr('about.tagline', 'Built because Microsoft forgot what Notepad was supposed to be.'),
             bg=self.bg_color,
             fg='#9aa0a6',
             font=('Segoe UI', 9)
@@ -6922,7 +7293,7 @@ class NotepadX:
 
         tk.Button(
             dialog,
-            text="Close",
+            text=self.tr('common.close', 'Close'),
             command=dialog.destroy,
             bg='#2d2d2d',
             fg=self.fg_color,

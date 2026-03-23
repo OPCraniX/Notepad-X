@@ -42,6 +42,7 @@ This benchmark compares the packaged Notepad-X build against Microsoft Notepad. 
 - `View > Numbered Lines` toggle with saved preference
 - `View > Autocomplete` toggle with saved preference
 - `View > Edit with Notepad-X` toggle with saved preference
+- `Edit > Language` menu that scans `cfg/*.cfg` and lets you switch UI language files
 - Built-in Help viewer and About dialog
 
 ## Compare Mode
@@ -105,6 +106,16 @@ Notes support:
 - `F4` to cycle notes
 - shared sidecar files for collaboration
 - export to JSON or Markdown
+
+## Language Files
+
+Notepad-X now includes a translation/config layer for visible UI text.
+
+- `cfg/en_us.cfg` is the default English language file
+- `Edit > Language` shows `en_us` selected by default
+- any additional `cfg/*.cfg` file appears automatically in the Language menu
+- the selected language is saved in the session and restored on launch
+- current language coverage includes the main menus, displayed hotkeys, status bar text, note popup labels, and core dialog captions
 
 ## Encrypted Files
 
@@ -191,6 +202,7 @@ Notepad-X keeps support files for sessions, editor identity, recovery, crash log
 
 These can include:
 
+- `cfg/en_us.cfg`
 - `cfg/Notepad-X.<host>-<user>.session.json`
 - `cfg/Notepad-X.<host>-<user>.editor.json`
 - `Notepad-X.recovery.json`

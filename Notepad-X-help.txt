@@ -75,6 +75,7 @@ Edit Menu
 - Date: Inserts the current date.
 - Time/Date: Inserts the current time and date.
 - Font: Opens the font picker for editor family and size.
+- Language: Lists the available `cfg/*.cfg` language files and lets you switch the visible UI text. `en_us` is selected by default.
 
 View Menu
 - Full Screen: Toggles fullscreen while keeping the tab strip, text area, and status bar visible.
@@ -256,6 +257,13 @@ Audio Notifications
 - The Sound checkmark in the View menu enables or disables sound playback.
 - Audio files are resolved from the audio folder first, with appdir/audio as a fallback location.
 
+Language Files
+- Notepad-X includes a translation/config layer for visible UI text.
+- `cfg/en_us.cfg` is the default English language file.
+- The Language submenu under Edit scans `cfg/*.cfg` and shows any added language file automatically.
+- The selected language is saved in the session and restored when Notepad-X starts again.
+- Current language-file coverage includes the main menus, displayed hotkeys, status bar text, note popup labels, and core dialog captions.
+
 Session Restore and Recovery
 - File-backed tabs are written to the session file and restored on startup.
 - The last active tab is restored when possible.
@@ -273,6 +281,7 @@ Crash Logging
 Support Files
 - Notepad-X keeps several support files in its app directory.
 - These can include:
+  cfg/en_us.cfg
   cfg/Notepad-X.<host>-<user>.session.json
   cfg/Notepad-X.<host>-<user>.editor.json
   Notepad-X.recovery.json
