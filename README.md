@@ -25,7 +25,7 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 - Shared note sidecars with unread tracking
 - Export notes to JSON or Markdown
 - Inline compare mode inside the main editor
-- `Find Next` and `F3` follow the active pane during compare mode
+- `Find Next`, `Find Previous`, `F3`, and `Shift+F3` follow the active pane during compare mode
 - Autosave recovery for unsaved untitled tabs after a crash
 - Crash logging for important failures and unhandled exceptions
 - Conflict detection before saving if a file changed on disk
@@ -48,7 +48,7 @@ Notepad-X can compare two open tabs side by side inside the main window.
 - both sides are editable for normal tabs
 - syntax highlighting is applied on the compare side too
 - the compared file shows its own bottom compare status readout
-- `Find Next` and `F3` follow whichever compare pane you last clicked
+- `Find Next`, `Find Previous`, `F3`, and `Shift+F3` follow whichever compare pane you last clicked
 - `Ctrl+Shift+X` closes compare mode
 - if you close the app while compare mode is open, the same compare pair is restored on next launch
 
@@ -81,6 +81,8 @@ Notepad-X includes a lightweight local autocomplete system for normal editable t
 - live search does not move the caret while typing
 - pressing `Enter` in the Find or Replace query box jumps to the first match from the top
 - the caret lands at the end of that found match
+- `Find Next` / `F3` move forward through matches
+- `Find Previous` / `Shift+F3` move backward through matches
 
 ## Code Notes
 
@@ -159,6 +161,7 @@ Notepad-X also treats binary-like files more cautiously:
 - `Ctrl+E` Export Notes
 - `Ctrl+Shift+X` Close compare / close Find or Replace / exit
 - `Ctrl+F` Find
+- `Shift+F3` Find previous
 - `Ctrl+R` Replace
 - `F3` Find next or next unread note
 - `F4` Cycle notes

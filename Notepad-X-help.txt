@@ -65,6 +65,7 @@ Edit Menu
 - Select All: Selects all text in the current tab.
 - Find: Opens the live find panel.
 - Find Next: Moves to the next match. If Find and Replace are closed, F3 jumps through unread notes instead.
+- Find Previous: Moves to the previous match while Find or Replace is open.
 - Cycle Notes: Moves through every note in the current tab from first to last, then wraps back to the beginning.
 - Replace: Opens the Find/Replace panel.
 - Filter Notes: Filters note cycling to All, Unread, Yellow, Green, or Red notes.
@@ -121,11 +122,13 @@ Find and Replace
 - Live find does not move the caret while you type.
 - Pressing Enter in the Find or Replace query box jumps to the first match from the top of the active editor pane.
 - After that jump, the caret is placed at the end of the found match.
+- F3 continues forward through matches.
+- Shift+F3 moves backward through matches.
 - Replace uses the same live highlighting in its Find field.
 - Closing Find or Replace clears the field and removes the highlights.
 - The Find and Replace panels include a Search across all tabs checkbox.
-- When Search across all tabs is enabled, Find Next can continue into other open tabs instead of stopping at the current tab.
-- In compare mode, Find Next and F3 follow the editor pane you most recently clicked instead of always jumping back to the left side.
+- When Search across all tabs is enabled, Find Next and Find Previous can continue into other open tabs instead of stopping at the current tab.
+- In compare mode, Find Next, Find Previous, F3, and Shift+F3 follow the editor pane you most recently clicked instead of always jumping back to the left side.
 - Find is not available in buffered large-file virtual mode.
 - Replace is not available in buffered large-file virtual mode.
 - Ctrl+Shift+X closes the Find or Replace panel if one is open.
@@ -307,6 +310,7 @@ Keyboard Shortcuts
 - Ctrl+V: Paste
 - Ctrl+A: Select All
 - Ctrl+F: Find
+- Shift+F3: Find Previous
 - F3: Find Next, or next unread note when Find and Replace are closed
 - F4: Cycle Notes
 - Ctrl+R: Replace

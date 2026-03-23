@@ -2012,6 +2012,39 @@ class NotepadX:
         self.update_status()
         return pos, end
 
+    def search_previous_in_widget(self, widget, query, start_index=None, wrap=True):
+        if widget is None or not query:
+            return None
+
+        start = start_index or widget.index(tk.INSERT)
+        start_offset = self.get_text_char_offset(widget, start)
+        try:
+            content = widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return None
+
+        previous_limit = max(0, start_offset - len(query))
+        matches = self.find_query_offsets(widget, query, start_offset=0, stop_offset=previous_limit, nocase=True)
+        if matches:
+            match_offset = matches[-1]
+        elif wrap:
+            wrapped_matches = self.find_query_offsets(widget, query, start_offset=0, stop_offset=len(content), nocase=True)
+            if not wrapped_matches:
+                return None
+            match_offset = wrapped_matches[-1]
+        else:
+            return None
+
+        pos = self.text_index_from_offset(widget, match_offset, content=content)
+        if not pos:
+            return None
+        end = self.text_index_from_offset(widget, match_offset + len(query), content=content)
+        if not end:
+            return None
+        self.set_current_find_match(widget, pos, end)
+        self.update_status()
+        return pos, end
+
     def find_next(self, event=None):
         if self.find_panel_visible:
             query = self.find_entry.get().strip()
@@ -2036,6 +2069,32 @@ class NotepadX:
             return self.find_next_across_tabs(query, target_widget)
 
         self.search_next_in_widget(target_widget, query, wrap=True)
+        return "break"
+
+    def find_previous(self, event=None):
+        if self.find_panel_visible:
+            query = self.find_entry.get().strip()
+        elif self.replace_panel_visible:
+            query = self.replace_find_entry.get().strip()
+        else:
+            return "break"
+
+        if not query:
+            return "break"
+
+        target_widget = self.get_active_search_widget()
+        if target_widget is None:
+            return "break"
+
+        compare_widget = self.get_compare_text_widget()
+        if target_widget == compare_widget:
+            self.search_previous_in_widget(target_widget, query, wrap=True)
+            return "break"
+
+        if self.search_all_tabs.get():
+            return self.find_previous_across_tabs(query, target_widget)
+
+        self.search_previous_in_widget(target_widget, query, wrap=True)
         return "break"
 
     def find_next_across_tabs(self, query, start_widget=None, start_from_top=False):
@@ -2076,6 +2135,33 @@ class NotepadX:
                     first_pass = False
                     continue
                 self.set_current_find_match(search_widget, pos, end)
+                return "break"
+            first_pass = False
+        return "break"
+
+    def find_previous_across_tabs(self, query, start_widget=None):
+        tab_ids = list(self.notebook.tabs())
+        if not tab_ids:
+            return "break"
+
+        start_doc = self.get_doc_for_text_widget(start_widget) if start_widget is not None else self.get_current_doc()
+        current_tab = str(start_doc['frame']) if start_doc else self.notebook.select()
+        try:
+            start_index = tab_ids.index(current_tab)
+        except ValueError:
+            start_index = 0
+        search_order = list(reversed(tab_ids[:start_index + 1])) + list(reversed(tab_ids[start_index + 1:]))
+        first_pass = True
+        for tab_id in search_order:
+            doc = self.documents.get(str(tab_id))
+            if not doc or doc.get('virtual_mode') or doc.get('preview_mode'):
+                continue
+            self.notebook.select(doc['frame'])
+            self.set_active_document(doc['frame'])
+            search_widget = doc['text']
+            start = search_widget.index(tk.INSERT) if first_pass and search_widget == start_widget else tk.END
+            result = self.search_previous_in_widget(search_widget, query, start_index=start, wrap=not first_pass)
+            if result:
                 return "break"
             first_pass = False
         return "break"
@@ -2529,6 +2615,7 @@ class NotepadX:
         self.root.bind('<Control-r>', lambda e: self.show_replace_panel())
         self.root.bind('<Control-R>', lambda e: self.show_replace_panel())
         self.root.bind('<F3>', self.find_next)
+        self.root.bind('<Shift-F3>', self.find_previous)
         self.root.bind('<F4>', self.goto_next_note)
         self.root.bind('<Control-g>', self.goto_line_dialog)
         self.root.bind('<Control-G>', self.goto_line_dialog)
@@ -3206,6 +3293,7 @@ class NotepadX:
         self.compare_text.bind('<ButtonRelease-1>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<Button-3>', self.show_compare_context_menu)
         self.compare_text.bind('<F3>', self.find_next)
+        self.compare_text.bind('<Shift-F3>', self.find_previous)
         self.compare_text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         self.compare_text.bind('<Control-Shift-x>', self.ctrl_shift_x)
         self.compare_text.bind('<<Modified>>', self.on_compare_modified)
@@ -6471,6 +6559,7 @@ class NotepadX:
         edit_menu.add_separator()
         edit_menu.add_command(label="Find", command=self.show_find_panel, accelerator="Ctrl+F")
         edit_menu.add_command(label="Find Next", command=self.find_next, accelerator="F3")
+        edit_menu.add_command(label="Find Previous", command=self.find_previous, accelerator="Shift+F3")
         edit_menu.add_command(label="Replace", command=self.show_replace_panel, accelerator="Ctrl+R")
         edit_menu.add_command(label="Cycle Notes", command=self.goto_next_note, accelerator="F4")
         note_filter_menu = tk.Menu(edit_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
