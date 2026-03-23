@@ -559,6 +559,10 @@ class NotepadX:
             decoded = decode_locale_scalar(value)
             if isinstance(decoded, str):
                 parsed[full_key] = decoded
+                if full_key.endswith('.label'):
+                    parent_key = full_key[:-6]
+                    if parent_key and parent_key not in parsed:
+                        parsed[parent_key] = decoded
         return parsed
 
     def load_locale_strings(self, locale_path):
@@ -634,6 +638,51 @@ class NotepadX:
     def ui_justify(self):
         return 'right' if self.is_rtl_locale() else 'left'
 
+    def get_available_font_families_map(self):
+        try:
+            families = tkfont.families(self.root)
+        except Exception:
+            families = ()
+        font_map = {}
+        for family in families:
+            if not isinstance(family, str):
+                continue
+            normalized = family.strip().lower()
+            if normalized and normalized not in font_map:
+                font_map[normalized] = family
+        return font_map
+
+    def get_locale_font_candidates(self, locale_code=None):
+        code = str(locale_code or self.locale_code or 'en_us').strip().lower()
+        language = code.split('_', 1)[0]
+        if language == 'ar':
+            if self.is_windows:
+                return ['Tahoma', 'Arial', 'Segoe UI', 'Courier New']
+            return ['Noto Sans Arabic', 'Noto Naskh Arabic', 'DejaVu Sans', 'DejaVu Sans Mono', 'Liberation Sans', 'Monospace']
+        if language == 'ja':
+            if self.is_windows:
+                return ['Yu Gothic UI', 'Yu Gothic', 'Meiryo', 'MS Gothic', 'Courier New']
+            return ['Noto Sans CJK JP', 'Noto Sans JP', 'IPAGothic', 'VL Gothic', 'TakaoGothic', 'DejaVu Sans Mono']
+        if language == 'zh':
+            if self.is_windows:
+                return ['Microsoft YaHei UI', 'Microsoft YaHei', 'SimSun', 'Courier New']
+            return ['Noto Sans CJK SC', 'Noto Sans SC', 'WenQuanYi Zen Hei', 'AR PL UKai CN', 'DejaVu Sans Mono']
+        if language == 'hi':
+            if self.is_windows:
+                return ['Nirmala UI', 'Mangal', 'Arial Unicode MS', 'Courier New']
+            return ['Noto Sans Devanagari', 'Lohit Devanagari', 'Sahadeva', 'DejaVu Sans']
+        if language == 'ru':
+            return ['Consolas', 'Courier New', 'DejaVu Sans Mono', 'Liberation Mono', 'Monospace']
+        return ['Courier New', 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Monospace']
+
+    def resolve_locale_font_family(self, locale_code=None):
+        font_map = self.get_available_font_families_map()
+        for candidate in self.get_locale_font_candidates(locale_code):
+            normalized = candidate.strip().lower()
+            if normalized in font_map:
+                return font_map[normalized]
+        return self.font_family or 'Courier New'
+
     def apply_locale(self, locale_code, persist=True):
         target_code = str(locale_code or 'en_us').strip().lower()
         target_path = self.get_locale_file_path(target_code)
@@ -644,6 +693,7 @@ class NotepadX:
         self.locale_path = target_path
         self.locale_strings = self.load_locale_strings(self.locale_path)
         self.app_name = self.tr('app.name', 'Notepad-X')
+        self.font_family = self.resolve_locale_font_family(self.locale_code)
         self.note_color_labels = {
             'yellow': self.tr('note.filter.yellow', 'Yellow'),
             'green': self.tr('note.filter.green', 'Green'),
@@ -672,6 +722,7 @@ class NotepadX:
         if hasattr(self, 'root'):
             self.update_window_title()
         if hasattr(self, 'text'):
+            self.update_font()
             self.update_status()
         if persist and hasattr(self, 'save_session'):
             self.save_session()
