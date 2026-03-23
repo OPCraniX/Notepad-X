@@ -518,19 +518,12 @@ class NotepadX:
                     parsed[key] = value
             return parsed
 
-        parsed = {}
-        for raw_line in content.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith('#') or ':' not in raw_line:
-                continue
-            key, value = raw_line.split(':', 1)
-            key = key.strip()
+        def decode_locale_scalar(value):
+            if value is None:
+                return None
             value = value.strip()
-            if not key:
-                continue
-            if not value:
-                parsed[key] = ""
-                continue
+            if value == "":
+                return ""
             try:
                 decoded = json.loads(value)
             except json.JSONDecodeError:
@@ -539,9 +532,33 @@ class NotepadX:
                 else:
                     decoded = value
             if isinstance(decoded, str):
-                parsed[key] = decoded
-            elif decoded is not None:
-                parsed[key] = str(decoded)
+                return decoded
+            if decoded is None:
+                return None
+            return str(decoded)
+
+        parsed = {}
+        key_stack = []
+        for raw_line in content.splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith('#') or ':' not in raw_line:
+                continue
+            indent = len(raw_line) - len(raw_line.lstrip(' '))
+            key, value = raw_line.split(':', 1)
+            key = key.strip()
+            if not key:
+                continue
+            while key_stack and indent <= key_stack[-1][0]:
+                key_stack.pop()
+            value = value.strip()
+            full_key_parts = [entry[1] for entry in key_stack] + [key]
+            full_key = ".".join(full_key_parts)
+            if not value:
+                key_stack.append((indent, key))
+                continue
+            decoded = decode_locale_scalar(value)
+            if isinstance(decoded, str):
+                parsed[full_key] = decoded
         return parsed
 
     def load_locale_strings(self, locale_path):
