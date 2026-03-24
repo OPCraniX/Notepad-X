@@ -163,6 +163,9 @@ DEFAULT_LOCALE_STRINGS = {
     "syntax.theme.default": "Default",
     "syntax.theme.soft": "Soft",
     "syntax.theme.vivid": "Vivid",
+    "syntax.theme.base4tone": "Base4Tone",
+    "syntax.theme.green_monochrome": "Green Monochrome",
+    "syntax.theme.orange_monochrome": "Orange Monochrome",
     "syntax.mode.auto": "Auto",
     "syntax.mode.plain": "Plain Text",
     "syntax.mode.python": "Python",
@@ -1431,7 +1434,7 @@ class NotepadX:
             compare_base_file = None
 
         syntax_theme = str(session.get('syntax_theme', 'Default'))
-        if syntax_theme not in {'Default', 'Soft', 'Vivid'}:
+        if syntax_theme not in {'Default', 'Soft', 'Vivid', 'Base4Tone', 'Green Monochrome', 'Orange Monochrome'}:
             syntax_theme = 'Default'
 
         try:
@@ -2038,10 +2041,11 @@ class NotepadX:
         self.toast_after_id = self.root.after(1400, self.hide_toast)
 
     def create_line_number_gutter(self, parent, tab_id=None, doc=None):
+        surface = self.get_syntax_surface_palette()
         gutter = tk.Canvas(
             parent,
             width=56,
-            bg='#0d1117',
+            bg=surface['gutter_bg'],
             highlightthickness=0,
             borderwidth=0,
             relief='flat'
@@ -2084,6 +2088,8 @@ class NotepadX:
         if current_gutter_width != desired_gutter_width:
             gutter.configure(width=desired_gutter_width)
 
+        surface = self.get_syntax_surface_palette()
+        gutter.configure(bg=surface['gutter_bg'])
         gutter.delete('all')
         gutter_height = max(gutter.winfo_height(), text.winfo_height(), 1)
         gutter_width = int(gutter.cget('width'))
@@ -2093,7 +2099,8 @@ class NotepadX:
         except tk.TclError:
             pass
 
-        gutter.create_rectangle(gutter_width - 1, 0, gutter_width, gutter_height, fill='#30363d', outline='')
+        gutter.create_rectangle(0, 0, gutter_width - 1, gutter_height, fill=surface['gutter_bg'], outline='')
+        gutter.create_rectangle(gutter_width - 1, 0, gutter_width, gutter_height, fill=surface['gutter_divider'], outline='')
 
         try:
             index = text.index('@0,0')
@@ -2106,10 +2113,10 @@ class NotepadX:
                 y = info[1]
                 line_height = info[3]
                 if local_line == current_line:
-                    gutter.create_rectangle(0, y, gutter_width - 1, y + line_height, fill='#161b22', outline='')
-                    line_fg = '#c9d1d9'
+                    gutter.create_rectangle(0, y, gutter_width - 1, y + line_height, fill=surface['gutter_current_bg'], outline='')
+                    line_fg = surface['gutter_current_fg']
                 else:
-                    line_fg = '#8b949e'
+                    line_fg = surface['gutter_fg']
                 gutter.create_text(
                     gutter_width - 10,
                     y + (line_height / 2),
@@ -4223,6 +4230,77 @@ class NotepadX:
         else:
             self.clear_custom_syntax_tags(doc)
 
+    def get_syntax_surface_palette(self):
+        palettes = {
+            'Default': {
+                'text_bg': self.text_bg,
+                'text_fg': self.text_fg,
+                'cursor': self.cursor_color,
+                'selection': self.select_bg,
+                'gutter_bg': '#0d1117',
+                'gutter_current_bg': '#161b22',
+                'gutter_fg': '#8b949e',
+                'gutter_current_fg': '#c9d1d9',
+                'gutter_divider': '#30363d',
+            },
+            'Soft': {
+                'text_bg': '#11131a',
+                'text_fg': '#cad3f5',
+                'cursor': '#89b4fa',
+                'selection': '#313244',
+                'gutter_bg': '#11131a',
+                'gutter_current_bg': '#181b24',
+                'gutter_fg': '#7f849c',
+                'gutter_current_fg': '#cad3f5',
+                'gutter_divider': '#313244',
+            },
+            'Vivid': {
+                'text_bg': '#101217',
+                'text_fg': '#f8f9fa',
+                'cursor': '#4cc9f0',
+                'selection': '#3a0f2d',
+                'gutter_bg': '#101217',
+                'gutter_current_bg': '#1b1f2a',
+                'gutter_fg': '#9aa0a6',
+                'gutter_current_fg': '#f8f9fa',
+                'gutter_divider': '#343a40',
+            },
+            'Base4Tone': {
+                'text_bg': '#231f20',
+                'text_fg': '#e6d6c4',
+                'cursor': '#f6c177',
+                'selection': '#3b2f32',
+                'gutter_bg': '#1d191a',
+                'gutter_current_bg': '#2a2325',
+                'gutter_fg': '#7c6f72',
+                'gutter_current_fg': '#eadfd2',
+                'gutter_divider': '#3a3234',
+            },
+            'Green Monochrome': {
+                'text_bg': '#081108',
+                'text_fg': '#86f08a',
+                'cursor': '#b8ffb8',
+                'selection': '#173617',
+                'gutter_bg': '#050b05',
+                'gutter_current_bg': '#102510',
+                'gutter_fg': '#3d8f47',
+                'gutter_current_fg': '#b8ffb8',
+                'gutter_divider': '#24552b',
+            },
+            'Orange Monochrome': {
+                'text_bg': '#140c04',
+                'text_fg': '#ffb45a',
+                'cursor': '#ffd08a',
+                'selection': '#3a2108',
+                'gutter_bg': '#100802',
+                'gutter_current_bg': '#2a1806',
+                'gutter_fg': '#b56d26',
+                'gutter_current_fg': '#ffd08a',
+                'gutter_divider': '#5b3511',
+            },
+        }
+        return palettes.get(self.syntax_theme.get(), palettes['Default'])
+
     def get_syntax_palette(self):
         palettes = {
             'Default': {
@@ -4252,11 +4330,46 @@ class NotepadX:
                 'preprocessor': '#b388ff',
                 'tag': '#06d6a0',
             },
+            'Base4Tone': {
+                'keyword': '#cf8a8a',
+                'type': '#7ab0c8',
+                'string': '#d6b28a',
+                'comment': '#8b7d78',
+                'number': '#f1c27d',
+                'preprocessor': '#b7a1d3',
+                'tag': '#8fc7b0',
+            },
+            'Green Monochrome': {
+                'keyword': '#9af59f',
+                'type': '#74db7c',
+                'string': '#c8ffb2',
+                'comment': '#4a9252',
+                'number': '#b7ff91',
+                'preprocessor': '#8ae28f',
+                'tag': '#79c87f',
+            },
+            'Orange Monochrome': {
+                'keyword': '#ffc56d',
+                'type': '#ffaf4d',
+                'string': '#ffd89b',
+                'comment': '#b67a3a',
+                'number': '#ffe18c',
+                'preprocessor': '#ffbf74',
+                'tag': '#ffa33f',
+            },
         }
         return palettes.get(self.syntax_theme.get(), palettes['Default'])
 
     def apply_syntax_tag_colors(self, text_widget):
+        surface = self.get_syntax_surface_palette()
         palette = self.get_syntax_palette()
+        text_widget.configure(
+            bg=surface['text_bg'],
+            fg=surface['text_fg'],
+            insertbackground=surface['cursor'],
+            selectbackground=surface['selection'],
+            selectforeground='white',
+        )
         text_widget.tag_config('syntax_keyword', foreground=palette['keyword'])
         text_widget.tag_config('syntax_type', foreground=palette['type'])
         text_widget.tag_config('syntax_string', foreground=palette['string'])
@@ -4283,8 +4396,12 @@ class NotepadX:
                 except Exception:
                     pass
             self.configure_syntax_highlighting(doc['frame'])
+            self.update_line_number_gutter(doc)
         if self.compare_active:
             self.refresh_compare_panel()
+        elif getattr(self, 'compare_view', None):
+            self.apply_syntax_tag_colors(self.compare_text)
+            self.update_line_number_gutter(self.compare_view)
         self.save_session()
 
     def set_current_syntax_override(self, syntax_mode):
@@ -7004,6 +7121,12 @@ class NotepadX:
         except (TypeError, ValueError):
             self.current_font_size = self.base_font_size
         self.syntax_theme.set(str(session.get('syntax_theme', 'Default')))
+        for doc in self.documents.values():
+            self.apply_syntax_tag_colors(doc['text'])
+            self.update_line_number_gutter(doc)
+        if getattr(self, 'compare_view', None):
+            self.apply_syntax_tag_colors(self.compare_text)
+            self.update_line_number_gutter(self.compare_view)
         if self.status_bar_enabled.get():
             self.status_frame.grid()
         else:
@@ -7379,7 +7502,14 @@ class NotepadX:
         view_menu.add_checkbutton(label=t('menu.view.sound', 'Sound'), variable=self.sound_enabled, command=self.toggle_sound)
         syntax_theme_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         view_menu.add_cascade(label=t('menu.view.syntax_theme', 'Syntax Theme'), menu=syntax_theme_menu)
-        for theme_name, theme_key in (('Default', 'syntax.theme.default'), ('Soft', 'syntax.theme.soft'), ('Vivid', 'syntax.theme.vivid')):
+        for theme_name, theme_key in (
+            ('Default', 'syntax.theme.default'),
+            ('Soft', 'syntax.theme.soft'),
+            ('Vivid', 'syntax.theme.vivid'),
+            ('Base4Tone', 'syntax.theme.base4tone'),
+            ('Green Monochrome', 'syntax.theme.green_monochrome'),
+            ('Orange Monochrome', 'syntax.theme.orange_monochrome'),
+        ):
             syntax_theme_menu.add_radiobutton(label=t(theme_key, theme_name), variable=self.syntax_theme, value=theme_name, command=lambda name=theme_name: self.set_syntax_theme(name))
         syntax_mode_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         view_menu.add_cascade(label=t('menu.view.syntax_mode', 'Syntax Mode'), menu=syntax_mode_menu)
