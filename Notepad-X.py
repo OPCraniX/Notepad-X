@@ -8150,10 +8150,6 @@ class NotepadX:
             '.asm', '.s', '.js', '.ts', '.tsx', '.jsx', '.css', '.json',
             '.xml', '.toml', '.yaml', '.yml', '.ini', '.cfg', '.sh', '.bat'
         }
-        excluded_project_files = {
-            'notepad-x.session.json',
-            'notepad-x.editor.json',
-        }
         file_path = os.path.abspath(file_path)
         project_dir = os.path.dirname(file_path)
         selected_extension = os.path.splitext(file_path)[1].lower()
@@ -8171,7 +8167,14 @@ class NotepadX:
             if candidate_path == file_path:
                 continue
             candidate_name = entry.name.lower()
-            if candidate_name in excluded_project_files or candidate_name.endswith('.notepadx.notes.json'):
+            if (
+                candidate_name.endswith('.notepadx.notes.json')
+                or candidate_name.endswith('.notepadx.editors.json')
+                or candidate_name == 'notepad-x.recovery.json'
+                or candidate_name == 'notepad-x.crash.log'
+                or (candidate_name.startswith('notepad-x.') and candidate_name.endswith('.session.json'))
+                or (candidate_name.startswith('notepad-x.') and candidate_name.endswith('.editor.json'))
+            ):
                 continue
             candidate_extension = os.path.splitext(entry.name)[1].lower()
             if candidate_extension in source_extensions:
