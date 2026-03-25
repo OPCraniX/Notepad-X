@@ -24,13 +24,14 @@ This benchmark compares the packaged Notepad-X build against Microsoft Notepad. 
 - Live Find and Find/Replace
 - Optional `Search across all tabs`
 - Syntax highlighting for many source and config formats
-- Syntax theme presets and manual syntax override per tab
+- Six syntax theme presets: `Default`, `Soft`, `Vivid`, `Base4Tone`, `Green Monochrome`, and `Orange Monochrome`
+- Manual syntax override per tab
 - Large-file protection with buffered virtual mode
 - `Save Copy As` for huge read-only files
 - `Save As Encrypted` for passphrase-protected encrypted copies
 - Save dialogs with text, markdown, `.gitignore`, and code/config file type filters
 - Color-coded shared notes on selected text
-- Shared note sidecars with unread tracking
+- Shared note sidecars with unread tracking and multi-response note threads
 - Export notes to JSON or Markdown
 - Inline compare mode inside the main editor
 - `Find Next`, `Find Previous`, `F3`, and `Shift+F3` follow the active pane during compare mode
@@ -215,3 +216,4 @@ These can include:
 - `Notepad-X.recovery.json`
 - `Notepad-X.crash.log`
 - `*.notepadx.notes.json`
+- `*.notepadx.editors.json`

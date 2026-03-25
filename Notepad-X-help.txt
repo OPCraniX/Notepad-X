@@ -92,7 +92,7 @@ View Menu
 - Edit with Notepad-X: Enables or disables a Windows Explorer right-click entry for supported text/code file types.
 - Word Wrap: Turns wrapping on or off. The checkmark shows whether it is enabled.
 - Sound: Enables or disables note sounds. The checkmark shows whether it is enabled.
-- Syntax Theme: Changes the highlight color palette. Available themes are Default, Soft, and Vivid.
+- Syntax Theme: Changes the highlight color palette. Available themes are Default, Soft, Vivid, Base4Tone, Green Monochrome, and Orange Monochrome.
 - Syntax Mode: Manually overrides syntax detection for the current tab. Available modes include Auto, Plain Text, Python, C, C++, Rust, Java, JavaScript, HTML, PHP, XML, and SQL.
 - Compare Tabs: Opens a side-by-side compare view using the current tab and another open tab.
 - Normal editable tabs can also be edited from the compare pane on the right.
@@ -235,6 +235,8 @@ Shared Notes and Collaboration
   responses
   read state
   timestamps
+- Shared editor heartbeat/state is also stored in:
+  <filename>.notepadx.editors.json
 - Notepad-X validates and sanitizes note payloads when reading the sidecar so malformed entries are ignored instead of blindly trusted.
 - Shared editor tracking includes stale-editor cleanup so dead editor entries eventually age out instead of lingering forever.
 - The sync system polls for sidecar changes and reloads notes when another editor updates them.
@@ -298,6 +300,7 @@ Support Files
   Notepad-X.recovery.json
   Notepad-X.crash.log
   per-file *.notepadx.notes.json sidecars
+  per-file *.notepadx.editors.json sidecars
 - Notepad-X validates these files before trusting their contents and ignores malformed entries when possible.
 
 Zoom
