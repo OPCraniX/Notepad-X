@@ -47,7 +47,6 @@ This benchmark is a point-in-time comparison between the packaged Notepad-X buil
 - `View > Edit with Notepad-X` toggle with saved preference
 - `Edit > Language` menu that scans `cfg/language/*.yml` and lets you switch UI language files
 - Friendly native language names in the Language menu with locale-aware font fallback
-- `Edit > Compiler Locations` opens the compiler/runtime JSON config in `cfg/settings`
 - `View > Currently Editing` opens a right-side live editor-ID sidebar
 - Built-in Help viewer and About dialog
 - About shows the current version and a clickable GitHub link
@@ -104,8 +103,7 @@ Notepad-X includes a lightweight local autocomplete system for normal editable t
 
 - `File > Save and Run` saves the current file first, then launches it with the appropriate runtime for supported file types
 - `Ctrl+Shift+R` triggers Save and Run
-- `Edit > Compiler Locations` opens `cfg/settings/compiler_locations.json`
-- that JSON can be used to override runtime/launcher command prefixes for supported languages
+- Notepad-X relies on the system's default installed runtimes and normal OS/browser behavior for supported file types
 
 ## Code Notes
 
@@ -225,7 +223,6 @@ These can include:
 - `cfg/language/en_US.yml`
 - `cfg/Notepad-X.<host>-<user>.session.json`
 - `cfg/Notepad-X.<host>-<user>.editor.json`
-- `cfg/settings/compiler_locations.json`
 - `Notepad-X.recovery.json`
 - `Notepad-X.crash.log`
 - `*.notepadx.notes.json`

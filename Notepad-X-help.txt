@@ -77,7 +77,6 @@ Edit Menu
 - Date: Inserts the current date.
 - Time/Date: Inserts the current time and date.
 - Font: Opens the font picker for editor family and size.
-- Compiler Locations: Opens `cfg/settings/compiler_locations.json` inside Notepad-X so you can edit runtime/compiler paths for Save and Run.
 - Language: Lists the available `cfg/language/*.yml` language files and lets you switch the visible UI text. `English (US)` is selected by default.
 
 Editing Helpers
@@ -132,7 +131,7 @@ Encrypted Files
 Save and Run
 - Save and Run saves the current file and then launches it using a detected runtime for supported file types.
 - Ctrl+Shift+R runs Save and Run.
-- Compiler/runtime overrides can be edited in `cfg/settings/compiler_locations.json` through Edit > Compiler Locations.
+- Notepad-X relies on the system's default installed runtimes and normal OS/browser behavior for supported file types.
 
 Find and Replace
 - Find highlights matches live while you type.
@@ -306,7 +305,6 @@ Support Files
   cfg/language/en_US.yml
   cfg/Notepad-X.<host>-<user>.session.json
   cfg/Notepad-X.<host>-<user>.editor.json
-  cfg/settings/compiler_locations.json
   Notepad-X.recovery.json
   Notepad-X.crash.log
   per-file *.notepadx.notes.json sidecars

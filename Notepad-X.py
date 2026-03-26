@@ -101,7 +101,6 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.edit.time_date": "Time/Date",
     "menu.edit.font": "Font",
     "menu.edit.language": "Language",
-    "menu.edit.compiler_locations": "Compiler Locations",
     "menu.view": "View",
     "menu.view.full_screen": "Full Screen",
     "menu.view.switch_tab": "Switch Tab",
@@ -347,9 +346,7 @@ class NotepadX:
         self.virtual_file_margin_lines = 800
         config_dir = self.get_config_dir(self.app_dir)
         os.makedirs(config_dir, exist_ok=True)
-        self.settings_dir = self.get_settings_dir(config_dir)
         self.locale_dir = self.get_locale_dir(config_dir)
-        os.makedirs(self.settings_dir, exist_ok=True)
         os.makedirs(self.locale_dir, exist_ok=True)
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.locale_code = 'en_us'
@@ -358,7 +355,6 @@ class NotepadX:
         self.app_name = self.tr('app.name', 'Notepad-X')
         self.session_path = self.build_session_path(config_dir)
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
-        self.compiler_locations_path = os.path.join(self.settings_dir, "compiler_locations.json")
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
         self.help_path = os.path.join(self.resource_dir, "Notepad-X-help.txt")
@@ -575,9 +571,6 @@ class NotepadX:
 
     def get_config_dir(self, base_dir):
         return os.path.join(base_dir, 'cfg')
-
-    def get_settings_dir(self, config_dir):
-        return os.path.join(config_dir, 'settings')
 
     def get_locale_dir(self, config_dir):
         return os.path.join(config_dir, 'language')
@@ -918,14 +911,11 @@ class NotepadX:
         self.app_dir = fallback_dir
         config_dir = self.get_config_dir(self.app_dir)
         os.makedirs(config_dir, exist_ok=True)
-        self.settings_dir = self.get_settings_dir(config_dir)
         self.locale_dir = self.get_locale_dir(config_dir)
-        os.makedirs(self.settings_dir, exist_ok=True)
         os.makedirs(self.locale_dir, exist_ok=True)
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.session_path = self.build_session_path(config_dir)
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
-        self.compiler_locations_path = os.path.join(self.settings_dir, "compiler_locations.json")
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
 
@@ -935,14 +925,11 @@ class NotepadX:
         self.app_dir = fallback_dir
         config_dir = self.get_config_dir(self.app_dir)
         os.makedirs(config_dir, exist_ok=True)
-        self.settings_dir = self.get_settings_dir(config_dir)
         self.locale_dir = self.get_locale_dir(config_dir)
-        os.makedirs(self.settings_dir, exist_ok=True)
         os.makedirs(self.locale_dir, exist_ok=True)
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.session_path = self.build_session_path(config_dir)
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
-        self.compiler_locations_path = os.path.join(self.settings_dir, "compiler_locations.json")
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
 
@@ -1460,72 +1447,6 @@ class NotepadX:
         if any(char in file_path for char in '\r\n'):
             return False
         return True
-
-    def get_default_compiler_locations(self):
-        return {
-            "_help": "Each language can be left as an empty array to use Notepad-X defaults, or set to a custom command prefix array. Use {file} as a placeholder if you want to place the file path manually.",
-            "python": [],
-            "javascript": [],
-            "php": [],
-            "powershell": [],
-            "shell": [],
-            "html": []
-        }
-
-    def ensure_compiler_locations_file(self):
-        compiler_locations_path = getattr(self, 'compiler_locations_path', None)
-        if not compiler_locations_path:
-            config_dir = self.get_config_dir(self.app_dir)
-            self.settings_dir = self.get_settings_dir(config_dir)
-            os.makedirs(self.settings_dir, exist_ok=True)
-            self.compiler_locations_path = os.path.join(self.settings_dir, "compiler_locations.json")
-            compiler_locations_path = self.compiler_locations_path
-
-        settings_dir = os.path.dirname(compiler_locations_path)
-        os.makedirs(settings_dir, exist_ok=True)
-        if not os.path.exists(compiler_locations_path):
-            default_payload = self.get_default_compiler_locations()
-            content = json.dumps(default_payload, indent=2, ensure_ascii=False) + "\n"
-            self.write_file_atomically(compiler_locations_path, content)
-        return compiler_locations_path
-
-    def load_compiler_locations(self):
-        compiler_locations_path = self.ensure_compiler_locations_file()
-        payload = self.read_json_file(compiler_locations_path, "load compiler locations", {})
-        if isinstance(payload, dict):
-            return payload
-        return self.get_default_compiler_locations()
-
-    def normalize_compiler_command(self, raw_command, file_path):
-        if isinstance(raw_command, str):
-            parts = [raw_command.strip()] if raw_command.strip() else []
-        elif isinstance(raw_command, list):
-            parts = [str(part).strip() for part in raw_command if str(part).strip()]
-        else:
-            return None
-        if not parts:
-            return None
-        replaced = []
-        used_placeholder = False
-        for part in parts:
-            if '{file}' in part:
-                replaced.append(part.replace('{file}', file_path))
-                used_placeholder = True
-            else:
-                replaced.append(part)
-        if not used_placeholder:
-            replaced.append(file_path)
-        return replaced
-
-    def open_compiler_locations(self):
-        try:
-            compiler_locations_path = self.ensure_compiler_locations_file()
-        except OSError as exc:
-            self.log_exception("ensure compiler locations file", exc)
-            self.show_filesystem_error("Compiler Locations", getattr(self, 'compiler_locations_path', ''), exc)
-            return "break"
-        self.open_file_path(compiler_locations_path)
-        return "break"
 
     def show_filesystem_error(self, title, file_path, exc):
         location = os.path.abspath(file_path) if file_path else "that path"
@@ -7840,7 +7761,6 @@ class NotepadX:
         edit_menu.add_command(label=t('menu.edit.font', 'Font'), command=self.show_font_dialog, accelerator=t('accel.font', 'Ctrl+Shift+F'))
         self.language_menu = tk.Menu(edit_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a', postcommand=self.refresh_language_menu)
         edit_menu.add_cascade(label=t('menu.edit.language', 'Language'), menu=self.language_menu)
-        edit_menu.add_command(label=t('menu.edit.compiler_locations', 'Compiler Locations'), command=self.open_compiler_locations)
         self.refresh_language_menu()
         view_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
@@ -8774,10 +8694,6 @@ class NotepadX:
         return None
 
     def get_save_and_run_command(self, language, file_path):
-        custom_compiler_locations = self.load_compiler_locations()
-        custom_command = self.normalize_compiler_command(custom_compiler_locations.get(language), file_path)
-        if custom_command:
-            return custom_command
         if language == 'python':
             if self.is_windows:
                 return self.choose_available_command((['py', '-3', file_path], ['python', file_path], ['python3', file_path]))
