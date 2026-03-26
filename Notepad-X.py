@@ -1295,6 +1295,7 @@ class NotepadX:
         dialog.transient(parent)
         dialog.resizable(False, False)
         dialog.configure(bg='#f0f0f0', padx=14, pady=12)
+        self.apply_window_icon(dialog)
 
         result = {'value': None}
         encrypt_var = tk.BooleanVar(value=bool(default_encrypt))
@@ -1392,6 +1393,7 @@ class NotepadX:
         dialog.transient(parent)
         dialog.resizable(False, False)
         dialog.configure(bg='#f0f0f0', padx=14, pady=12)
+        self.apply_window_icon(dialog)
 
         result = {'value': None}
         show_var = tk.BooleanVar(value=False)
@@ -1442,13 +1444,15 @@ class NotepadX:
         dialog.protocol("WM_DELETE_WINDOW", cancel)
         dialog.update_idletasks()
         update_visibility()
-        self.center_window(dialog)
+        self.center_window(dialog, parent)
         dialog.lift()
         dialog.attributes('-topmost', True)
         dialog.grab_set()
         passphrase_entry.focus_force()
         try:
             dialog.wait_visibility()
+            self.center_window(dialog, parent)
+            dialog.after(1, lambda current=dialog: self.center_window_after_show(current, parent))
             dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
             parent.wait_window(dialog)
             return result['value']
@@ -6048,6 +6052,7 @@ class NotepadX:
         dialog.transient(parent)
         dialog.resizable(False, False)
         dialog.configure(bg='#f0f0f0', padx=14, pady=12)
+        self.apply_window_icon(dialog)
 
         result = {'value': None}
         value_var = tk.StringVar(value=initialvalue)
@@ -6110,6 +6115,7 @@ class NotepadX:
         dialog.transient(parent)
         dialog.resizable(False, False)
         dialog.configure(bg='#f0f0f0', padx=14, pady=12)
+        self.apply_window_icon(dialog)
 
         result = {'value': None}
         color_var = tk.StringVar(value=self.normalize_note_color(initialvalue))
@@ -8176,6 +8182,7 @@ class NotepadX:
         dialog.title(self.tr('app.compare_title', 'Compare With Tab'))
         dialog.transient(self.root)
         dialog.configure(bg=self.bg_color, padx=12, pady=12)
+        self.apply_window_icon(dialog)
         tk.Label(
             dialog,
             text=self.tr('compare.choose_prompt', 'Choose a tab to compare with the current one:'),
@@ -9559,6 +9566,7 @@ class NotepadX:
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.configure(bg=self.bg_color, padx=16, pady=16)
+        self.apply_window_icon(dialog)
 
         tk.Label(dialog, text="Font:", bg=self.bg_color, fg=self.fg_color).grid(row=0, column=0, sticky='w', pady=(0, 8))
         tk.Label(dialog, text="Size:", bg=self.bg_color, fg=self.fg_color).grid(row=0, column=1, sticky='w', padx=(12, 0), pady=(0, 8))
@@ -9656,6 +9664,7 @@ class NotepadX:
         dialog.transient(self.root)
         dialog.resizable(False, False)
         dialog.configure(bg=self.bg_color)
+        self.apply_window_icon(dialog)
 
         tk.Label(dialog, text="Line Number:", bg=self.bg_color, fg=self.fg_color)\
             .grid(row=0, column=0, padx=6, pady=8)
