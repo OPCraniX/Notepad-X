@@ -140,8 +140,8 @@ DEFAULT_LOCALE_STRINGS = {
     "note.prompt.response_color": "Response Color",
     "note.prompt.name_required": "Enter a name first.",
     "panel.currently_editing.title": "Currently Editing",
-    "panel.currently_editing.unsaved": "Save this tab to track currently editing IDs.",
-    "panel.currently_editing.none": "No active editing IDs for this file.",
+    "panel.currently_editing.unsaved": "No active IDs found.",
+    "panel.currently_editing.none": "No active IDs found.",
     "status.initial": "Ln 1 of 1, Col 1 | 0 characters | UTF-8 | Normal",
     "status.memory_initial": " | Memory used: 0MB",
     "status.synced": "| Notes Synced",
@@ -963,11 +963,52 @@ class NotepadX:
             sanitized.append({
                 'author_id': self.trim_text(self.normalize_optional_metadata(response.get('author_id')), 128),
                 'author_label': self.trim_text(self.normalize_optional_metadata(response.get('author_label')), self.max_note_name_length),
+                'author_host': self.trim_text(self.normalize_optional_metadata(response.get('author_host')), 128),
+                'author_ip': self.trim_text(self.normalize_optional_metadata(response.get('author_ip')), 64),
                 'text': response_text,
                 'color': self.normalize_note_color(response.get('color')),
                 'created_at': self.normalize_optional_metadata(response.get('created_at')),
             })
         return sanitized
+
+    def get_local_machine_name(self):
+        try:
+            return self.trim_text(socket.gethostname() or None, 128)
+        except OSError:
+            return None
+
+    def get_local_lan_ip(self):
+        candidates = []
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                probe.connect(("8.8.8.8", 80))
+                ip = probe.getsockname()[0]
+                if ip:
+                    candidates.append(ip)
+            finally:
+                probe.close()
+        except OSError:
+            pass
+        try:
+            hostname = socket.gethostname()
+            for _, _, _, _, sockaddr in socket.getaddrinfo(hostname, None, socket.AF_INET):
+                ip = sockaddr[0]
+                if ip:
+                    candidates.append(ip)
+        except OSError:
+            pass
+
+        preferred = None
+        fallback = None
+        for ip in candidates:
+            if not ip or ip.startswith("127."):
+                continue
+            fallback = fallback or ip
+            if ip.startswith(("10.", "192.168.", "172.")):
+                preferred = ip
+                break
+        return self.trim_text(preferred or fallback, 64)
 
     def get_note_color_hex(self, value):
         return self.note_colors[self.normalize_note_color(value)]
@@ -2322,7 +2363,22 @@ class NotepadX:
             if not editors:
                 lines = [self.tr('panel.currently_editing.none', 'No active editing IDs for this file.')]
             else:
-                lines = [entry.get('id', '') for entry in editors if entry.get('id')]
+                lines = []
+                for entry in editors:
+                    editor_id = entry.get('id', '')
+                    if not editor_id:
+                        continue
+                    header_parts = []
+                    if entry.get('host'):
+                        header_parts.append(entry['host'])
+                    if entry.get('ip'):
+                        header_parts.append(entry['ip'])
+                    if header_parts:
+                        lines.append(" | ".join(header_parts))
+                    lines.append(editor_id)
+                    lines.append("")
+                if lines and not lines[-1].strip():
+                    lines.pop()
                 if not lines:
                     lines = [self.tr('panel.currently_editing.none', 'No active editing IDs for this file.')]
 
@@ -5697,17 +5753,27 @@ class NotepadX:
             anchor=self.ui_anchor_start()
         ).pack(fill='x', padx=10, pady=(8, 2))
 
-        meta_parts = []
+        author_line_parts = []
         if note_data.get('author_label'):
-            meta_parts.append(f"{self.tr('note.popup.author', 'Author')}: {note_data['author_label']}")
+            author_line_parts.append(f"{self.tr('note.popup.author', 'Author')}: {note_data['author_label']}")
         elif note_data.get('author_id'):
-            meta_parts.append(f"{self.tr('note.popup.author_id', 'Author ID')}: {note_data['author_id']}")
+            author_line_parts.append(f"{self.tr('note.popup.author_id', 'Author ID')}: {note_data['author_id']}")
+        author_location_parts = []
+        if note_data.get('author_host'):
+            author_location_parts.append(note_data['author_host'])
+        if note_data.get('author_ip'):
+            author_location_parts.append(note_data['author_ip'])
+        if author_location_parts:
+            author_line_parts.append(" | ".join(author_location_parts))
+        meta_lines = []
+        if author_line_parts:
+            meta_lines.append(" | ".join(author_line_parts))
         if note_data.get('created_at'):
-            meta_parts.append(f"{self.tr('note.popup.created', 'Created')}: {self.format_note_timestamp(note_data.get('created_at'))}")
-        if meta_parts:
+            meta_lines.append(f"{self.tr('note.popup.created', 'Created')}: {self.format_note_timestamp(note_data.get('created_at'))}")
+        if meta_lines:
             tk.Label(
                 frame,
-                text=" | ".join(meta_parts),
+                text="\n".join(meta_lines),
                 bg='#1f2430',
                 fg='#9aa0a6',
                 font=('Segoe UI', 8),
@@ -5745,6 +5811,13 @@ class NotepadX:
                     response_meta.append(response['author_label'])
                 elif response.get('author_id'):
                     response_meta.append(response['author_id'])
+                response_location_parts = []
+                if response.get('author_host'):
+                    response_location_parts.append(response['author_host'])
+                if response.get('author_ip'):
+                    response_location_parts.append(response['author_ip'])
+                if response_location_parts:
+                    response_meta.append(" | ".join(response_location_parts))
                 if response.get('created_at'):
                     response_meta.append(self.format_note_timestamp(response.get('created_at')))
                 if response_meta:
@@ -5770,7 +5843,7 @@ class NotepadX:
                 ).pack(fill='x', padx=10, pady=(0, 6))
 
         popup.update_idletasks()
-        popup.geometry(f"+{x + 12}+{y + 12}")
+        self.center_window(popup, self.root)
         popup.bind('<Escape>', lambda e, current=doc: self.hide_note_popup(current))
         doc['note_popup'] = popup
 
@@ -5820,11 +5893,7 @@ class NotepadX:
         dialog.protocol("WM_DELETE_WINDOW", cancel)
 
         dialog.update_idletasks()
-        w = dialog.winfo_width()
-        h = dialog.winfo_height()
-        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        self.center_window(dialog, parent)
         dialog.lift()
         dialog.attributes('-topmost', True)
         dialog.grab_set()
@@ -5832,6 +5901,7 @@ class NotepadX:
         entry.selection_range(0, tk.END)
         try:
             dialog.wait_visibility()
+            self.center_window(dialog, parent)
             dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
             parent.wait_window(dialog)
             return result['value']
@@ -5894,16 +5964,13 @@ class NotepadX:
         dialog.protocol("WM_DELETE_WINDOW", cancel)
 
         dialog.update_idletasks()
-        w = dialog.winfo_width()
-        h = dialog.winfo_height()
-        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        self.center_window(dialog, parent)
         dialog.lift()
         dialog.attributes('-topmost', True)
         dialog.grab_set()
         try:
             dialog.wait_visibility()
+            self.center_window(dialog, parent)
             dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
             parent.wait_window(dialog)
             return result['value']
@@ -6052,6 +6119,8 @@ class NotepadX:
             note_color=note_color,
             author_id=self.editor_id,
             author_label=author_name,
+            author_host=self.get_local_machine_name(),
+            author_ip=self.get_local_lan_ip(),
             read_by=[self.editor_id]
         )
         self.persist_doc_notes(doc)
@@ -6069,6 +6138,8 @@ class NotepadX:
         note_id=None,
         author_id=None,
         author_label=None,
+        author_host=None,
+        author_ip=None,
         read_by=None,
         author_unread=False,
         created_at=None,
@@ -6089,6 +6160,8 @@ class NotepadX:
         safe_note_color = self.normalize_note_color(note_color)
         safe_author_id = self.trim_text(author_id, 128)
         safe_author_label = self.trim_text(author_label, self.max_note_name_length)
+        safe_author_host = self.trim_text(author_host, 128)
+        safe_author_ip = self.trim_text(author_ip, 64)
         safe_anchor_text = anchor_text if anchor_text is not None else doc['text'].get(start, end)
         safe_anchor_text = str(safe_anchor_text)[:self.max_note_text_length]
         doc['notes'][note_tag] = {
@@ -6097,6 +6170,8 @@ class NotepadX:
             'color': safe_note_color,
             'author_id': safe_author_id,
             'author_label': safe_author_label,
+            'author_host': safe_author_host,
+            'author_ip': safe_author_ip,
             'read_by': normalized_read_by[:64],
             'author_unread': bool(author_unread),
             'created_at': created_at or self.utc_timestamp(),
@@ -6162,6 +6237,8 @@ class NotepadX:
         responses.append({
             'author_id': self.editor_id,
             'author_label': author_name,
+            'author_host': self.get_local_machine_name(),
+            'author_ip': self.get_local_lan_ip(),
             'text': response_text,
             'color': self.normalize_note_color(response_color),
             'created_at': self.utc_timestamp(),
@@ -6430,7 +6507,9 @@ class NotepadX:
             if not isinstance(pid, int) or pid <= 0:
                 pid = None
             last_seen = self.normalize_optional_metadata(entry.get('last_seen'))
-            sanitized.append({'id': editor_id, 'label': label, 'pid': pid, 'last_seen': last_seen})
+            host = self.trim_text(self.normalize_optional_metadata(entry.get('host')), 128)
+            ip = self.trim_text(self.normalize_optional_metadata(entry.get('ip')), 64)
+            sanitized.append({'id': editor_id, 'label': label, 'pid': pid, 'last_seen': last_seen, 'host': host, 'ip': ip})
             seen_ids.add(editor_id)
         return sanitized
 
@@ -6479,18 +6558,24 @@ class NotepadX:
         editors = self.sanitize_shared_editors(payload.get('editors', []))
         current_timestamp = self.utc_timestamp()
         existing_editor = next((entry for entry in editors if entry.get('id') == self.editor_id), None)
+        local_host = self.get_local_machine_name()
+        local_ip = self.get_local_lan_ip()
         if existing_editor is None:
             existing_editor = {
                 'id': self.editor_id,
                 'label': self.allocate_editor_label(editors),
                 'pid': os.getpid(),
-                'last_seen': current_timestamp
+                'last_seen': current_timestamp,
+                'host': local_host,
+                'ip': local_ip,
             }
             editors.append(existing_editor)
             force_write = True
         else:
             existing_editor['pid'] = os.getpid()
             existing_editor['last_seen'] = current_timestamp
+            existing_editor['host'] = local_host
+            existing_editor['ip'] = local_ip
         doc['note_editors'] = editors
         doc['note_editor_label'] = existing_editor.get('label')
         doc['note_active_editors'] = len(editors)
@@ -6527,6 +6612,8 @@ class NotepadX:
             'color': self.normalize_note_color(note_data.get('color')),
             'author_id': note_data.get('author_id'),
             'author_label': note_data.get('author_label'),
+            'author_host': note_data.get('author_host'),
+            'author_ip': note_data.get('author_ip'),
             'read_by': [str(editor_id).strip()[:128] for editor_id in note_data.get('read_by', []) if str(editor_id).strip()][:64],
             'author_unread': bool(note_data.get('author_unread')),
             'created_at': note_data.get('created_at'),
@@ -6708,6 +6795,8 @@ class NotepadX:
             'color': self.normalize_note_color(note_color),
             'author_id': self.trim_text(self.normalize_optional_metadata(saved_note.get('author_id')), 128),
             'author_label': self.trim_text(self.normalize_optional_metadata(saved_note.get('author_label')), self.max_note_name_length),
+            'author_host': self.trim_text(self.normalize_optional_metadata(saved_note.get('author_host')), 128),
+            'author_ip': self.trim_text(self.normalize_optional_metadata(saved_note.get('author_ip')), 64),
             'read_by': [str(editor_id).strip()[:128] for editor_id in read_by if str(editor_id).strip()][:64],
             'author_unread': bool(saved_note.get('author_unread', False)),
             'created_at': self.normalize_optional_metadata(saved_note.get('created_at')),

@@ -22,6 +22,7 @@ Status Bar
   Notes Synced
   unread note count with the F3 hint
   active editor count
+- In compare mode, the compared file also shows its own status readout aligned on the right side of the bottom bar.
 - Large-file tabs can show Virtual or Preview markers.
 - Memory used is shown in MB.
 - The far-right clock shows Day | Time | Date.
@@ -93,12 +94,13 @@ View Menu
 - Edit with Notepad-X: Enables or disables a Windows Explorer right-click entry for supported text/code file types.
 - Word Wrap: Turns wrapping on or off. The checkmark shows whether it is enabled.
 - Sound: Enables or disables note sounds. The checkmark shows whether it is enabled.
-- Currently Editing: Toggles a far-right sidebar that shows the full IDs of editors currently tracked on the active saved file.
+- Currently Editing: Toggles a far-right sidebar that shows the editors currently tracked on the active saved file.
 - Syntax Theme: Changes the highlight color palette. Available themes are Default, Soft, Vivid, Base4Tone, Green Monochrome, and Orange Monochrome.
 - Syntax Mode: Manually overrides syntax detection for the current tab. Available modes include Auto, Plain Text, Python, C, C++, Rust, Java, JavaScript, HTML, PHP, XML, and SQL.
 - Compare Tabs: Opens a side-by-side compare view using the current tab and another open tab.
 - Normal editable tabs can also be edited from the compare pane on the right.
 - When compare mode is open, the Currently Editing sidebar stays on the far right.
+- Opening or closing the Currently Editing sidebar re-centers the compare split evenly again.
 - Close Compare Tabs: Closes the compare pane.
 
 Opening Files
@@ -218,6 +220,8 @@ Code Notes
 - The popup title is Code note.
 - Popups can show:
   the note author
+  the author computer name
+  the author LAN IP
   the creation timestamp in local machine time
   the original note text
 - Right-clicking an existing note can show:
@@ -250,6 +254,9 @@ Shared Notes and Collaboration
 - The sync system polls for sidecar changes and reloads notes when another editor updates them.
 - The status bar shows Notes Synced, unread count, and how many editors are currently tracked on that file.
 - In compare mode, the compared file also shows its own status readout aligned on the right side of the bottom bar.
+- The Currently Editing sidebar shows each editor as:
+  computer name and LAN IP
+  full MD5/editor ID
 - Notes you authored do not count as unread for you.
 - Clicking a note or jumping to it marks it read for your current editor identity.
 

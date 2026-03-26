@@ -40,14 +40,14 @@ This benchmark is a point-in-time comparison between the packaged Notepad-X buil
 - Conflict detection before saving if a file changed on disk
 - Atomic writes for notes, session, recovery, editor identity, and JSON exports
 - Safer handling of malformed, oversized, and binary-like files
-- Status bar with line info, memory usage, note sync state, editor ID, and live clock
+- Status bar with line info, memory usage, note sync state, editor ID, compare status, and live clock
 - Word Wrap, Sound toggle, Full Screen, zoom controls, font picker, printing
 - `View > Numbered Lines` toggle with saved preference
 - `View > Autocomplete` toggle with saved preference
 - `View > Edit with Notepad-X` toggle with saved preference
 - `Edit > Language` menu that scans `cfg/language/*.yml` and lets you switch UI language files
 - Friendly native language names in the Language menu with locale-aware font fallback
-- `View > Currently Editing` opens a right-side live editor-ID sidebar
+- `View > Currently Editing` opens a right-side live editor sidebar
 - Built-in Help viewer and About dialog
 - About shows the current version and a clickable GitHub link
 
@@ -62,6 +62,8 @@ Notepad-X can compare two open tabs side by side inside the main window.
 - syntax highlighting is applied on the compare side too
 - the compared file shows its own bottom compare status readout
 - `Currently Editing` stays as a separate far-right sidebar even while compare mode is open
+- each editor entry shows computer name and LAN IP above the full MD5/editor ID
+- opening and closing the sidebar restores the compare split evenly
 - opening and closing the sidebar restores the compare split evenly
 - `Find Next`, `Find Previous`, `F3`, and `Shift+F3` follow whichever compare pane you last clicked
 - `Ctrl+Shift+X` closes compare mode
@@ -112,7 +114,7 @@ You can select text, right-click, and attach a shared note to the selection.
 Notes support:
 
 - yellow, green, red, or light blue note colors
-- note author and local-time timestamp display
+- note author, author machine name, author LAN IP, and local-time timestamp display
 - multiple responses on the same note
 - right-click `Respond` workflow
 - unread tracking between editors
