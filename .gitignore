@@ -15,4 +15,6 @@ Notepad-X.*.session.json
 Notepad-X.*.editor.json
 *.json
 !cfg/themes/*.json
+cfg/themes/*.notepadx.notes.json
+cfg/themes/*.notepadx.editors.json
 *.tmp
