@@ -1,0 +1,23 @@
+{
+  "name": "Pink Cotton Candy",
+  "surface": {
+    "text_bg": "#160f17",
+    "text_fg": "#ffe8f4",
+    "cursor": "#ff8fcb",
+    "selection": "#4d2140",
+    "gutter_bg": "#130d14",
+    "gutter_current_bg": "#211622",
+    "gutter_fg": "#c895b0",
+    "gutter_current_fg": "#fff3f9",
+    "gutter_divider": "#5e3651"
+  },
+  "syntax": {
+    "keyword": "#ff7fbc",
+    "type": "#95e6ff",
+    "string": "#ffd1e8",
+    "comment": "#c7a6bf",
+    "number": "#ffc56f",
+    "preprocessor": "#e8abff",
+    "tag": "#ff9bd6"
+  }
+}

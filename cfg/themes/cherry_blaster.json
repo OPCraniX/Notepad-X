@@ -1,0 +1,23 @@
+{
+  "name": "Cherry Blaster",
+  "surface": {
+    "text_bg": "#14080b",
+    "text_fg": "#ffe8ec",
+    "cursor": "#ff4f75",
+    "selection": "#5d1428",
+    "gutter_bg": "#110609",
+    "gutter_current_bg": "#1c0c11",
+    "gutter_fg": "#c7848f",
+    "gutter_current_fg": "#fff1f4",
+    "gutter_divider": "#6a2434"
+  },
+  "syntax": {
+    "keyword": "#ff3f68",
+    "type": "#ff9bb0",
+    "string": "#ffd0d8",
+    "comment": "#a87880",
+    "number": "#ffb454",
+    "preprocessor": "#ff79c6",
+    "tag": "#ff6486"
+  }
+}
