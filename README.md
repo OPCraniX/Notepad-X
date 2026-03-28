@@ -74,6 +74,10 @@ Notepad-X can compare two open tabs side by side inside the main window.
 - `Ctrl+Shift+X` closes compare mode
 - if you close the app while compare mode is open, the same compare pair is restored on next launch
 
+<p align="center">
+  <img src="gfx/compairing_files.png" alt="Compare mode screenshot in Notepad-X" width="900">
+</p>
+
 ## Line Numbers
 
 Notepad-X includes a GitHub-style line number gutter on the left side of the editor.
