@@ -3742,6 +3742,41 @@ class NotepadX:
         self.update_status()
         return pos, end
 
+    def refresh_compare_find_highlights(self, query, max_matches=None, allow_short_query=False):
+        if self.search_all_tabs.get() or not self.compare_active or not query:
+            return False
+        if not allow_short_query and len(query) < self.live_find_min_chars:
+            return False
+
+        widgets = []
+        seen = set()
+        for widget in (self.text, self.get_compare_text_widget()):
+            if not widget:
+                continue
+            try:
+                if not widget.winfo_exists():
+                    continue
+            except tk.TclError:
+                continue
+            widget_id = str(widget)
+            if widget_id in seen:
+                continue
+            seen.add(widget_id)
+            widgets.append(widget)
+
+        if len(widgets) < 2:
+            return False
+
+        self.clear_find_highlights()
+        for widget in widgets:
+            self.highlight_matches_in_widget(
+                widget,
+                query,
+                max_matches=max_matches,
+                allow_short_query=allow_short_query
+            )
+        return True
+
     def find_next(self, event=None):
         if self.find_panel_visible:
             query = self.find_entry.get().strip()
@@ -3756,6 +3791,8 @@ class NotepadX:
         target_widget = self.get_active_search_widget()
         if target_widget is None:
             return "break"
+
+        self.refresh_compare_find_highlights(query, allow_short_query=True)
 
         compare_widget = self.get_compare_text_widget()
         if target_widget == compare_widget:
@@ -3782,6 +3819,8 @@ class NotepadX:
         target_widget = self.get_active_search_widget()
         if target_widget is None:
             return "break"
+
+        self.refresh_compare_find_highlights(query, allow_short_query=True)
 
         compare_widget = self.get_compare_text_widget()
         if target_widget == compare_widget:
@@ -3877,6 +3916,8 @@ class NotepadX:
         target_widget = self.get_active_search_widget()
         if target_widget is None:
             return "break"
+
+        self.refresh_compare_find_highlights(query, allow_short_query=True)
 
         compare_widget = self.get_compare_text_widget()
         if target_widget == compare_widget:
@@ -4062,7 +4103,7 @@ class NotepadX:
             except tk.TclError:
                 continue
 
-    def highlight_matches_in_widget(self, text_widget, query, max_matches=None):
+    def highlight_matches_in_widget(self, text_widget, query, max_matches=None, allow_short_query=False):
         try:
             if not text_widget or not text_widget.winfo_exists():
                 return
@@ -4071,7 +4112,7 @@ class NotepadX:
             text_widget.tag_remove(self.find_current_tag, '1.0', tk.END)
         except tk.TclError:
             return
-        if not query or len(query) < self.live_find_min_chars:
+        if not query or (not allow_short_query and len(query) < self.live_find_min_chars):
             return
         max_allowed_matches = self.live_find_max_matches_per_widget if max_matches is None else max_matches
         match_offsets = self.find_query_offsets(
@@ -4171,10 +4212,15 @@ class NotepadX:
             cursor = position + step
         return offsets
 
-    def highlight_all_matches(self, query):
+    def highlight_all_matches(self, query, max_matches=None, allow_short_query=False):
         widgets = self.get_find_target_widgets()
         for widget in widgets:
-            self.highlight_matches_in_widget(widget, query)
+            self.highlight_matches_in_widget(
+                widget,
+                query,
+                max_matches=max_matches,
+                allow_short_query=allow_short_query
+            )
 
     def raise_find_tags(self, text_widget):
         try:
@@ -4193,6 +4239,11 @@ class NotepadX:
             return
         target_widget = self.get_active_search_widget()
         if target_widget is None:
+            return
+        if self.refresh_compare_find_highlights(
+            query,
+            max_matches=self.live_find_max_matches_typing
+        ):
             return
         self.clear_find_highlights()
         self.highlight_matches_in_widget(
