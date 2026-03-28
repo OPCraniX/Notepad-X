@@ -5707,13 +5707,40 @@ class NotepadX:
         text_widget = getattr(event, 'widget', None)
         if not isinstance(text_widget, tk.Text):
             return
+        try:
+            text_widget.help_lolcat_scope = text_widget.winfo_toplevel()
+        except tk.TclError:
+            text_widget.help_lolcat_scope = text_widget
         self.apply_rainbow_theme_to_widget(text_widget)
         return "break"
 
+    def is_pointer_inside_widget(self, widget):
+        if not widget:
+            return False
+        try:
+            if not widget.winfo_exists():
+                return False
+            pointer_x = widget.winfo_pointerx()
+            pointer_y = widget.winfo_pointery()
+            target_widget = widget.winfo_containing(pointer_x, pointer_y)
+        except tk.TclError:
+            return False
+        while target_widget is not None:
+            if target_widget == widget:
+                return True
+            try:
+                target_widget = target_widget.master
+            except AttributeError:
+                break
+        return False
+
     def deactivate_help_lolcat(self, event=None):
-        text_widget = getattr(event, 'widget', None)
+        text_widget = event if isinstance(event, tk.Text) else getattr(event, 'widget', None)
         if not isinstance(text_widget, tk.Text):
             return
+        scope_widget = getattr(text_widget, 'help_lolcat_scope', None) or text_widget
+        if self.is_pointer_inside_widget(scope_widget):
+            return None
         self.clear_rainbow_theme_tags(text_widget)
         return None
 
@@ -9063,6 +9090,7 @@ class NotepadX:
         help_text.configure(state='disabled')
         help_text.bind('<Control-Button-1>', self.activate_help_lolcat)
         help_text.bind('<Leave>', self.deactivate_help_lolcat)
+        dialog.bind('<Leave>', lambda e, widget=help_text: self.deactivate_help_lolcat(widget))
 
         close_button = tk.Button(
             dialog,
