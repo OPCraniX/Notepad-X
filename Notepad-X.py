@@ -4599,6 +4599,46 @@ class NotepadX:
         except FileNotFoundError:
             pass
 
+    def get_windows_application_registration_name(self):
+        if getattr(sys, 'frozen', False):
+            executable_name = os.path.basename(os.path.abspath(sys.executable))
+        else:
+            executable_name = 'Notepad-X.exe'
+        executable_name = os.path.basename(str(executable_name).strip()) or 'Notepad-X.exe'
+        if not executable_name.lower().endswith('.exe'):
+            executable_name += '.exe'
+        return executable_name
+
+    def set_edit_with_shell_app_registration(self, enabled):
+        if not self.is_windows or winreg is None:
+            return
+        app_key = rf"Software\Classes\Applications\{self.get_windows_application_registration_name()}"
+        if enabled:
+            icon_source = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else self.icon_path)
+            if not self.path_looks_safe_for_shell(icon_source):
+                raise OSError("Unsafe icon path for Windows application registration.")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, app_key) as key:
+                winreg.SetValueEx(key, 'ApplicationName', 0, winreg.REG_SZ, 'Notepad-X')
+                winreg.SetValueEx(key, 'FriendlyAppName', 0, winreg.REG_SZ, 'Notepad-X')
+                winreg.SetValueEx(
+                    key,
+                    'ApplicationDescription',
+                    0,
+                    winreg.REG_SZ,
+                    'Edit supported text and code files with Notepad-X.'
+                )
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{app_key}\DefaultIcon") as icon_key:
+                winreg.SetValueEx(icon_key, '', 0, winreg.REG_SZ, icon_source)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{app_key}\shell\open\command") as command_key:
+                winreg.SetValueEx(command_key, '', 0, winreg.REG_SZ, self.get_windows_open_command())
+            supported_types_key = rf"{app_key}\SupportedTypes"
+            self.delete_registry_tree(winreg.HKEY_CURRENT_USER, supported_types_key)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, supported_types_key) as types_key:
+                for extension in self.get_edit_with_shell_extensions():
+                    winreg.SetValueEx(types_key, extension, 0, winreg.REG_SZ, '')
+        else:
+            self.delete_registry_tree(winreg.HKEY_CURRENT_USER, app_key)
+
     def set_edit_with_shell_for_extension(self, extension, enabled):
         if not self.is_windows or winreg is None or not extension:
             return
@@ -4620,6 +4660,14 @@ class NotepadX:
             return os.path.exists(self.get_linux_desktop_entry_path())
         if not self.is_windows or winreg is None:
             return bool(self.edit_with_shell_enabled.get())
+        app_key = rf"Software\Classes\Applications\{self.get_windows_application_registration_name()}"
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, app_key, 0, winreg.KEY_READ):
+                return True
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
         for extension in self.get_edit_with_shell_extensions():
             menu_key = rf"Software\Classes\SystemFileAssociations\{extension}\shell\EditWithNotepadX"
             try:
@@ -4645,6 +4693,7 @@ class NotepadX:
             if self.is_windows:
                 if winreg is None:
                     return True
+                self.set_edit_with_shell_app_registration(enabled)
                 for extension in self.get_edit_with_shell_extensions():
                     self.set_edit_with_shell_for_extension(extension, enabled)
                 self.notify_windows_shell_change()
@@ -8346,7 +8395,10 @@ class NotepadX:
         self.autocomplete_enabled.set(bool(session.get('autocomplete_enabled', True)))
         self.sync_page_navigation_enabled.set(bool(session.get('sync_page_navigation_enabled', False)))
         saved_edit_with_shell = bool(session.get('edit_with_shell_enabled', False))
-        self.edit_with_shell_enabled.set(saved_edit_with_shell or self.is_edit_with_shell_registered())
+        shell_registered = self.is_edit_with_shell_registered()
+        self.edit_with_shell_enabled.set(saved_edit_with_shell or shell_registered)
+        if saved_edit_with_shell and not shell_registered:
+            self.sync_edit_with_shell_menu(show_errors=False)
         self.apply_locale(session.get('locale_code', self.locale_code), persist=False)
         saved_font_size = session.get('current_font_size', self.base_font_size)
         try:
