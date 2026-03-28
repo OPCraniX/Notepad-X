@@ -8783,14 +8783,11 @@ class NotepadX:
             doc['text'].edit_modified(False)
             return
         self.remember_doc_view_state(doc)
-        syntax_reconfigured = False
         if not doc.get('file_path'):
             self.configure_syntax_highlighting(tab_id)
-            syntax_reconfigured = True
         if doc.get('syntax_mode') and doc.get('syntax_mode') != 'python':
             self.schedule_syntax_highlight(doc)
-        if not syntax_reconfigured:
-            self.schedule_text_theme_effect(doc)
+        self.schedule_text_theme_effect(doc)
         self.update_line_number_gutter(doc)
         self.refresh_tab_title(tab_id)
         self.schedule_recovery_save()
