@@ -5707,84 +5707,28 @@ class NotepadX:
         text_widget = getattr(event, 'widget', None)
         if not isinstance(text_widget, tk.Text):
             return
-        text_widget.help_lolcat_scope = text_widget
         text_widget.help_lolcat_active = True
-        self.cancel_help_lolcat_monitor(text_widget)
         self.apply_rainbow_theme_to_widget(text_widget)
         return "break"
 
-    def is_pointer_inside_widget(self, widget):
-        if not widget:
-            return False
-        try:
-            if not widget.winfo_exists():
-                return False
-            pointer_x = widget.winfo_pointerx()
-            pointer_y = widget.winfo_pointery()
-            left = widget.winfo_rootx()
-            top = widget.winfo_rooty()
-            right = left + max(1, widget.winfo_width())
-            bottom = top + max(1, widget.winfo_height())
-        except tk.TclError:
-            return False
-        return left <= pointer_x < right and top <= pointer_y < bottom
-
-    def cancel_help_lolcat_monitor(self, text_widget):
+    def clear_help_lolcat(self, text_widget):
         if not isinstance(text_widget, tk.Text):
             return
-        monitor_job = getattr(text_widget, 'help_lolcat_job', None)
-        if not monitor_job:
-            return
-        try:
-            self.root.after_cancel(monitor_job)
-        except tk.TclError:
-            pass
-        text_widget.help_lolcat_job = None
-
-    def schedule_help_lolcat_monitor(self, text_widget, delay_ms=120):
-        if not isinstance(text_widget, tk.Text):
-            return
-        self.cancel_help_lolcat_monitor(text_widget)
-        try:
-            text_widget.help_lolcat_job = self.root.after(
-                delay_ms,
-                lambda current=text_widget: self.finish_help_lolcat_deactivation(current)
-            )
-        except tk.TclError:
-            text_widget.help_lolcat_job = None
-
-    def finish_help_lolcat_deactivation(self, text_widget):
-        if not isinstance(text_widget, tk.Text):
-            return
-        text_widget.help_lolcat_job = None
         try:
             if not text_widget.winfo_exists():
                 return
         except tk.TclError:
             return
-        if not getattr(text_widget, 'help_lolcat_active', False):
-            self.clear_rainbow_theme_tags(text_widget)
-            return
-        scope_widget = getattr(text_widget, 'help_lolcat_scope', None) or text_widget
-        if self.is_pointer_inside_widget(scope_widget):
-            return
         text_widget.help_lolcat_active = False
         self.clear_rainbow_theme_tags(text_widget)
 
-    def keep_help_lolcat_active(self, event=None):
-        text_widget = getattr(event, 'widget', None)
-        if not isinstance(text_widget, tk.Text):
-            return None
-        if getattr(text_widget, 'help_lolcat_active', False):
-            self.cancel_help_lolcat_monitor(text_widget)
-        return None
-
-    def deactivate_help_lolcat(self, event=None):
-        text_widget = event if isinstance(event, tk.Text) else getattr(event, 'widget', None)
-        if not isinstance(text_widget, tk.Text):
-            return
-        self.schedule_help_lolcat_monitor(text_widget, delay_ms=80)
-        return None
+    def close_help_contents_dialog(self, dialog, help_text):
+        self.clear_help_lolcat(help_text)
+        try:
+            if dialog.winfo_exists():
+                dialog.destroy()
+        except tk.TclError:
+            pass
 
     def cancel_text_theme_effect_job(self, doc):
         if not doc:
@@ -9131,14 +9075,11 @@ class NotepadX:
         help_text.insert('1.0', content)
         help_text.configure(state='disabled')
         help_text.bind('<Control-Button-1>', self.activate_help_lolcat)
-        help_text.bind('<Enter>', self.keep_help_lolcat_active)
-        help_text.bind('<Motion>', self.keep_help_lolcat_active)
-        help_text.bind('<Leave>', self.deactivate_help_lolcat)
 
         close_button = tk.Button(
             dialog,
             text=self.tr('common.close', 'Close'),
-            command=dialog.destroy,
+            command=lambda current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget),
             bg='#2d2d2d',
             fg=self.fg_color,
             activebackground='#3a3a3a',
@@ -9150,7 +9091,8 @@ class NotepadX:
         )
         close_button.pack(pady=(0, 12))
 
-        dialog.bind('<Escape>', lambda e: dialog.destroy())
+        dialog.bind('<Escape>', lambda e, current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget))
+        dialog.protocol('WM_DELETE_WINDOW', lambda current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget))
         self.center_window(dialog)
         dialog.lift()
         dialog.attributes('-topmost', True)
