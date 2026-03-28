@@ -5703,6 +5703,20 @@ class NotepadX:
             )
         self.raise_editor_overlay_tags(text_widget)
 
+    def activate_help_lolcat(self, event=None):
+        text_widget = getattr(event, 'widget', None)
+        if not isinstance(text_widget, tk.Text):
+            return
+        self.apply_rainbow_theme_to_widget(text_widget)
+        return "break"
+
+    def deactivate_help_lolcat(self, event=None):
+        text_widget = getattr(event, 'widget', None)
+        if not isinstance(text_widget, tk.Text):
+            return
+        self.clear_rainbow_theme_tags(text_widget)
+        return None
+
     def cancel_text_theme_effect_job(self, doc):
         if not doc:
             return
@@ -9047,6 +9061,8 @@ class NotepadX:
 
         help_text.insert('1.0', content)
         help_text.configure(state='disabled')
+        help_text.bind('<Control-Button-1>', self.activate_help_lolcat)
+        help_text.bind('<Leave>', self.deactivate_help_lolcat)
 
         close_button = tk.Button(
             dialog,
