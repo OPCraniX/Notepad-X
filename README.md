@@ -144,12 +144,20 @@ Notepad-X now includes a translation/config layer for visible UI text.
 - Arabic language files such as `ar.yml`, `ar_SA.yml`, `ar_AE.yml`, `ar_EG.yml`, and `ar_MA.yml` automatically switch the UI text direction to right-to-left
 - locale changes can also switch the editor font to a better installed script-friendly fallback automatically
 
+<p align="center">
+  <img src="gfx/languages.png" alt="Language menu screenshot in Notepad-X" width="520">
+</p>
+
 ## Theme Files
 
 - Theme files live in `cfg/themes/*.json`
 - Notepad-X auto-detects any valid new theme file in that folder on startup
 - `View > Syntax Theme > Create Theme` opens a color-picker dialog for building a new theme
 - New themes are saved into `cfg/themes` and appear in the menu immediately
+
+<p align="center">
+  <img src="gfx/create_syntax_theme.png" alt="Create syntax theme dialog in Notepad-X" width="420">
+</p>
 
 ## Encrypted Files
 
