@@ -8,7 +8,7 @@ It keeps a simple desktop-editor feel, but adds project opening, persistent sess
 
 ![EXE benchmark comparison](gfx/exe_benchmark.png)
 
-This benchmark is a point-in-time comparison between the packaged Notepad-X build and Microsoft Notepad. In this run, Notepad-X launches a little faster, uses a much stronger CPU burst during startup, and settles at a far lower memory footprint both at launch and after startup. The exact numbers will still vary depending on hardware, OS state, background load, and what each editor has to initialize.
+This benchmark is a point-in-time comparison between the packaged Notepad-X build and Microsoft Notepad. In this run, Notepad-X launches faster at roughly `0.0039s` versus `0.0061s`, settles around `44 MB` instead of about `127 MB`, and shuts down faster, but it gets there with a much larger startup CPU spike and substantially heavier disk I/O during launch. The exact numbers will still vary depending on hardware, OS state, background load, and what each editor has to initialize.
 
 ## Features
 
@@ -127,6 +127,10 @@ Notes support:
 - `F4` to cycle notes
 - shared sidecar files for collaboration
 - export to JSON or Markdown
+
+<p align="center">
+  <img src="gfx/codenotes.png" alt="Code notes screenshot in Notepad-X" width="760">
+</p>
 
 ## Language Files
 
