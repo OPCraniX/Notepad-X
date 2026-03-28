@@ -1,6 +1,7 @@
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk, simpledialog, colorchooser
+import colorsys
 import os
 import sys
 import ctypes
@@ -174,6 +175,7 @@ DEFAULT_LOCALE_STRINGS = {
     "syntax.theme.base4tone": "Base4Tone",
     "syntax.theme.green_monochrome": "Green Monochrome",
     "syntax.theme.orange_monochrome": "Orange Monochrome",
+    "syntax.theme.lolcat": "Lolcat",
     "theme.create.title": "Create Theme",
     "theme.create.name": "Theme Name:",
     "theme.create.save": "Save Theme",
@@ -444,6 +446,10 @@ class NotepadX:
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.ensure_theme_files(self.theme_dir)
         self.theme_definitions = self.load_theme_definitions(self.theme_dir)
+        self.theme_effect_delay_ms = 90
+        self.rainbow_theme_tag_prefix = 'theme_rainbow_'
+        self.rainbow_theme_target_ranges = 6000
+        self.rainbow_theme_palette = self.build_rainbow_theme_palette()
         self.locale_code = 'en_us'
         self.locale_path = self.get_locale_file_path(self.locale_code, locale_dir=self.locale_dir)
         self.locale_strings = self.load_locale_strings(self.locale_path)
@@ -878,6 +884,29 @@ class NotepadX:
                     'tag': '#ffa33f',
                 },
             },
+            'Lolcat': {
+                'surface': {
+                    'text_bg': '#101218',
+                    'text_fg': '#f8f8ff',
+                    'cursor': '#ffffff',
+                    'selection': '#3c2a57',
+                    'gutter_bg': '#0c0e13',
+                    'gutter_current_bg': '#171b25',
+                    'gutter_fg': '#8a90a3',
+                    'gutter_current_fg': '#f8f8ff',
+                    'gutter_divider': '#31384b',
+                },
+                'syntax': {
+                    'keyword': '#ff4d4d',
+                    'type': '#ff9f1c',
+                    'string': '#ffe66d',
+                    'comment': '#4cd964',
+                    'number': '#34c3ff',
+                    'preprocessor': '#5b5bff',
+                    'tag': '#c155ff',
+                },
+                'text_effect': 'rainbow',
+            },
         }
 
     def slugify_theme_name(self, theme_name):
@@ -931,11 +960,15 @@ class NotepadX:
         )
         if surface is None or syntax is None:
             return None
-        return {
+        sanitized = {
             'name': safe_name,
             'surface': surface,
             'syntax': syntax,
         }
+        text_effect = str(payload.get('text_effect') or '').strip().lower()
+        if text_effect == 'rainbow':
+            sanitized['text_effect'] = text_effect
+        return sanitized
 
     def ensure_theme_files(self, theme_dir):
         builtins = self.get_builtin_theme_definitions()
@@ -949,6 +982,8 @@ class NotepadX:
                 'surface': dict(theme_payload['surface']),
                 'syntax': dict(theme_payload['syntax']),
             }
+            if theme_payload.get('text_effect'):
+                payload['text_effect'] = theme_payload['text_effect']
             try:
                 with open(file_path, 'w', encoding='utf-8') as theme_file:
                     json.dump(payload, theme_file, indent=2, ensure_ascii=False)
@@ -1009,6 +1044,7 @@ class NotepadX:
             'Base4Tone': 'syntax.theme.base4tone',
             'Green Monochrome': 'syntax.theme.green_monochrome',
             'Orange Monochrome': 'syntax.theme.orange_monochrome',
+            'Lolcat': 'syntax.theme.lolcat',
         }
         locale_key = theme_key_map.get(theme_name)
         if locale_key:
@@ -5107,6 +5143,7 @@ class NotepadX:
             'line_numbers': self.compare_line_numbers,
             'percolator': None,
             'colorizer': None,
+            'theme_effect_job': None,
             'large_file_mode': False,
             'preview_mode': False,
             'virtual_mode': False,
@@ -5289,6 +5326,7 @@ class NotepadX:
             'last_unread_count': 0,
             'notes_registered': False,
             'last_note_cycle_tag': None,
+            'theme_effect_job': None,
             'syntax_job': None,
             'syntax_mode': None,
             'syntax_override': None,
@@ -5555,23 +5593,156 @@ class NotepadX:
         else:
             self.clear_custom_syntax_tags(doc)
 
-    def get_syntax_surface_palette(self):
+        self.apply_text_theme_effect(doc)
+
+    def build_rainbow_theme_palette(self, color_count=28):
+        palette = []
+        total_colors = max(2, int(color_count))
+        for index in range(total_colors):
+            hue = (0.82 * index) / (total_colors - 1)
+            red, green, blue = colorsys.hsv_to_rgb(hue, 0.88, 1.0)
+            palette.append(f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}")
+        return palette
+
+    def get_current_syntax_theme_definition(self):
         selected = (getattr(self, 'theme_definitions', None) or {}).get(self.syntax_theme.get())
         if selected is None:
             selected = self.sanitize_theme_definition(
                 'Default',
                 {'name': 'Default', **self.get_builtin_theme_definitions()['Default']}
             )
+        return selected
+
+    def get_syntax_theme_text_effect(self):
+        selected = self.get_current_syntax_theme_definition()
+        return str(selected.get('text_effect') or '').strip().lower()
+
+    def get_syntax_surface_palette(self):
+        selected = self.get_current_syntax_theme_definition()
         return dict(selected['surface'])
 
     def get_syntax_palette(self):
-        selected = (getattr(self, 'theme_definitions', None) or {}).get(self.syntax_theme.get())
-        if selected is None:
-            selected = self.sanitize_theme_definition(
-                'Default',
-                {'name': 'Default', **self.get_builtin_theme_definitions()['Default']}
-            )
+        selected = self.get_current_syntax_theme_definition()
         return dict(selected['syntax'])
+
+    def get_rainbow_theme_tag_name(self, palette_index):
+        return f"{self.rainbow_theme_tag_prefix}{int(palette_index)}"
+
+    def clear_rainbow_theme_tags(self, text_widget):
+        if not text_widget:
+            return
+        try:
+            if not text_widget.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        for palette_index in range(len(self.rainbow_theme_palette)):
+            try:
+                text_widget.tag_remove(self.get_rainbow_theme_tag_name(palette_index), '1.0', tk.END)
+            except tk.TclError:
+                return
+
+    def configure_rainbow_theme_tags(self, text_widget):
+        if not text_widget:
+            return
+        try:
+            if not text_widget.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        for palette_index, color_value in enumerate(self.rainbow_theme_palette):
+            try:
+                text_widget.tag_config(self.get_rainbow_theme_tag_name(palette_index), foreground=color_value)
+            except tk.TclError:
+                return
+
+    def get_rainbow_theme_chunk_chars(self, content_length):
+        if content_length <= 0:
+            return 1
+        return max(1, (int(content_length) + self.rainbow_theme_target_ranges - 1) // self.rainbow_theme_target_ranges)
+
+    def raise_editor_overlay_tags(self, text_widget):
+        if not text_widget:
+            return
+        try:
+            if not text_widget.winfo_exists():
+                return
+            for tag_name in text_widget.tag_names():
+                if str(tag_name).startswith('note_'):
+                    text_widget.tag_raise(tag_name)
+            text_widget.tag_raise(self.bracket_match_tag)
+            self.raise_find_tags(text_widget)
+        except tk.TclError:
+            return
+
+    def apply_rainbow_theme_to_widget(self, text_widget):
+        if not text_widget:
+            return
+        try:
+            if not text_widget.winfo_exists():
+                return
+            content = text_widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return
+
+        self.clear_rainbow_theme_tags(text_widget)
+        if not content:
+            self.raise_editor_overlay_tags(text_widget)
+            return
+
+        self.configure_rainbow_theme_tags(text_widget)
+        chunk_chars = self.get_rainbow_theme_chunk_chars(len(content))
+        palette_size = len(self.rainbow_theme_palette)
+        for offset in range(0, len(content), chunk_chars):
+            end_offset = min(len(content), offset + chunk_chars)
+            palette_index = (offset // chunk_chars) % palette_size
+            text_widget.tag_add(
+                self.get_rainbow_theme_tag_name(palette_index),
+                f"1.0+{offset}c",
+                f"1.0+{end_offset}c"
+            )
+        self.raise_editor_overlay_tags(text_widget)
+
+    def cancel_text_theme_effect_job(self, doc):
+        if not doc:
+            return
+        theme_effect_job = doc.get('theme_effect_job')
+        if not theme_effect_job:
+            return
+        try:
+            self.root.after_cancel(theme_effect_job)
+        except tk.TclError:
+            pass
+        doc['theme_effect_job'] = None
+
+    def apply_text_theme_effect(self, doc):
+        if not doc:
+            return
+        self.cancel_text_theme_effect_job(doc)
+        text_widget = doc.get('text')
+        if not text_widget:
+            return
+        if self.get_syntax_theme_text_effect() == 'rainbow' and not doc.get('virtual_mode') and not doc.get('preview_mode'):
+            self.apply_rainbow_theme_to_widget(text_widget)
+            return
+        self.clear_rainbow_theme_tags(text_widget)
+        self.raise_editor_overlay_tags(text_widget)
+
+    def schedule_text_theme_effect(self, doc):
+        if not doc:
+            return
+        if self.get_syntax_theme_text_effect() != 'rainbow':
+            self.cancel_text_theme_effect_job(doc)
+            return
+        self.cancel_text_theme_effect_job(doc)
+        try:
+            doc['theme_effect_job'] = self.root.after(
+                self.theme_effect_delay_ms,
+                lambda current=doc: self.apply_text_theme_effect(current)
+            )
+        except tk.TclError:
+            doc['theme_effect_job'] = None
+            self.apply_text_theme_effect(doc)
 
     def apply_syntax_tag_colors(self, text_widget):
         surface = self.get_syntax_surface_palette()
@@ -6289,6 +6460,7 @@ class NotepadX:
         compare_doc['last_insert_index'] = compare_insert
         if compare_doc.get('syntax_mode') and compare_doc.get('syntax_mode') != 'python':
             self.schedule_syntax_highlight(compare_doc)
+        self.schedule_text_theme_effect(compare_doc)
         self.update_line_number_gutter(compare_doc)
         self.update_status()
         compare_text.edit_modified(False)
@@ -8411,9 +8583,11 @@ class NotepadX:
         self.syntax_theme.set(saved_theme)
         for doc in self.documents.values():
             self.apply_syntax_tag_colors(doc['text'])
+            self.apply_text_theme_effect(doc)
             self.update_line_number_gutter(doc)
         if getattr(self, 'compare_view', None):
             self.apply_syntax_tag_colors(self.compare_text)
+            self.apply_text_theme_effect(self.compare_view)
             self.update_line_number_gutter(self.compare_view)
         if self.status_bar_enabled.get():
             self.status_frame.grid()
@@ -8609,10 +8783,14 @@ class NotepadX:
             doc['text'].edit_modified(False)
             return
         self.remember_doc_view_state(doc)
+        syntax_reconfigured = False
         if not doc.get('file_path'):
             self.configure_syntax_highlighting(tab_id)
+            syntax_reconfigured = True
         if doc.get('syntax_mode') and doc.get('syntax_mode') != 'python':
             self.schedule_syntax_highlight(doc)
+        if not syntax_reconfigured:
+            self.schedule_text_theme_effect(doc)
         self.update_line_number_gutter(doc)
         self.refresh_tab_title(tab_id)
         self.schedule_recovery_save()
@@ -9082,6 +9260,7 @@ class NotepadX:
             self.compare_refresh_job = None
 
         if self.compare_view:
+            self.cancel_text_theme_effect_job(self.compare_view)
             if self.compare_view.get('colorizer') is not None and self.compare_view.get('percolator') is not None:
                 try:
                     self.compare_view['percolator'].removefilter(self.compare_view['colorizer'])
@@ -9089,6 +9268,7 @@ class NotepadX:
                     pass
             self.compare_view['percolator'] = None
             self.compare_view['colorizer'] = None
+            self.compare_view['theme_effect_job'] = None
             self.compare_view['syntax_job'] = None
             self.compare_view['syntax_mode'] = None
             self.compare_view['file_path'] = None
