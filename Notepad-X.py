@@ -71,6 +71,7 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.file": "File",
     "menu.file.open": "Open",
     "menu.file.open_project": "Open Project",
+    "menu.file.grab_git": "Grab Git",
     "menu.file.recent": "Recent",
     "menu.file.new_tab": "New Tab",
     "menu.file.close_tab": "Close Tab",
@@ -215,6 +216,7 @@ DEFAULT_LOCALE_STRINGS = {
     "syntax.mode.sql": "SQL",
     "accel.open": "Ctrl+W",
     "accel.open_project": "Ctrl+Shift+W",
+    "accel.grab_git": "Ctrl+Shift+G",
     "accel.new_tab": "Ctrl+T",
     "accel.close_tab": "Ctrl+Shift+T",
     "accel.save": "Ctrl+S",
@@ -4358,6 +4360,8 @@ class NotepadX:
         self.root.bind('<Control-P>', self.print_file)
         self.root.bind('<Control-Shift-W>', self.open_project)
         self.root.bind('<Control-Shift-w>', self.open_project)
+        self.root.bind('<Control-Shift-G>', self.grab_git_project)
+        self.root.bind('<Control-Shift-g>', self.grab_git_project)
         self.root.bind('<Control-s>', self.save)
         self.root.bind('<Control-S>', self.save)
         self.root.bind('<Control-Shift-s>', self.save_all)
@@ -8933,6 +8937,7 @@ class NotepadX:
         self.menu.add_cascade(label=t('menu.file', 'File'), menu=file_menu)
         file_menu.add_command(label=t('menu.file.open', 'Open'), command=self.open_file, accelerator=t('accel.open', 'Ctrl+W'))
         file_menu.add_command(label=t('menu.file.open_project', 'Open Project'), command=self.open_project, accelerator=t('accel.open_project', 'Ctrl+Shift+W'))
+        file_menu.add_command(label=t('menu.file.grab_git', 'Grab Git'), command=self.grab_git_project, accelerator=t('accel.grab_git', 'Ctrl+Shift+G'))
         self.recent_menu = tk.Menu(file_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                                    activebackground='#3a3a3a')
         file_menu.add_cascade(label=t('menu.file.recent', 'Recent'), menu=self.recent_menu)
@@ -9668,6 +9673,351 @@ class NotepadX:
         dialog.pong_after_id = dialog.after(16, lambda d=dialog: self.run_about_pong(d))
 
     # ─── File Operations ─────────────────────────────────────────
+    def normalize_grab_git_repo_identifier(self, value):
+        repo_text = str(value or '').strip()
+        if not repo_text:
+            return None
+        repo_text = repo_text.replace('\\', '/').rstrip('/')
+        github_match = re.match(r'^(?:https?://)?(?:www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?$', repo_text, re.IGNORECASE)
+        if github_match:
+            owner = github_match.group(1).strip()
+            repo_name = github_match.group(2).strip()
+        else:
+            parts = [segment.strip() for segment in repo_text.split('/') if segment.strip()]
+            if len(parts) != 2:
+                return None
+            owner, repo_name = parts
+        if repo_name.lower().endswith('.git'):
+            repo_name = repo_name[:-4]
+        if not owner or not repo_name:
+            return None
+        return f"{owner}/{repo_name}"
+
+    def prompt_grab_git_repository(self, parent=None):
+        parent = parent or self.root
+        dialog = tk.Toplevel(parent)
+        dialog.title(self.tr('grab_git.title', 'Grab Git'))
+        dialog.transient(parent)
+        dialog.resizable(False, False)
+        dialog.configure(bg=self.bg_color, padx=14, pady=12)
+        self.apply_window_icon(dialog)
+
+        result = {'value': None}
+        repo_var = tk.StringVar()
+
+        tk.Label(
+            dialog,
+            text=self.tr(
+                'grab_git.prompt',
+                'Enter the GitHub project as:\nusername/project'
+            ),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify='left',
+            anchor='w'
+        ).pack(anchor='w', pady=(0, 8))
+
+        repo_entry = tk.Entry(dialog, textvariable=repo_var, width=36)
+        repo_entry.pack(fill='x', pady=(0, 8))
+
+        button_row = tk.Frame(dialog, bg=self.bg_color)
+        button_row.pack(fill='x')
+
+        def submit(event=None):
+            normalized = self.normalize_grab_git_repo_identifier(repo_var.get())
+            if not normalized:
+                messagebox.showwarning(
+                    self.tr('grab_git.title', 'Grab Git'),
+                    self.tr('grab_git.invalid', 'Enter the project as username/project.'),
+                    parent=dialog
+                )
+                return "break"
+            result['value'] = normalized
+            dialog.destroy()
+            return "break"
+
+        def cancel(event=None):
+            result['value'] = None
+            dialog.destroy()
+            return "break"
+
+        tk.Button(button_row, text=self.tr('common.ok', 'OK'), width=10, command=submit).pack(side='left')
+        tk.Button(button_row, text=self.tr('common.close', 'Close'), width=10, command=cancel).pack(side='right')
+
+        dialog.bind('<Return>', submit)
+        dialog.bind('<Escape>', cancel)
+        dialog.protocol('WM_DELETE_WINDOW', cancel)
+        dialog.update_idletasks()
+        self.center_window(dialog, parent)
+        dialog.lift()
+        dialog.attributes('-topmost', True)
+        dialog.grab_set()
+        repo_entry.focus_force()
+        try:
+            dialog.wait_visibility()
+            self.center_window(dialog, parent)
+            dialog.after(1, lambda current=dialog: self.center_window_after_show(current, parent))
+            dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
+            parent.wait_window(dialog)
+            return result['value']
+        finally:
+            self.hide_autocomplete_popup()
+
+    def get_grab_git_project_files(self, root_dir):
+        project_extensions = {
+            '.txt', '.md', '.rst', '.log', '.ini', '.cfg', '.conf', '.toml', '.yaml', '.yml',
+            '.json', '.xml', '.csv', '.tsv', '.html', '.htm', '.css', '.js', '.ts', '.tsx',
+            '.jsx', '.py', '.pyw', '.rs', '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.hh',
+            '.hxx', '.java', '.php', '.sql', '.sh', '.bat', '.cmd', '.ps1', '.asm', '.s',
+            '.tex', '.vb', '.vbs', '.pas', '.pl', '.pm', '.diff', '.patch', '.nsi', '.nsh',
+            '.iss', '.rc', '.as', '.mx', '.asp', '.aspx', '.au3', '.ml', '.mli', '.sml',
+            '.thy', '.for', '.f', '.f90', '.f95', '.f2k', '.lsp', '.lisp', '.mak', '.m',
+            '.nfo', '.st', '.xsd', '.xsml', '.xsl', '.kml', '.gitignore', '.gitattributes',
+            '.editorconfig', '.env', '.sample'
+        }
+        preferred_names = {
+            'readme', 'readme.md', 'license', 'license.txt', 'copying', 'dockerfile',
+            'makefile', 'cmakelists.txt'
+        }
+        root_dir = os.path.abspath(root_dir)
+        candidate_files = []
+
+        for current_root, dir_names, file_names in os.walk(root_dir):
+            dir_names[:] = [name for name in dir_names if name.lower() not in {'.git', '.vs', '__pycache__'}]
+            for file_name in sorted(file_names, key=str.lower):
+                lower_name = file_name.lower()
+                if self.is_notepadx_support_file(lower_name):
+                    continue
+                full_path = os.path.join(current_root, file_name)
+                extension = os.path.splitext(lower_name)[1]
+                if lower_name in preferred_names or extension in project_extensions:
+                    candidate_files.append(full_path)
+
+        candidate_files.sort(key=lambda path: os.path.relpath(path, root_dir).lower())
+        return candidate_files
+
+    def prompt_grab_git_files_to_open(self, root_dir, file_paths, parent=None):
+        parent = parent or self.root
+        dialog = tk.Toplevel(parent)
+        dialog.title(self.tr('grab_git.open_title', 'Open Downloaded Project Files'))
+        dialog.transient(parent)
+        dialog.configure(bg=self.bg_color, padx=12, pady=12)
+        dialog.minsize(760, 420)
+        self.apply_window_icon(dialog)
+        dialog.grid_rowconfigure(1, weight=1)
+        dialog.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            dialog,
+            text=self.tr(
+                'grab_git.open_prompt',
+                'Downloaded project root:\n{root_dir}\n\nSelect one or more files to open.'
+            ).format(root_dir=root_dir),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify='left',
+            anchor='w'
+        ).grid(row=0, column=0, sticky='ew', pady=(0, 10))
+
+        list_frame = tk.Frame(dialog, bg=self.bg_color)
+        list_frame.grid(row=1, column=0, sticky='nsew')
+        list_frame.grid_rowconfigure(0, weight=1)
+        list_frame.grid_columnconfigure(0, weight=1)
+
+        listbox = tk.Listbox(
+            list_frame,
+            selectmode='extended',
+            activestyle='dotbox',
+            exportselection=False,
+            bg=self.text_bg,
+            fg=self.text_fg,
+            selectbackground=self.select_bg,
+            selectforeground='white',
+            font=('Consolas', 10)
+        )
+        listbox.grid(row=0, column=0, sticky='nsew')
+
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky='ns')
+        listbox.configure(yscrollcommand=scrollbar.set)
+
+        relative_paths = [os.path.relpath(path, root_dir) for path in file_paths]
+        for relative_path in relative_paths:
+            listbox.insert(tk.END, relative_path)
+        if relative_paths:
+            listbox.selection_set(0)
+            listbox.activate(0)
+            listbox.see(0)
+
+        result = {'value': None}
+
+        def submit(event=None):
+            selection = listbox.curselection()
+            if not selection:
+                messagebox.showinfo(
+                    self.tr('grab_git.open_title', 'Open Downloaded Project Files'),
+                    self.tr('grab_git.select_files', 'Select one or more files to open.'),
+                    parent=dialog
+                )
+                return "break"
+            result['value'] = [file_paths[index] for index in selection]
+            dialog.destroy()
+            return "break"
+
+        def cancel(event=None):
+            result['value'] = []
+            dialog.destroy()
+            return "break"
+
+        button_row = tk.Frame(dialog, bg=self.bg_color)
+        button_row.grid(row=2, column=0, sticky='ew', pady=(10, 0))
+        tk.Button(button_row, text=self.tr('grab_git.open_selected', 'Open Selected'), width=14, command=submit).pack(side='left')
+        tk.Button(button_row, text=self.tr('common.close', 'Close'), width=10, command=cancel).pack(side='right')
+
+        listbox.bind('<Double-Button-1>', submit)
+        dialog.bind('<Return>', submit)
+        dialog.bind('<Escape>', cancel)
+        dialog.protocol('WM_DELETE_WINDOW', cancel)
+        dialog.update_idletasks()
+        self.center_window(dialog, parent)
+        dialog.lift()
+        dialog.attributes('-topmost', True)
+        dialog.grab_set()
+        listbox.focus_set()
+        try:
+            dialog.wait_visibility()
+            self.center_window(dialog, parent)
+            dialog.after(1, lambda current=dialog: self.center_window_after_show(current, parent))
+            dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
+            parent.wait_window(dialog)
+            return result['value']
+        finally:
+            self.hide_autocomplete_popup()
+
+    def grab_git_project(self, event=None):
+        git_executable = shutil.which('git')
+        if not git_executable:
+            messagebox.showerror(
+                self.tr('grab_git.title', 'Grab Git'),
+                self.tr('grab_git.git_missing', 'Git could not be found on this system.'),
+                parent=self.root
+            )
+            return "break"
+
+        repo_identifier = self.prompt_grab_git_repository(parent=self.root)
+        if not repo_identifier:
+            return "break"
+
+        destination_dir = filedialog.askdirectory(
+            parent=self.root,
+            title=self.tr('grab_git.choose_folder', 'Choose where to save the GitHub project')
+        )
+        if not destination_dir:
+            return "break"
+
+        repo_name = repo_identifier.split('/', 1)[1]
+        clone_target = os.path.abspath(os.path.join(destination_dir, repo_name))
+        if os.path.exists(clone_target):
+            messagebox.showwarning(
+                self.tr('grab_git.title', 'Grab Git'),
+                self.tr('grab_git.exists', 'That destination folder already exists.\nChoose another location or remove the existing folder first.'),
+                parent=self.root
+            )
+            return "break"
+
+        progress_dialog = tk.Toplevel(self.root)
+        progress_dialog.title(self.tr('grab_git.downloading', 'Downloading Project'))
+        progress_dialog.transient(self.root)
+        progress_dialog.resizable(False, False)
+        progress_dialog.configure(bg=self.bg_color, padx=14, pady=12)
+        self.apply_window_icon(progress_dialog)
+
+        tk.Label(
+            progress_dialog,
+            text=self.tr(
+                'grab_git.downloading_prompt',
+                'Downloading:\n{repo_identifier}\n\nPlease wait...'
+            ).format(repo_identifier=repo_identifier),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify='left',
+            anchor='w'
+        ).pack(anchor='w', pady=(0, 10))
+
+        progress_bar = ttk.Progressbar(progress_dialog, orient='horizontal', mode='indeterminate', length=320)
+        progress_bar.pack(fill='x')
+        progress_bar.start(10)
+        progress_dialog.protocol('WM_DELETE_WINDOW', lambda: None)
+        progress_dialog.update_idletasks()
+        self.center_window(progress_dialog, self.root)
+        progress_dialog.lift()
+        progress_dialog.attributes('-topmost', True)
+        progress_dialog.grab_set()
+        progress_dialog.focus_force()
+        progress_dialog.after(1, lambda current=progress_dialog: self.center_window_after_show(current, self.root))
+        progress_dialog.after(50, lambda: progress_dialog.attributes('-topmost', False) if progress_dialog.winfo_exists() else None)
+
+        result = {'done': False, 'returncode': 1, 'stdout': '', 'stderr': '', 'error': None}
+
+        def worker():
+            clone_url = f"https://github.com/{repo_identifier}.git"
+            try:
+                completed = subprocess.run(
+                    [git_executable, 'clone', clone_url, clone_target],
+                    capture_output=True,
+                    text=True,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                )
+                result['returncode'] = completed.returncode
+                result['stdout'] = completed.stdout or ''
+                result['stderr'] = completed.stderr or ''
+            except Exception as exc:
+                result['error'] = exc
+            finally:
+                result['done'] = True
+
+        def finish_clone():
+            if not progress_dialog.winfo_exists():
+                return
+            if not result['done']:
+                progress_dialog.after(120, finish_clone)
+                return
+
+            progress_bar.stop()
+            try:
+                progress_dialog.grab_release()
+            except tk.TclError:
+                pass
+            progress_dialog.destroy()
+
+            if result.get('error') is not None or result.get('returncode') != 0:
+                error_detail = str(result.get('error') or result.get('stderr') or result.get('stdout') or 'Unknown git clone failure.')
+                messagebox.showerror(
+                    self.tr('grab_git.title', 'Grab Git'),
+                    self.tr('grab_git.clone_failed', 'Notepad-X could not download that GitHub project.\n\n{error_detail}').format(error_detail=error_detail.strip()),
+                    parent=self.root
+                )
+                return
+
+            candidate_files = self.get_grab_git_project_files(clone_target)
+            if not candidate_files:
+                messagebox.showinfo(
+                    self.tr('grab_git.title', 'Grab Git'),
+                    self.tr('grab_git.no_files', 'The project downloaded successfully, but no matching files were found to open.'),
+                    parent=self.root
+                )
+                return
+
+            selected_files = self.prompt_grab_git_files_to_open(clone_target, candidate_files, parent=self.root)
+            if not selected_files:
+                return
+            for selected_file in selected_files:
+                self.open_file_path(selected_file)
+
+        threading.Thread(target=worker, name='NotepadXGrabGitClone', daemon=True).start()
+        finish_clone()
+        return "break"
+
     def get_project_source_files(self, file_path):
         source_extensions = {
             '.py', '.pyw', '.rs', '.c', '.h', '.cpp', '.cc', '.cxx',
