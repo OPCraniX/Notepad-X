@@ -14,7 +14,7 @@ This benchmark is a point-in-time comparison between the packaged Notepad-X buil
 
 - Tabbed editing with persistent file-backed sessions
 - Tabs remember your caret and scroll position when you switch away and come back
-- Recent files and `Open Project`
+- Recent files, `Open Project`, and `Grab Git`
 - Drag-reorder tabs
 - GitHub-style line number gutter with click-to-copy line support
 - Auto-indent on Enter
@@ -46,7 +46,16 @@ This benchmark is a point-in-time comparison between the packaged Notepad-X buil
 - Friendly native language names in the Language menu with locale-aware font fallback
 - `View > Currently Editing` opens a right-side live editor sidebar
 - Built-in Help viewer and About dialog
-- About shows `v0.9.8` and a clickable GitHub link
+- About shows `v0.9.9` and a clickable GitHub link
+
+## Grab Git
+
+Notepad-X can download a public GitHub project and then let you choose which files to open.
+
+- `File > Grab Git` or `Ctrl+Shift+G` starts the flow
+- enter the project as `username/project`
+- choose where the GitHub project should be saved
+- after the download finishes, Notepad-X shows the project root folder and lets you select one or several files to open
 
 ## Compare Mode
 
@@ -186,6 +195,7 @@ Notepad-X also treats binary-like files more cautiously:
 
 - `Ctrl+W` Open
 - `Ctrl+Shift+W` Open Project
+- `Ctrl+Shift+G` Grab Git
 - `Ctrl+T` New Tab
 - `Ctrl+Shift+T` Close Tab
 - `Ctrl+S` Save

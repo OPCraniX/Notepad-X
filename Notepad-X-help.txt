@@ -10,7 +10,7 @@ Main Window
 - The editor area shows the active tab.
 - A GitHub-style line number gutter appears on the left when numbered lines are enabled.
 - The bottom status bar shows editor position and document state on the left, and the live clock on the far right.
-- The About window shows the current version (`v0.9.8`) and a clickable GitHub project link.
+- The About window shows the current version (`v0.9.9`) and a clickable GitHub project link.
 
 Status Bar
 - Position is shown as Ln X of Y, Col Z.
@@ -48,6 +48,7 @@ Line Numbers
 File Menu
 - Open: Opens a single file. If the current tab is a blank unmodified untitled tab, Notepad-X can reuse it instead of opening another tab.
 - Open Project: Opens the chosen file and then other related files from the same folder. After loading, Notepad-X switches back to the originally chosen file.
+- Grab Git: Opens a centered dialog that asks for a GitHub project as `username/project`, asks where to save it, downloads it, then shows the downloaded project root so you can choose one or several files to open.
 - Recent: Shows recently opened files and lets you reopen them. Clear list removes the stored recent-file history.
 - New Tab: Opens a fresh untitled tab.
 - Close Tab: Closes the current tab and prompts to save if needed.
@@ -222,6 +223,7 @@ Printing
 Keyboard Shortcuts
 - Ctrl+W: Open
 - Ctrl+Shift+W: Open Project
+- Ctrl+Shift+G: Grab Git
 - Ctrl+T: New Tab
 - Ctrl+Shift+T: Close Tab
 - Ctrl+S: Save
