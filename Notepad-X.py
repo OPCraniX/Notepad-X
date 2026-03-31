@@ -2883,17 +2883,6 @@ class NotepadX:
         )
         self.status.pack(side='left')
 
-        self.status_sync = tk.Label(
-            self.status_left,
-            text="",
-            anchor=self.ui_anchor_start(),
-            bg='#2d2d2d',
-            fg='#4ecb71',
-            font=('Segoe UI', 9, 'bold'),
-            padx=0, pady=4
-        )
-        self.status_sync.pack(side='left')
-
         self.status_tail = tk.Label(
             self.status_left,
             text=self.tr('status.memory_initial', " | Memory used: 0MB"),
@@ -3051,7 +3040,6 @@ class NotepadX:
         status_main_text = f"{status_main_text}{editor_label_text}"
         status_tail_text = f"{shared_notes_tail}{self.tr('status.memory', ' | Memory used: {memory_mb}MB', memory_mb=self.memory_used_mb)}"
         self.status.config(text=status_main_text)
-        self.status_sync.config(text=self.tr('status.synced', '| Notes Synced') if current_doc and current_doc.get('file_path') else "")
         self.status_tail.config(text=status_tail_text)
 
         if hasattr(self, 'compare_status') and self.compare_view and self.compare_active:
