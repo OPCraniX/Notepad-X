@@ -148,7 +148,7 @@ DEFAULT_LOCALE_STRINGS = {
     "panel.currently_editing.unsaved": "No active IDs found.",
     "panel.currently_editing.none": "No active IDs found.",
     "status.initial": "Ln 1 of 1, Col 1 | 0 characters | UTF-8 | Normal",
-    "status.memory_initial": " | Memory used: 0MB",
+    "status.resource_initial": " | CPU: 0.0% Memory: 0MB",
     "status.synced": "| Notes Synced",
     "status.line": "Ln",
     "status.col": "Col",
@@ -163,7 +163,7 @@ DEFAULT_LOCALE_STRINGS = {
     "status.char_count": "{total_chars} {characters_label}",
     "status.selected_char_count": "{selected_count} {of_label} {total_chars} {characters_label}",
     "status.byte_count": "{total_bytes} {bytes_label}",
-    "status.memory": " | Memory used: {memory_mb}MB",
+    "status.resource_usage": " | CPU: {cpu_percent}% Memory: {memory_mb}MB",
     "status.editor_id": " | ID: {editor_id}",
     "status.unread_tail": " | {unread_count} unread (F3 to view) | ({active_editors} editing)",
     "compare.need_two_tabs": "Open at least two tabs to compare.",
@@ -431,7 +431,10 @@ class NotepadX:
         self.find_matches_tag = 'find_match'
         self.find_current_tag = 'find_current'
         self.documents = {}
+        self.cpu_used_percent = 0.0
         self.memory_used_mb = 0
+        self.cpu_sample_count = max(1, int(os.cpu_count() or 1))
+        self.last_cpu_sample = None
         self.syntax_highlighting_available = ColorDelegator is not None and Percolator is not None
         self.large_file_threshold_bytes = 5 * 1024 * 1024
         self.max_editable_large_file_bytes = 64 * 1024 * 1024
@@ -2835,7 +2838,21 @@ class NotepadX:
             pass
         return 0
 
+    def get_process_cpu_usage_percent(self):
+        current_sample = (time.process_time(), time.monotonic())
+        previous_sample = self.last_cpu_sample
+        self.last_cpu_sample = current_sample
+        if previous_sample is None:
+            return 0.0
+        cpu_delta = max(0.0, current_sample[0] - previous_sample[0])
+        wall_delta = max(0.0, current_sample[1] - previous_sample[1])
+        if wall_delta <= 0.0:
+            return self.cpu_used_percent
+        normalized_percent = (cpu_delta / wall_delta) * 100.0 / max(1, self.cpu_sample_count)
+        return max(0.0, min(100.0, normalized_percent))
+
     def update_memory_usage(self):
+        self.cpu_used_percent = self.get_process_cpu_usage_percent()
         self.memory_used_mb = self.get_memory_usage_mb()
         self.update_status()
         self.root.after(1000, self.update_memory_usage)
@@ -2843,6 +2860,7 @@ class NotepadX:
     def trim_process_working_set(self):
         gc.collect()
         if not self.is_windows or not self.kernel32 or not self.psapi:
+            self.cpu_used_percent = self.get_process_cpu_usage_percent()
             self.memory_used_mb = self.get_memory_usage_mb()
             self.update_status()
             return
@@ -2853,6 +2871,7 @@ class NotepadX:
                 empty_working_set(handle)
         except Exception:
             pass
+        self.cpu_used_percent = self.get_process_cpu_usage_percent()
         self.memory_used_mb = self.get_memory_usage_mb()
         self.update_status()
 
@@ -2885,7 +2904,7 @@ class NotepadX:
 
         self.status_tail = tk.Label(
             self.status_left,
-            text=self.tr('status.memory_initial', " | Memory used: 0MB"),
+            text=self.tr('status.resource_initial', " | CPU: 0.0% Memory: 0MB"),
             anchor=self.ui_anchor_start(),
             bg='#2d2d2d',
             fg='#d4d4d4',
@@ -3038,7 +3057,7 @@ class NotepadX:
                 active_editors=current_doc.get('note_active_editors', 0)
             )
         status_main_text = f"{status_main_text}{editor_label_text}"
-        status_tail_text = f"{shared_notes_tail}{self.tr('status.memory', ' | Memory used: {memory_mb}MB', memory_mb=self.memory_used_mb)}"
+        status_tail_text = f"{shared_notes_tail}{self.tr('status.resource_usage', ' | CPU: {cpu_percent}% Memory: {memory_mb}MB', cpu_percent=f'{self.cpu_used_percent:.1f}', memory_mb=self.memory_used_mb)}"
         self.status.config(text=status_main_text)
         self.status_tail.config(text=status_tail_text)
 
@@ -8940,6 +8959,7 @@ class NotepadX:
             self.set_active_document(self.notebook.select())
         if not any(existing_doc.get('file_path') for existing_doc in self.documents.values()):
             self.current_file = None
+        self.cpu_used_percent = self.get_process_cpu_usage_percent()
         self.memory_used_mb = self.get_memory_usage_mb()
         self.update_status()
         self.schedule_memory_trim()
