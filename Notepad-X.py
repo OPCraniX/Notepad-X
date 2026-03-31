@@ -616,6 +616,11 @@ class NotepadX:
         self.kernel32.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
         self.kernel32.SetFileAttributesW.restype = wintypes.BOOL
         self.kernel32.SetFileAttributesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+        try:
+            self.psapi.EmptyWorkingSet.restype = wintypes.BOOL
+            self.psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+        except AttributeError:
+            pass
 
     def configure_sound_api(self):
         self.winmm = None
@@ -2834,6 +2839,29 @@ class NotepadX:
         self.memory_used_mb = self.get_memory_usage_mb()
         self.update_status()
         self.root.after(1000, self.update_memory_usage)
+
+    def trim_process_working_set(self):
+        gc.collect()
+        if not self.is_windows or not self.kernel32 or not self.psapi:
+            self.memory_used_mb = self.get_memory_usage_mb()
+            self.update_status()
+            return
+        try:
+            handle = self.kernel32.GetCurrentProcess()
+            empty_working_set = getattr(self.psapi, 'EmptyWorkingSet', None)
+            if empty_working_set:
+                empty_working_set(handle)
+        except Exception:
+            pass
+        self.memory_used_mb = self.get_memory_usage_mb()
+        self.update_status()
+
+    def schedule_memory_trim(self):
+        for delay_ms in (80, 300, 900):
+            try:
+                self.root.after(delay_ms, self.trim_process_working_set)
+            except tk.TclError:
+                break
 
     # ─── Status Bar ──────────────────────────────────────────────
     def create_status_bar(self):
@@ -8926,6 +8954,7 @@ class NotepadX:
             self.current_file = None
         self.memory_used_mb = self.get_memory_usage_mb()
         self.update_status()
+        self.schedule_memory_trim()
         self.save_session()
         return "break"
 
