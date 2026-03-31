@@ -57,6 +57,14 @@ DEFAULT_LOCALE_STRINGS = {
     "app.compare_title": "Compare With Tab",
     "about.heading": "Notepad-X",
     "about.tagline": "Built because Microsoft forgot what Notepad was supposed to be.",
+    "about.icon_placeholder": "[Icon]",
+    "about.pong.title": "Pong-X",
+    "about.pong.info": "Player 1 keys: W & S Player 2 keys: Up & Down, Press Up/Down once to start PVP. Press R to restart.",
+    "about.pong.user": "User",
+    "about.pong.computer": "Computer",
+    "about.pong.player1": "Player 1",
+    "about.pong.player2": "Player 2",
+    "about.pong.score": "{left_label} {left_score}   {right_label} {right_score}",
     "common.close": "Close",
     "common.compare": "Compare",
     "common.clear_list": "Clear list",
@@ -199,6 +207,7 @@ DEFAULT_LOCALE_STRINGS = {
     "file.reload_title": "Reload File",
     "file.reload_message": "Do you want Notepad-X to reload the file from disk instead?",
     "filesystem.access_error": "Notepad-X could not access:\n{location}\n\n{error_detail}",
+    "filesystem.unknown_path": "that path",
     "save.title": "Save",
     "save.close_prompt": "Save changes to {file_name} before closing?",
     "save.failed_title": "Save Failed",
@@ -216,8 +225,54 @@ DEFAULT_LOCALE_STRINGS = {
     "recover.tabs_message": "Notepad-X found unsaved tabs from a previous crash. Restore them?",
     "help.open_failed": "Unable to open the Notepad-X help file.",
     "help.not_found": "Notepad-X help file not found.",
+    "theme.save_failed_title": "Save Theme Failed",
+    "code_notes.title": "Code Notes",
+    "shell_integration.update_failed": "Notepad-X could not update the OS shell integration.\n\n{error_detail}",
+    "shell_integration.generic_name": "Text Editor",
+    "shell_integration.desktop_comment": "Edit text files with Notepad-X",
     "export.notes.none": "There are no notes to export in this tab.",
     "export.notes.saved": "Notes exported to:\n{output_path}",
+    "filetype.all_supported": "All Supported",
+    "filetype.text_document": "Text Document",
+    "filetype.markdown": "Markdown",
+    "filetype.git_ignore": "Git Ignore",
+    "filetype.python": "Python",
+    "filetype.c_headers": "C / Headers",
+    "filetype.cpp_headers": "C++ / Headers",
+    "filetype.csharp": "C#",
+    "filetype.rust": "Rust",
+    "filetype.java": "Java",
+    "filetype.javascript": "JavaScript",
+    "filetype.html": "HTML",
+    "filetype.php": "PHP",
+    "filetype.xml": "XML",
+    "filetype.sql": "SQL",
+    "filetype.css": "CSS",
+    "filetype.json": "JSON",
+    "filetype.ini_config": "INI / Config",
+    "filetype.batch": "Batch",
+    "filetype.shell": "Shell",
+    "filetype.assembly": "Assembly",
+    "filetype.pascal": "Pascal",
+    "filetype.perl": "Perl",
+    "filetype.diff_patch": "Diff / Patch",
+    "filetype.vb_vbscript": "VB / VBScript",
+    "filetype.actionscript": "ActionScript",
+    "filetype.asp_aspx": "ASP / ASPX",
+    "filetype.autoit": "AutoIt",
+    "filetype.caml": "Caml",
+    "filetype.fortran": "Fortran",
+    "filetype.inno_setup": "Inno Setup",
+    "filetype.lisp": "Lisp",
+    "filetype.makefile": "Makefile",
+    "filetype.matlab": "Matlab",
+    "filetype.nfo": "NFO",
+    "filetype.nsis": "NSIS",
+    "filetype.resource": "Resource",
+    "filetype.smalltalk": "Smalltalk",
+    "filetype.tex": "TeX",
+    "filetype.all_files": "All Files",
+    "filetype.encrypted": "Notepad-X Encrypted",
     "font.title": "Font",
     "font.family": "Font:",
     "font.size": "Size:",
@@ -1190,7 +1245,7 @@ class NotepadX:
                 json.dump(payload, theme_file, indent=2, ensure_ascii=False)
                 theme_file.write('\n')
         except OSError as exc:
-            self.show_filesystem_error("Save Theme Failed", file_path, exc)
+            self.show_filesystem_error(self.tr('theme.save_failed_title', 'Save Theme Failed'), file_path, exc)
             return False
         self.theme_definitions = self.load_theme_definitions(self.theme_dir)
         self.create_menu()
@@ -2441,7 +2496,7 @@ class NotepadX:
         return True
 
     def show_filesystem_error(self, title, file_path, exc):
-        location = os.path.abspath(file_path) if file_path else "that path"
+        location = os.path.abspath(file_path) if file_path else self.tr('filesystem.unknown_path', 'that path')
         messagebox.showerror(
             title,
             self.tr('filesystem.access_error', 'Notepad-X could not access:\n{location}\n\n{error_detail}', location=location, error_detail=exc),
@@ -4752,8 +4807,10 @@ class NotepadX:
     def get_edit_with_shell_extensions(self):
         extensions = []
         seen = set()
+        all_supported_label = self.tr('filetype.all_supported', 'All Supported')
+        all_files_label = self.tr('filetype.all_files', 'All Files')
         for label, pattern in self.get_save_filetypes():
-            if label in ('All Supported', 'All Files'):
+            if label in (all_supported_label, all_files_label):
                 continue
             for token in str(pattern).split():
                 token = token.strip().lower()
@@ -4831,9 +4888,9 @@ class NotepadX:
                 '[Desktop Entry]',
                 'Type=Application',
                 'Version=1.0',
-                'Name=Notepad-X',
-                'GenericName=Text Editor',
-                'Comment=Edit text files with Notepad-X',
+                f'Name={self.tr("app.name", "Notepad-X")}',
+                f'GenericName={self.tr("shell_integration.generic_name", "Text Editor")}',
+                f'Comment={self.tr("shell_integration.desktop_comment", "Edit text files with Notepad-X")}',
                 f'Exec={self.get_linux_open_command()}',
                 'Terminal=false',
                 'Categories=Utility;TextEditor;',
@@ -4842,7 +4899,7 @@ class NotepadX:
                 'Actions=EditWithNotepadX;',
                 '',
                 '[Desktop Action EditWithNotepadX]',
-                'Name=Edit with Notepad-X',
+                f'Name={self.tr("menu.view.edit_with_notepadx", "Edit with Notepad-X")}',
                 f'Exec={self.get_linux_open_command()}',
                 'Terminal=false',
                 '',
@@ -4927,7 +4984,7 @@ class NotepadX:
             if not self.path_looks_safe_for_shell(icon_source):
                 raise OSError("Unsafe icon path for Windows shell integration.")
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, menu_key) as key:
-                winreg.SetValueEx(key, 'MUIVerb', 0, winreg.REG_SZ, 'Edit with Notepad-X')
+                winreg.SetValueEx(key, 'MUIVerb', 0, winreg.REG_SZ, self.tr('menu.view.edit_with_notepadx', 'Edit with Notepad-X'))
                 winreg.SetValueEx(key, 'Icon', 0, winreg.REG_SZ, icon_source)
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{menu_key}\command") as command_key:
                 winreg.SetValueEx(command_key, '', 0, winreg.REG_SZ, self.get_windows_open_command())
@@ -4983,9 +5040,12 @@ class NotepadX:
             self.log_exception("sync edit with shell menu", exc)
             if show_errors:
                 messagebox.showerror(
-                    "Edit with Notepad-X",
-                    "Notepad-X could not update the OS shell integration.\n\n"
-                    f"{exc}",
+                    self.tr('menu.view.edit_with_notepadx', 'Edit with Notepad-X'),
+                    self.tr(
+                        'shell_integration.update_failed',
+                        'Notepad-X could not update the OS shell integration.\n\n{error_detail}',
+                        error_detail=exc
+                    ),
                     parent=self.root
                 )
             return False
@@ -7341,9 +7401,14 @@ class NotepadX:
         initial_name = f"{self.get_doc_name(doc['frame'])}-notes.json"
         output_path = filedialog.asksaveasfilename(
             parent=self.root,
+            title=self.tr('menu.file.export_notes', 'Export Notes'),
             defaultextension=".json",
             initialfile=initial_name,
-            filetypes=[("JSON", "*.json"), ("Markdown", "*.md"), ("All Files", "*.*")]
+            filetypes=[
+                (self.tr('filetype.json', 'JSON'), "*.json"),
+                (self.tr('filetype.markdown', 'Markdown'), "*.md"),
+                (self.tr('filetype.all_files', 'All Files'), "*.*")
+            ]
         )
         if not output_path:
             return "break"
@@ -8003,10 +8068,10 @@ class NotepadX:
             self.refresh_doc_note_signatures(doc)
             return True
         except PermissionError as exc:
-            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+            self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
         except OSError as exc:
             self.log_exception("write doc notes payload", exc)
-            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+            self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
         return False
 
     def append_shared_note_to_sidecar(self, doc, exported_note):
@@ -8108,10 +8173,10 @@ class NotepadX:
             doc['note_last_heartbeat_at'] = time.monotonic()
             doc['last_unread_count'] = self.get_unread_note_count(doc)
         except PermissionError as exc:
-            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+            self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
         except OSError as exc:
             self.log_exception("sync single note to sidecar", exc)
-            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+            self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
 
     def normalize_optional_metadata(self, value):
         if value is None:
@@ -8342,10 +8407,10 @@ class NotepadX:
                 doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
                 doc['note_last_heartbeat_at'] = time.monotonic()
         except PermissionError as exc:
-            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+            self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
         except OSError as exc:
             self.log_exception("persist doc notes", exc)
-            self.show_filesystem_error("Code Notes", sidecar_path, exc)
+            self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
         self.save_session()
 
     def restore_doc_notes(self, doc):
@@ -9672,7 +9737,7 @@ class NotepadX:
         else:
             icon_widget = tk.Label(
                 content,
-                text="[Icon]",
+                text=self.tr('about.icon_placeholder', '[Icon]'),
                 bg=self.bg_color,
                 fg=self.fg_color,
                 font=('Segoe UI', 12),
@@ -9753,7 +9818,7 @@ class NotepadX:
 
         header = tk.Label(
             dialog,
-            text="Pong-X",
+            text=self.tr('about.pong.title', 'Pong-X'),
             bg=self.bg_color,
             fg=self.fg_color,
             font=('Segoe UI', 14, 'bold')
@@ -9762,7 +9827,14 @@ class NotepadX:
 
         score_label = tk.Label(
             dialog,
-            text="User 0   Computer 0",
+            text=self.tr(
+                'about.pong.score',
+                '{left_label} {left_score}   {right_label} {right_score}',
+                left_label=self.tr('about.pong.user', 'User'),
+                left_score=0,
+                right_label=self.tr('about.pong.computer', 'Computer'),
+                right_score=0
+            ),
             bg=self.bg_color,
             fg='#9aa0a6',
             font=('Segoe UI', 10)
@@ -9784,7 +9856,10 @@ class NotepadX:
 
         info_label = tk.Label(
             info_frame,
-            text="Player 1 keys: W & S Player 2 keys: Up & Down, Press Up/Down once to start PVP. Press R to restart.",
+            text=self.tr(
+                'about.pong.info',
+                'Player 1 keys: W & S Player 2 keys: Up & Down, Press Up/Down once to start PVP. Press R to restart.'
+            ),
             bg='#161b22',
             fg='#e6edf3',
             font=('Segoe UI', 10, 'bold'),
@@ -9798,7 +9873,7 @@ class NotepadX:
 
         tk.Button(
             dialog,
-            text="Close",
+            text=self.tr('common.close', 'Close'),
             command=dialog.destroy,
             bg='#2d2d2d',
             fg=self.fg_color,
@@ -9930,9 +10005,13 @@ class NotepadX:
             fill='#d4d4d4', outline=''
         )
         state['score_label'].config(
-            text=(
-                f"{'User' if state['mode'] == 'ai' else 'Player 1'} {state['left_score']}   "
-                f"{'Computer' if state['mode'] == 'ai' else 'Player 2'} {state['right_score']}"
+            text=self.tr(
+                'about.pong.score',
+                '{left_label} {left_score}   {right_label} {right_score}',
+                left_label=self.tr('about.pong.user', 'User') if state['mode'] == 'ai' else self.tr('about.pong.player1', 'Player 1'),
+                left_score=state['left_score'],
+                right_label=self.tr('about.pong.computer', 'Computer') if state['mode'] == 'ai' else self.tr('about.pong.player2', 'Player 2'),
+                right_score=state['right_score']
             )
         )
 
@@ -10445,13 +10524,21 @@ class NotepadX:
         return True
 
     def open_file(self, event=None):
-        file_path = filedialog.askopenfilename(parent=self.root)
+        file_path = filedialog.askopenfilename(
+            parent=self.root,
+            title=self.tr('menu.file.open', 'Open'),
+            filetypes=self.get_save_filetypes(include_encrypted=True)
+        )
         if file_path:
             self.open_file_path(file_path)
         return "break"
 
     def open_project(self, event=None):
-        file_path = filedialog.askopenfilename(parent=self.root)
+        file_path = filedialog.askopenfilename(
+            parent=self.root,
+            title=self.tr('menu.file.open_project', 'Open Project'),
+            filetypes=self.get_save_filetypes()
+        )
         if not file_path:
             return "break"
 
@@ -10511,50 +10598,51 @@ class NotepadX:
                     self.log_exception("cleanup temp save file", exc)
 
     def get_save_filetypes(self, include_encrypted=False):
+        t = self.tr
         filetypes = [
-            ("All Supported", "*.txt *.md .gitignore *.py *.pyw *.c *.cpp *.cxx *.cc *.h *.hpp *.hxx *.hh *.cs *.rs *.java *.js *.html *.htm *.php *.xml *.sql *.css *.json *.ini *.bat *.cmd *.sh *.asm *.s *.tex *.vb *.vbs *.pas *.pl *.pm *.diff *.patch *.nsi *.nsh *.iss *.rc *.as *.mx *.asp *.aspx *.au3 *.ml *.mli *.sml *.thy *.for *.f *.f90 *.f95 *.f2k *.lsp *.lisp *.mak *.m *.nfo *.st *.xsd *.xsml *.xsl *.kml"),
-            ("Text Document", "*.txt"),
-            ("Markdown", "*.md"),
-            ("Git Ignore", ".gitignore"),
-            ("Python", "*.py *.pyw"),
-            ("C / Headers", "*.c *.h"),
-            ("C++ / Headers", "*.cpp *.cxx *.cc *.hpp *.hxx *.hh"),
-            ("C#", "*.cs"),
-            ("Rust", "*.rs"),
-            ("Java", "*.java"),
-            ("JavaScript", "*.js"),
-            ("HTML", "*.html *.htm"),
-            ("PHP", "*.php *.php3 *.phtml"),
-            ("XML", "*.xml *.xsd *.xsml *.xsl *.kml"),
-            ("SQL", "*.sql"),
-            ("CSS", "*.css"),
-            ("JSON", "*.json"),
-            ("INI / Config", "*.ini *.inf *.reg *.url"),
-            ("Batch", "*.bat *.cmd"),
-            ("Shell", "*.sh *.bsh"),
-            ("Assembly", "*.asm *.s"),
-            ("Pascal", "*.pas *.inc"),
-            ("Perl", "*.pl *.pm *.plx"),
-            ("Diff / Patch", "*.diff *.patch"),
-            ("VB / VBScript", "*.vb *.vbs"),
-            ("ActionScript", "*.as *.mx"),
-            ("ASP / ASPX", "*.asp *.aspx"),
-            ("AutoIt", "*.au3"),
-            ("Caml", "*.ml *.mli *.sml *.thy"),
-            ("Fortran", "*.f *.for *.f90 *.f95 *.f2k"),
-            ("Inno Setup", "*.iss"),
-            ("Lisp", "*.lsp *.lisp"),
-            ("Makefile", "*.mak"),
-            ("Matlab", "*.m"),
-            ("NFO", "*.nfo"),
-            ("NSIS", "*.nsi *.nsh"),
-            ("Resource", "*.rc"),
-            ("Smalltalk", "*.st"),
-            ("TeX", "*.tex"),
-            ("All Files", "*.*"),
+            (t('filetype.all_supported', 'All Supported'), "*.txt *.md .gitignore *.py *.pyw *.c *.cpp *.cxx *.cc *.h *.hpp *.hxx *.hh *.cs *.rs *.java *.js *.html *.htm *.php *.xml *.sql *.css *.json *.ini *.bat *.cmd *.sh *.asm *.s *.tex *.vb *.vbs *.pas *.pl *.pm *.diff *.patch *.nsi *.nsh *.iss *.rc *.as *.mx *.asp *.aspx *.au3 *.ml *.mli *.sml *.thy *.for *.f *.f90 *.f95 *.f2k *.lsp *.lisp *.mak *.m *.nfo *.st *.xsd *.xsml *.xsl *.kml"),
+            (t('filetype.text_document', 'Text Document'), "*.txt"),
+            (t('filetype.markdown', 'Markdown'), "*.md"),
+            (t('filetype.git_ignore', 'Git Ignore'), ".gitignore"),
+            (t('filetype.python', 'Python'), "*.py *.pyw"),
+            (t('filetype.c_headers', 'C / Headers'), "*.c *.h"),
+            (t('filetype.cpp_headers', 'C++ / Headers'), "*.cpp *.cxx *.cc *.hpp *.hxx *.hh"),
+            (t('filetype.csharp', 'C#'), "*.cs"),
+            (t('filetype.rust', 'Rust'), "*.rs"),
+            (t('filetype.java', 'Java'), "*.java"),
+            (t('filetype.javascript', 'JavaScript'), "*.js"),
+            (t('filetype.html', 'HTML'), "*.html *.htm"),
+            (t('filetype.php', 'PHP'), "*.php *.php3 *.phtml"),
+            (t('filetype.xml', 'XML'), "*.xml *.xsd *.xsml *.xsl *.kml"),
+            (t('filetype.sql', 'SQL'), "*.sql"),
+            (t('filetype.css', 'CSS'), "*.css"),
+            (t('filetype.json', 'JSON'), "*.json"),
+            (t('filetype.ini_config', 'INI / Config'), "*.ini *.inf *.reg *.url"),
+            (t('filetype.batch', 'Batch'), "*.bat *.cmd"),
+            (t('filetype.shell', 'Shell'), "*.sh *.bsh"),
+            (t('filetype.assembly', 'Assembly'), "*.asm *.s"),
+            (t('filetype.pascal', 'Pascal'), "*.pas *.inc"),
+            (t('filetype.perl', 'Perl'), "*.pl *.pm *.plx"),
+            (t('filetype.diff_patch', 'Diff / Patch'), "*.diff *.patch"),
+            (t('filetype.vb_vbscript', 'VB / VBScript'), "*.vb *.vbs"),
+            (t('filetype.actionscript', 'ActionScript'), "*.as *.mx"),
+            (t('filetype.asp_aspx', 'ASP / ASPX'), "*.asp *.aspx"),
+            (t('filetype.autoit', 'AutoIt'), "*.au3"),
+            (t('filetype.caml', 'Caml'), "*.ml *.mli *.sml *.thy"),
+            (t('filetype.fortran', 'Fortran'), "*.f *.for *.f90 *.f95 *.f2k"),
+            (t('filetype.inno_setup', 'Inno Setup'), "*.iss"),
+            (t('filetype.lisp', 'Lisp'), "*.lsp *.lisp"),
+            (t('filetype.makefile', 'Makefile'), "*.mak"),
+            (t('filetype.matlab', 'Matlab'), "*.m"),
+            (t('filetype.nfo', 'NFO'), "*.nfo"),
+            (t('filetype.nsis', 'NSIS'), "*.nsi *.nsh"),
+            (t('filetype.resource', 'Resource'), "*.rc"),
+            (t('filetype.smalltalk', 'Smalltalk'), "*.st"),
+            (t('filetype.tex', 'TeX'), "*.tex"),
+            (t('filetype.all_files', 'All Files'), "*.*"),
         ]
         if include_encrypted:
-            return [("Notepad-X Encrypted", "*.npxe"), *filetypes]
+            return [(t('filetype.encrypted', 'Notepad-X Encrypted'), "*.npxe"), *filetypes]
         return filetypes
 
     def get_save_and_run_language(self, doc, file_path):
