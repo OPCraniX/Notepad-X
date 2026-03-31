@@ -187,6 +187,9 @@ DEFAULT_LOCALE_STRINGS = {
     "find.panel.find": "Find:",
     "find.panel.find_next": "Find Next",
     "find.panel.search_all_tabs": "Search across all tabs",
+    "find.panel.found_summary": "| Found: {count} {instance_word} of \"{query}\"",
+    "find.panel.instance_singular": "instance",
+    "find.panel.instance_plural": "instances",
     "replace.panel.replace_with": "Replace with:",
     "replace.panel.replace_all": "Replace All",
     "replace_all.title": "Replace All",
@@ -3524,12 +3527,20 @@ class NotepadX:
             self.find_frame,
             text=self.tr('find.panel.search_all_tabs', 'Search across all tabs'),
             variable=self.search_all_tabs,
+            command=self.on_search_all_tabs_toggle,
             bg=self.panel_bg,
             fg=self.fg_color,
             activebackground=self.panel_bg,
             activeforeground='white',
             selectcolor=self.panel_bg
         ).pack(side='left', padx=(10, 4), pady=6)
+        self.find_results_label = tk.Label(
+            self.find_frame,
+            text="",
+            bg=self.panel_bg,
+            fg='#9aa0a6'
+        )
+        self.find_results_label.pack(side='left', padx=(4, 8), pady=6)
         self.find_entry.bind('<Return>', self.find_from_input)
         self.find_entry.bind('<KeyRelease>', self.on_find_entry_change)
         self.find_entry.bind('<Escape>', lambda e: self.show_find_panel())   # ← added
@@ -3550,12 +3561,20 @@ class NotepadX:
             self.replace_frame,
             text=self.tr('find.panel.search_all_tabs', 'Search across all tabs'),
             variable=self.search_all_tabs,
+            command=self.on_search_all_tabs_toggle,
             bg=self.panel_bg,
             fg=self.fg_color,
             activebackground=self.panel_bg,
             activeforeground='white',
             selectcolor=self.panel_bg
         ).pack(side='left', padx=(10, 4), pady=6)
+        self.replace_results_label = tk.Label(
+            self.replace_frame,
+            text="",
+            bg=self.panel_bg,
+            fg='#9aa0a6'
+        )
+        self.replace_results_label.pack(side='left', padx=(4, 8), pady=6)
 
         self.replace_find_entry.bind('<Return>', self.find_from_input)     # ← added
         self.replace_find_entry.bind('<KeyRelease>', self.on_find_entry_change)
@@ -3730,12 +3749,14 @@ class NotepadX:
             self.bottom_frame.grid()
             self.find_frame.grid(sticky='ew')
             self.find_panel_visible = True
+            self.update_find_match_summary("")
             self.find_entry.focus_set()
         else:
             self.find_frame.grid_remove()
             self.find_panel_visible = False
             self.find_entry.delete(0, tk.END)
             self.clear_find_highlights()
+            self.update_find_match_summary("")
             self.focus_last_active_editor()
 
         self.update_bottom_panel_visibility()
@@ -3762,12 +3783,14 @@ class NotepadX:
             self.bottom_frame.grid()
             self.replace_frame.grid(sticky='ew')
             self.replace_panel_visible = True
+            self.update_find_match_summary("")
             self.replace_find_entry.focus_set()
         else:
             self.replace_frame.grid_remove()
             self.replace_panel_visible = False
             self.replace_find_entry.delete(0, tk.END)
             self.clear_find_highlights()
+            self.update_find_match_summary("")
             self.focus_last_active_editor()
 
         self.update_bottom_panel_visibility()
@@ -4116,6 +4139,8 @@ class NotepadX:
         if not query:
             return
 
+        self.update_find_match_summary(query, allow_short_query=True)
+
         target_widget = self.get_active_search_widget()
         if target_widget is None:
             return "break"
@@ -4143,6 +4168,8 @@ class NotepadX:
 
         if not query:
             return "break"
+
+        self.update_find_match_summary(query, allow_short_query=True)
 
         target_widget = self.get_active_search_widget()
         if target_widget is None:
@@ -4240,6 +4267,8 @@ class NotepadX:
 
         if not query:
             return "break"
+
+        self.update_find_match_summary(query, allow_short_query=True)
 
         target_widget = self.get_active_search_widget()
         if target_widget is None:
@@ -4431,6 +4460,58 @@ class NotepadX:
             except tk.TclError:
                 continue
 
+    def get_visible_find_query(self):
+        try:
+            if self.find_panel_visible and self.find_entry.winfo_exists():
+                return self.find_entry.get().strip()
+            if self.replace_panel_visible and self.replace_find_entry.winfo_exists():
+                return self.replace_find_entry.get().strip()
+        except tk.TclError:
+            return ""
+        return ""
+
+    def set_find_match_summary_text(self, text):
+        for label_name in ('find_results_label', 'replace_results_label'):
+            label = getattr(self, label_name, None)
+            if not label:
+                continue
+            try:
+                if label.winfo_exists():
+                    label.config(text=text or "")
+            except tk.TclError:
+                continue
+
+    def count_find_matches(self, query):
+        if not query:
+            return 0
+        total_matches = 0
+        for widget in self.get_find_target_widgets():
+            total_matches += len(self.find_query_offsets(widget, query, nocase=True))
+        return total_matches
+
+    def update_find_match_summary(self, query=None, allow_short_query=False):
+        if query is None:
+            query = self.get_visible_find_query()
+        cleaned_query = str(query or "").strip()
+        if not (self.find_panel_visible or self.replace_panel_visible):
+            self.set_find_match_summary_text("")
+            return 0
+        if not cleaned_query or (not allow_short_query and len(cleaned_query) < self.live_find_min_chars):
+            self.set_find_match_summary_text("")
+            return 0
+        match_count = self.count_find_matches(cleaned_query)
+        instance_word = self.tr('find.panel.instance_singular', 'instance') if match_count == 1 else self.tr('find.panel.instance_plural', 'instances')
+        safe_query = cleaned_query.replace('{', '{{').replace('}', '}}')
+        summary_text = self.tr(
+            'find.panel.found_summary',
+            '| Found: {count} {instance_word} of "{query}"',
+            count=match_count,
+            instance_word=instance_word,
+            query=safe_query
+        )
+        self.set_find_match_summary_text(summary_text)
+        return match_count
+
     def highlight_matches_in_widget(self, text_widget, query, max_matches=None, allow_short_query=False):
         try:
             if not text_widget or not text_widget.winfo_exists():
@@ -4602,6 +4683,7 @@ class NotepadX:
             else:
                 return
 
+            self.update_find_match_summary(query, allow_short_query=True)
             self.highlight_live_find_matches(query)
         except Exception as exc:
             self.log_exception("live find change", exc)
@@ -4619,12 +4701,27 @@ class NotepadX:
             return
 
         self.cancel_find_change_job()
-        if query and len(query) < self.live_find_min_chars:
+        self.update_find_match_summary(query, allow_short_query=True)
+        if not query:
+            self.clear_find_highlights()
+            return
+        if len(query) < self.live_find_min_chars:
+            self.clear_find_highlights()
             return
         try:
             self.find_change_job = self.root.after(30, self.apply_live_find_change)
         except tk.TclError as exc:
             self.log_exception("schedule live find change", exc)
+
+    def on_search_all_tabs_toggle(self):
+        query = self.get_visible_find_query()
+        self.cancel_find_change_job()
+        self.update_find_match_summary(query, allow_short_query=True)
+        if not query:
+            self.clear_find_highlights()
+            return
+        if len(query) >= self.live_find_min_chars:
+            self.highlight_live_find_matches(query)
 
     def replace_all(self):
         query = self.replace_find_entry.get().strip()
@@ -4642,6 +4739,8 @@ class NotepadX:
             parent=self.root
         )
         self.update_status()
+        self.update_find_match_summary(query, allow_short_query=True)
+        self.highlight_live_find_matches(query)
 
     # ─── Key Bindings ────────────────────────────────────────────
     def bind_keys(self):
