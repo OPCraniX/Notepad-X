@@ -735,6 +735,7 @@ class NotepadX:
         self.process_remote_open_requests()
         self.poll_shared_notes()
         self.center_window(self.root)
+        self.schedule_blank_startup_memory_trim()
 
     class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
         _fields_ = [
@@ -3068,6 +3069,33 @@ class NotepadX:
         for delay_ms in (80, 300, 900):
             try:
                 self.root.after(delay_ms, self.trim_process_working_set)
+            except tk.TclError:
+                break
+
+    def is_blank_startup_tab_state(self):
+        if len(self.documents) != 1:
+            return False
+        doc = next(iter(self.documents.values()), None)
+        if not doc or doc.get('file_path') or doc.get('untitled_name') != 'Untitled 1':
+            return False
+        text_widget = doc.get('text')
+        if not text_widget or not text_widget.winfo_exists():
+            return False
+        try:
+            if text_widget.edit_modified():
+                return False
+            return text_widget.get('1.0', 'end-1c') == ''
+        except tk.TclError:
+            return False
+
+    def maybe_trim_blank_startup_memory(self):
+        if self.is_blank_startup_tab_state():
+            self.trim_process_working_set()
+
+    def schedule_blank_startup_memory_trim(self):
+        for delay_ms in (180, 600, 1400):
+            try:
+                self.root.after(delay_ms, self.maybe_trim_blank_startup_memory)
             except tk.TclError:
                 break
 
