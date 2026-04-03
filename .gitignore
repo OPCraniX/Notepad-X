@@ -13,6 +13,7 @@ Notepad-X.crash.log
 *.notepadx.notes.json
 Notepad-X.*.session.json
 Notepad-X.*.editor.json
+Notepad-X Version File.txt
 *.json
 !cfg/themes/*.json
 cfg/themes/*.notepadx.notes.json

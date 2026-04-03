@@ -46,7 +46,7 @@ The image presents a performance comparison between Microsoft Notepad and Notepa
 - Friendly native language names in the Language menu with locale-aware font fallback
 - `View > Currently Editing` opens a right-side live editor sidebar
 - Built-in Help viewer and About dialog
-- About shows `v0.9.9` and a clickable GitHub link
+- About shows `v1.0.0` and a clickable GitHub link
 
 ## Grab Git
 

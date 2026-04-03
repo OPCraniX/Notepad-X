@@ -10,7 +10,7 @@ Main Window
 - The editor area shows the active tab.
 - A GitHub-style line number gutter appears on the left when numbered lines are enabled.
 - The bottom status bar shows editor position and document state on the left, and the live clock on the far right.
-- The About window shows the current version (`v0.9.9`) and a clickable GitHub project link.
+- The About window shows the current version (`v1.0.0`) and a clickable GitHub project link.
 
 Status Bar
 - Position is shown as Ln X of Y, Col Z.
