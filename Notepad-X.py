@@ -187,9 +187,23 @@ DEFAULT_LOCALE_STRINGS = {
     "find.panel.find": "Find:",
     "find.panel.find_next": "Find Next",
     "find.panel.search_all_tabs": "Search across all tabs",
+    "find.panel.find_in_label": "Find in:",
+    "find.panel.find_in_button": "Find In",
     "find.panel.found_summary": "| Found: {count} {instance_word} of \"{query}\"",
     "find.panel.instance_singular": "instance",
     "find.panel.instance_plural": "instances",
+    "find.in.title": "Find In Files",
+    "find.in.choose_directory": "Choose a folder to search",
+    "find.in.query_required": "Enter some text in Find first.",
+    "find.in.directory_required": "Choose a valid folder to search.",
+    "find.in.searching_prompt": "Searching:\n{directory}\n\nPlease wait...",
+    "find.in.results_summary": "Found {match_count} {instance_word} across {file_count} matching file(s).\nDirectory: {directory}\nScanned {scanned_count} supported files.",
+    "find.in.no_matches": "No matching files were found for \"{query}\" in:\n{directory}",
+    "find.in.search_failed": "Notepad-X could not search:\n{directory}\n\n{error_detail}",
+    "find.in.column.instances": "Instances",
+    "find.in.column.file": "File",
+    "find.in.open_selected": "Open Selected",
+    "find.in.select_results": "Select one or more results to open.",
     "replace.panel.replace_with": "Replace with:",
     "replace.panel.replace_all": "Replace All",
     "replace_all.title": "Replace All",
@@ -3573,6 +3587,13 @@ class NotepadX:
             activeforeground='white',
             selectcolor=self.panel_bg
         ).pack(side='left', padx=(10, 4), pady=6)
+        tk.Label(self.find_frame, text=self.tr('find.panel.find_in_label', 'Find in:'), bg=self.panel_bg, fg=self.fg_color)\
+            .pack(side='left', padx=(10,4), pady=6)
+        self.find_in_directory_var = tk.StringVar()
+        self.find_in_entry = tk.Entry(self.find_frame, width=28, textvariable=self.find_in_directory_var)
+        self.find_in_entry.pack(side='left', padx=4, pady=6)
+        tk.Button(self.find_frame, text=self.tr('find.panel.find_in_button', 'Find In'), command=self.choose_find_in_directory_and_search)\
+            .pack(side='left', padx=4, pady=6)
         self.find_results_label = tk.Label(
             self.find_frame,
             text="",
@@ -3583,6 +3604,8 @@ class NotepadX:
         self.find_entry.bind('<Return>', self.find_from_input)
         self.find_entry.bind('<KeyRelease>', self.on_find_entry_change)
         self.find_entry.bind('<Escape>', lambda e: self.show_find_panel())   # ← added
+        self.find_in_entry.bind('<Return>', self.find_in_directory_from_entry)
+        self.find_in_entry.bind('<Escape>', lambda e: self.show_find_panel())
 
         # Replace panel
         self.replace_frame = tk.Frame(self.bottom_frame, bg=self.panel_bg)
@@ -4550,6 +4573,324 @@ class NotepadX:
         )
         self.set_find_match_summary_text(summary_text)
         return match_count
+
+    def get_find_in_supported_patterns(self):
+        exact_names = set()
+        extensions = set()
+        all_supported_label = self.tr('filetype.all_supported', 'All Supported')
+        all_files_label = self.tr('filetype.all_files', 'All Files')
+        for label, pattern in self.get_save_filetypes():
+            if label in {all_supported_label, all_files_label}:
+                continue
+            for token in str(pattern).split():
+                normalized = token.strip().lower()
+                if normalized.startswith('*.') and len(normalized) > 2:
+                    extensions.add(f".{normalized[2:]}")
+                elif normalized.startswith('.') and len(normalized) > 1:
+                    exact_names.add(normalized)
+        return exact_names, extensions
+
+    def get_find_in_initial_directory(self):
+        try:
+            selected_directory = self.find_in_directory_var.get().strip()
+        except (AttributeError, tk.TclError):
+            selected_directory = ""
+        if selected_directory and os.path.isdir(selected_directory):
+            return os.path.abspath(selected_directory)
+        current_doc = self.get_current_doc()
+        if current_doc:
+            file_path = current_doc.get('file_path')
+            if file_path and os.path.exists(file_path):
+                return os.path.dirname(os.path.abspath(file_path))
+        return os.getcwd()
+
+    def count_query_matches_in_file(self, file_path, query_casefold):
+        match_count = 0
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as source_file:
+            for line in source_file:
+                match_count += line.casefold().count(query_casefold)
+        return match_count
+
+    def search_query_in_directory(self, directory, query):
+        directory = os.path.abspath(directory)
+        query_casefold = str(query or '').casefold()
+        exact_names, extensions = self.get_find_in_supported_patterns()
+        results = []
+        scanned_files = 0
+        total_matches = 0
+
+        for current_root, dir_names, file_names in os.walk(directory):
+            dir_names[:] = [
+                name for name in dir_names
+                if name.lower() not in {'.git', '__pycache__', '.vs'}
+            ]
+            for file_name in file_names:
+                normalized_name = file_name.lower()
+                extension = os.path.splitext(normalized_name)[1]
+                if normalized_name not in exact_names and extension not in extensions:
+                    continue
+                file_path = os.path.join(current_root, file_name)
+                scanned_files += 1
+                match_count = self.count_query_matches_in_file(file_path, query_casefold)
+                if match_count <= 0:
+                    continue
+                total_matches += match_count
+                results.append({
+                    'path': file_path,
+                    'relative_path': os.path.relpath(file_path, directory),
+                    'match_count': match_count,
+                })
+
+        results.sort(key=lambda item: (-item['match_count'], item['relative_path'].lower()))
+        return results, scanned_files, total_matches
+
+    def show_find_in_results_dialog(self, directory, query, results, scanned_files, total_matches):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.tr('find.in.title', 'Find In Files'))
+        dialog.transient(self.root)
+        dialog.configure(bg=self.bg_color, padx=12, pady=12)
+        dialog.minsize(760, 420)
+        self.apply_window_icon(dialog)
+
+        instance_word = self.tr('find.panel.instance_singular', 'instance') if total_matches == 1 else self.tr('find.panel.instance_plural', 'instances')
+        summary = self.tr(
+            'find.in.results_summary',
+            'Found {match_count} {instance_word} across {file_count} matching file(s).\nDirectory: {directory}\nScanned {scanned_count} supported files.',
+            match_count=total_matches,
+            instance_word=instance_word,
+            file_count=len(results),
+            directory=directory,
+            scanned_count=scanned_files
+        )
+        tk.Label(
+            dialog,
+            text=summary,
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify='left',
+            anchor='w'
+        ).pack(fill='x', pady=(0, 10))
+
+        results_frame = tk.Frame(dialog, bg=self.bg_color)
+        results_frame.pack(fill='both', expand=True)
+        results_frame.grid_rowconfigure(0, weight=1)
+        results_frame.grid_columnconfigure(0, weight=1)
+
+        tree = ttk.Treeview(
+            results_frame,
+            columns=('instances', 'file'),
+            show='headings',
+            selectmode='extended'
+        )
+        tree.heading('instances', text=self.tr('find.in.column.instances', 'Instances'))
+        tree.heading('file', text=self.tr('find.in.column.file', 'File'))
+        tree.column('instances', width=90, minwidth=90, anchor='center', stretch=False)
+        tree.column('file', width=620, anchor='w', stretch=True)
+        tree.grid(row=0, column=0, sticky='nsew')
+
+        scrollbar = ttk.Scrollbar(results_frame, orient='vertical', command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky='ns')
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        row_paths = {}
+        for index, item in enumerate(results):
+            row_id = f"result_{index}"
+            tree.insert('', tk.END, iid=row_id, values=(item['match_count'], item['relative_path']))
+            row_paths[row_id] = item['path']
+
+        def close_dialog(event=None):
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+            return "break"
+
+        def open_selected(event=None):
+            selection = tree.selection()
+            if not selection:
+                messagebox.showinfo(
+                    self.tr('find.in.title', 'Find In Files'),
+                    self.tr('find.in.select_results', 'Select one or more results to open.'),
+                    parent=dialog
+                )
+                return "break"
+            selected_paths = [row_paths[item_id] for item_id in selection if item_id in row_paths]
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+            dialog.destroy()
+            for file_path in selected_paths:
+                self.open_file_path(file_path)
+            return "break"
+
+        button_row = tk.Frame(dialog, bg=self.bg_color)
+        button_row.pack(fill='x', pady=(10, 0))
+        tk.Button(button_row, text=self.tr('find.in.open_selected', 'Open Selected'), command=open_selected)\
+            .pack(side='left')
+        tk.Button(button_row, text=self.tr('common.close', 'Close'), command=close_dialog)\
+            .pack(side='right')
+
+        if results:
+            first_row = 'result_0'
+            tree.selection_set(first_row)
+            tree.focus(first_row)
+        tree.bind('<Double-Button-1>', open_selected)
+        dialog.bind('<Return>', open_selected)
+        dialog.bind('<Escape>', close_dialog)
+        dialog.protocol('WM_DELETE_WINDOW', close_dialog)
+        dialog.update_idletasks()
+        self.center_window(dialog, self.root)
+        dialog.lift()
+        dialog.attributes('-topmost', True)
+        dialog.grab_set()
+        tree.focus_set()
+        dialog.after(1, lambda current=dialog: self.center_window_after_show(current, self.root))
+        dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
+
+    def start_find_in_directory_search(self, directory, query):
+        directory = os.path.abspath(directory)
+        safe_query = str(query or '').replace('{', '{{').replace('}', '}}')
+        progress_dialog = tk.Toplevel(self.root)
+        progress_dialog.title(self.tr('find.in.title', 'Find In Files'))
+        progress_dialog.transient(self.root)
+        progress_dialog.resizable(False, False)
+        progress_dialog.configure(bg=self.bg_color, padx=14, pady=12)
+        self.apply_window_icon(progress_dialog)
+
+        tk.Label(
+            progress_dialog,
+            text=self.tr('find.in.searching_prompt', 'Searching:\n{directory}\n\nPlease wait...', directory=directory),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify='left',
+            anchor='w'
+        ).pack(anchor='w', pady=(0, 10))
+
+        progress_bar = ttk.Progressbar(progress_dialog, orient='horizontal', mode='indeterminate', length=320)
+        progress_bar.pack(fill='x')
+        progress_bar.start(10)
+        progress_dialog.protocol('WM_DELETE_WINDOW', lambda: None)
+        progress_dialog.update_idletasks()
+        self.center_window(progress_dialog, self.root)
+        progress_dialog.lift()
+        progress_dialog.attributes('-topmost', True)
+        progress_dialog.grab_set()
+        progress_dialog.focus_force()
+        progress_dialog.after(1, lambda current=progress_dialog: self.center_window_after_show(current, self.root))
+        progress_dialog.after(50, lambda: progress_dialog.attributes('-topmost', False) if progress_dialog.winfo_exists() else None)
+
+        result = {
+            'done': False,
+            'error': None,
+            'matches': [],
+            'scanned_files': 0,
+            'total_matches': 0,
+        }
+
+        def worker():
+            try:
+                matches, scanned_files, total_matches = self.search_query_in_directory(directory, query)
+                result['matches'] = matches
+                result['scanned_files'] = scanned_files
+                result['total_matches'] = total_matches
+            except Exception as exc:
+                result['error'] = exc
+            finally:
+                result['done'] = True
+
+        def finish_search():
+            if not progress_dialog.winfo_exists():
+                return
+            if not result['done']:
+                progress_dialog.after(120, finish_search)
+                return
+
+            progress_bar.stop()
+            try:
+                progress_dialog.grab_release()
+            except tk.TclError:
+                pass
+            progress_dialog.destroy()
+
+            if result['error'] is not None:
+                messagebox.showerror(
+                    self.tr('find.in.title', 'Find In Files'),
+                    self.tr(
+                        'find.in.search_failed',
+                        'Notepad-X could not search:\n{directory}\n\n{error_detail}',
+                        directory=directory,
+                        error_detail=str(result['error']).replace('{', '{{').replace('}', '}}')
+                    ),
+                    parent=self.root
+                )
+                return
+
+            matches = list(result.get('matches') or [])
+            if not matches:
+                messagebox.showinfo(
+                    self.tr('find.in.title', 'Find In Files'),
+                    self.tr(
+                        'find.in.no_matches',
+                        'No matching files were found for "{query}" in:\n{directory}',
+                        query=safe_query,
+                        directory=directory
+                    ),
+                    parent=self.root
+                )
+                return
+
+            self.show_find_in_results_dialog(
+                directory,
+                query,
+                matches,
+                int(result.get('scanned_files') or 0),
+                int(result.get('total_matches') or 0)
+            )
+
+        threading.Thread(target=worker, name='NotepadXFindInFiles', daemon=True).start()
+        progress_dialog.after(120, finish_search)
+
+    def choose_find_in_directory_and_search(self):
+        query = self.find_entry.get().strip()
+        if not query:
+            messagebox.showinfo(
+                self.tr('find.in.title', 'Find In Files'),
+                self.tr('find.in.query_required', 'Enter some text in Find first.'),
+                parent=self.root
+            )
+            return "break"
+        selected_directory = filedialog.askdirectory(
+            parent=self.root,
+            title=self.tr('find.in.choose_directory', 'Choose a folder to search'),
+            initialdir=self.get_find_in_initial_directory()
+        )
+        if not selected_directory:
+            return "break"
+        self.find_in_directory_var.set(selected_directory)
+        self.start_find_in_directory_search(selected_directory, query)
+        return "break"
+
+    def find_in_directory_from_entry(self, event=None):
+        query = self.find_entry.get().strip()
+        if not query:
+            messagebox.showinfo(
+                self.tr('find.in.title', 'Find In Files'),
+                self.tr('find.in.query_required', 'Enter some text in Find first.'),
+                parent=self.root
+            )
+            return "break"
+        directory = self.find_in_directory_var.get().strip()
+        if not directory or not os.path.isdir(directory):
+            messagebox.showinfo(
+                self.tr('find.in.title', 'Find In Files'),
+                self.tr('find.in.directory_required', 'Choose a valid folder to search.'),
+                parent=self.root
+            )
+            return "break"
+        self.start_find_in_directory_search(directory, query)
+        return "break"
 
     def highlight_matches_in_widget(self, text_widget, query, max_matches=None, allow_short_query=False):
         try:
