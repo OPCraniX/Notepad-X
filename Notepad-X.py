@@ -4603,16 +4603,16 @@ class NotepadX:
                 return os.path.dirname(os.path.abspath(file_path))
         return os.getcwd()
 
-    def count_query_matches_in_file(self, file_path, query_casefold):
+    def count_query_matches_in_file(self, file_path, query):
         match_count = 0
         with open(file_path, 'r', encoding='utf-8', errors='replace') as source_file:
             for line in source_file:
-                match_count += line.casefold().count(query_casefold)
+                match_count += len(self.find_query_offsets_in_text(line, query, nocase=True))
         return match_count
 
     def search_query_in_directory(self, directory, query):
         directory = os.path.abspath(directory)
-        query_casefold = str(query or '').casefold()
+        query_text = str(query or '')
         exact_names, extensions = self.get_find_in_supported_patterns()
         results = []
         scanned_files = 0
@@ -4630,7 +4630,7 @@ class NotepadX:
                     continue
                 file_path = os.path.join(current_root, file_name)
                 scanned_files += 1
-                match_count = self.count_query_matches_in_file(file_path, query_casefold)
+                match_count = self.count_query_matches_in_file(file_path, query_text)
                 if match_count <= 0:
                     continue
                 total_matches += match_count
@@ -4961,14 +4961,14 @@ class NotepadX:
         column = safe_offset if last_newline < 0 else safe_offset - last_newline - 1
         return f"{line}.{column}"
 
-    def find_query_offsets(self, text_widget, query, start_offset=0, stop_offset=None, max_matches=None, nocase=True):
-        try:
-            if not text_widget or not text_widget.winfo_exists() or not query:
-                return []
-            content = text_widget.get('1.0', 'end-1c')
-        except tk.TclError:
-            return []
+    def build_find_query_pattern(self, query):
+        query_text = str(query or '')
+        escaped_query = re.escape(query_text)
+        if re.fullmatch(r"[\w']+", query_text, flags=re.UNICODE):
+            return re.compile(rf"(?<![\w']){escaped_query}(?![\w'])", re.UNICODE)
+        return re.compile(escaped_query)
 
+    def find_query_offsets_in_text(self, content, query, start_offset=0, stop_offset=None, max_matches=None, nocase=True):
         content_length = len(content)
         try:
             search_start = max(0, min(int(start_offset), content_length))
@@ -4982,23 +4982,38 @@ class NotepadX:
             except (TypeError, ValueError):
                 search_stop = content_length
 
-        haystack = content.casefold() if nocase else content
-        needle = query.casefold() if nocase else query
-        if not needle:
+        query_text = str(query or '')
+        if not query_text:
             return []
 
+        flags = re.IGNORECASE if nocase else 0
+        pattern = self.build_find_query_pattern(query_text)
+        if flags:
+            pattern = re.compile(pattern.pattern, pattern.flags | flags)
+
         offsets = []
-        cursor = search_start
-        step = max(1, len(needle))
-        while cursor <= search_stop:
-            position = haystack.find(needle, cursor, search_stop)
-            if position < 0:
-                break
-            offsets.append(position)
+        search_text = content[search_start:search_stop]
+        for match in pattern.finditer(search_text):
+            offsets.append(search_start + match.start())
             if max_matches and len(offsets) >= max_matches:
                 break
-            cursor = position + step
         return offsets
+
+    def find_query_offsets(self, text_widget, query, start_offset=0, stop_offset=None, max_matches=None, nocase=True):
+        try:
+            if not text_widget or not text_widget.winfo_exists() or not query:
+                return []
+            content = text_widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return []
+        return self.find_query_offsets_in_text(
+            content,
+            query,
+            start_offset=start_offset,
+            stop_offset=stop_offset,
+            max_matches=max_matches,
+            nocase=nocase
+        )
 
     def highlight_all_matches(self, query, max_matches=None, allow_short_query=False):
         widgets = self.get_find_target_widgets()
@@ -5108,13 +5123,16 @@ class NotepadX:
         if not query:
             return
         content = self.text.get('1.0', tk.END)
-        new_content = content.replace(query, replace_text)
+        pattern = self.build_find_query_pattern(query)
+        flags = pattern.flags | re.IGNORECASE
+        match_pattern = re.compile(pattern.pattern, flags)
+        new_content, replacement_count = match_pattern.subn(replace_text, content)
         self.text.delete('1.0', tk.END)
         self.text.insert('1.0', new_content.rstrip('\n'))
         self.text.edit_modified(True)
         messagebox.showinfo(
             self.tr('replace_all.title', 'Replace All'),
-            self.tr('replace_all.completed', 'Replaced {count} occurrence(s).', count=content.count(query)),
+            self.tr('replace_all.completed', 'Replaced {count} occurrence(s).', count=replacement_count),
             parent=self.root
         )
         self.update_status()
