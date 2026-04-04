@@ -6162,7 +6162,8 @@ class NotepadX:
         text.tag_config(self.find_matches_tag, background=self.match_bg, foreground='black')
         text.tag_config(self.find_current_tag, background='#ff8c42', foreground='black')
         text.tag_config(self.bracket_match_tag, background='#2f81f7', foreground='white')
-        text.tag_config(self.spellcheck_tag, underline=1, foreground=self.spellcheck_fg)
+        spellcheck_fg, spellcheck_bg = self.get_spellcheck_tag_colors()
+        text.tag_config(self.spellcheck_tag, underline=1, foreground=spellcheck_fg, background=spellcheck_bg)
         self.raise_find_tags(text)
 
         if content:
