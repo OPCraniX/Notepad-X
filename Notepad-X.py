@@ -7009,6 +7009,36 @@ class NotepadX:
                 break
         return replacements
 
+    def normalize_grammar_token(self, value):
+        return re.sub(r'[^A-Za-z0-9]+', '', str(value or '')).lower()
+
+    def should_keep_grammar_match(self, snapshot, match, issue_type, replacements=None):
+        if issue_type != 'misspelling':
+            return True
+        try:
+            offset = int(getattr(match, 'offset', 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        raw_length = getattr(match, 'error_length', None)
+        if raw_length is None:
+            raw_length = getattr(match, 'errorLength', None)
+        try:
+            error_length = int(raw_length or 0)
+        except (TypeError, ValueError):
+            return False
+        if error_length <= 0:
+            return False
+        fragment = str(snapshot[offset:offset + error_length] or '')
+        fragment_normalized = self.normalize_grammar_token(fragment)
+        if not fragment_normalized:
+            return False
+        if replacements is None:
+            replacements = self.normalize_grammar_replacements(match)
+        for replacement in replacements or []:
+            if self.normalize_grammar_token(replacement) == fragment_normalized:
+                return True
+        return False
+
     def start_grammarcheck_worker(self, doc):
         if not self.doc_supports_grammarcheck(doc):
             self.clear_grammarcheck(doc)
@@ -7053,7 +7083,8 @@ class NotepadX:
             matches = []
             for match in raw_matches or []:
                 issue_type = self.get_grammar_match_issue_type(match)
-                if issue_type == 'misspelling':
+                replacements = self.normalize_grammar_replacements(match)
+                if not self.should_keep_grammar_match(snapshot, match, issue_type, replacements=replacements):
                     continue
                 try:
                     offset = int(getattr(match, 'offset', 0) or 0)
@@ -7073,7 +7104,7 @@ class NotepadX:
                     'length': error_length,
                     'message': str(getattr(match, 'message', '') or '').strip(),
                     'issue_type': issue_type,
-                    'replacements': self.normalize_grammar_replacements(match),
+                    'replacements': replacements,
                 })
 
             self.queue_grammar_result({
