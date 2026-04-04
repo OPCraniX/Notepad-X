@@ -50,6 +50,11 @@ except ImportError:
     ColorDelegator = None
     Percolator = None
 
+try:
+    from spellchecker import SpellChecker
+except ImportError:
+    SpellChecker = None
+
 DEFAULT_LOCALE_STRINGS = {
     "app.name": "Notepad-X",
     "app.about_title": "About Notepad-X",
@@ -82,6 +87,8 @@ DEFAULT_LOCALE_STRINGS = {
     "context.add_note": "Add note",
     "context.respond": "Respond",
     "context.remove_note": "Remove note",
+    "context.add_to_dictionary": "Add to Dictionary",
+    "context.no_suggestions": "No suggestions",
     "menu.file": "File",
     "menu.file.open": "Open",
     "menu.file.open_project": "Open Project",
@@ -124,6 +131,7 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.view.status_bar": "Status Bar",
     "menu.view.numbered_lines": "Numbered Lines",
     "menu.view.autocomplete": "Autocomplete",
+    "menu.view.spell_check": "Spell Check",
     "menu.view.edit_with_notepadx": "Edit with Notepad-X",
     "menu.view.word_wrap": "Word Wrap",
     "menu.view.sound": "Sound",
@@ -216,6 +224,8 @@ DEFAULT_LOCALE_STRINGS = {
     "large_file.save_disabled": "This tab is opened in buffered large-file mode. Editing and saving are disabled for the full file view.",
     "large_file.save_as_disabled": "Save As is disabled for buffered large-file tabs.",
     "large_file.encryption_disabled": "Encryption is not available for buffered large-file or preview tabs.",
+    "spellcheck.unavailable_title": "Spell Check Unavailable",
+    "spellcheck.unavailable_message": "Install pyspellchecker to use spell check in Notepad-X.",
     "file.open_failed_title": "Open Failed",
     "file.open_failed_message": "Notepad-X could not open:\n{file_path}\n\n{error_detail}",
     "file.missing_title": "File Missing",
@@ -392,6 +402,7 @@ DEFAULT_LOCALE_STRINGS = {
     "accel.full_screen": "F11",
     "accel.switch_tab": "Ctrl+Tab",
     "accel.status_bar": "Ctrl+B",
+    "accel.spell_check": "F7",
     "accel.currently_editing": "Ctrl+Shift+C",
     "accel.compare_tabs": "Ctrl+Q",
     "accel.close_compare_tabs": "Ctrl+Shift+X",
@@ -592,6 +603,7 @@ class NotepadX:
         self.current_file = None
         self.find_matches_tag = 'find_match'
         self.find_current_tag = 'find_current'
+        self.spellcheck_tag = 'spellcheck_misspelled'
         self.documents = {}
         self.cpu_used_percent = 0.0
         self.memory_used_mb = 0
@@ -652,6 +664,20 @@ class NotepadX:
         self.live_find_min_chars = 2
         self.live_find_max_matches_per_widget = 1000
         self.live_find_max_matches_typing = 150
+        self.spellcheck_delay_ms = 260
+        self.spellcheck_max_chars = 250000
+        self.spellcheck_max_words = 8000
+        self.spellcheck_token_pattern = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+        self.spellcheck_skip_neighbor_chars = set('_/\\.@#:-')
+        self.spellcheck_custom_words = {
+            'notepad', 'notepadx', 'github', 'gitignore', 'gitattributes', 'grab',
+            'lolcat', 'codex', 'pyspellchecker', 'plaintext', 'utf', 'npxe', 'npx',
+            'json', 'yaml', 'toml', 'xml', 'html', 'css', 'javascript', 'typescript',
+            'python', 'java', 'powershell', 'markdown', 'autocomplete'
+        }
+        self.spellcheck_supported_modes = {None, 'ini', 'nfo', 'tex'}
+        self.spell_checker = None
+        self.spell_checker_ready = False
         self.recent_files = []
         self.closed_session_files = set()
         self.note_sync_interval_ms = 100
@@ -678,6 +704,7 @@ class NotepadX:
         self.status_bar_enabled = tk.BooleanVar(value=True)
         self.numbered_lines_enabled = tk.BooleanVar(value=True)
         self.autocomplete_enabled = tk.BooleanVar(value=True)
+        self.spell_check_enabled = tk.BooleanVar(value=SpellChecker is not None)
         self.edit_with_shell_enabled = tk.BooleanVar(value=False)
         self.search_all_tabs = tk.BooleanVar(value=False)
         self.note_filter = tk.StringVar(value='all')
@@ -2591,6 +2618,7 @@ class NotepadX:
             'status_bar_enabled': bool(session.get('status_bar_enabled', True)),
             'numbered_lines_enabled': bool(session.get('numbered_lines_enabled', True)),
             'autocomplete_enabled': bool(session.get('autocomplete_enabled', True)),
+            'spell_check_enabled': bool(session.get('spell_check_enabled', SpellChecker is not None)),
             'sync_page_navigation_enabled': bool(session.get('sync_page_navigation_enabled', False)),
             'edit_with_shell_enabled': bool(session.get('edit_with_shell_enabled', False)),
             'current_font_size': current_font_size,
@@ -5162,6 +5190,7 @@ class NotepadX:
         self.root.bind('<Control-Shift-E>', lambda e: self.save_encrypted_copy())
         self.root.bind('<Control-Shift-r>', self.save_and_run)
         self.root.bind('<Control-Shift-R>', self.save_and_run)
+        self.root.bind('<F7>', self.toggle_spell_check)
         self.root.bind_all('<KeyPress>', self.handle_global_ctrl_shift_shortcuts, add='+')
         self.root.bind_all('<Control-Shift-x>', self.ctrl_shift_x)
         self.root.bind_all('<Control-Shift-X>', self.ctrl_shift_x)
@@ -5297,6 +5326,25 @@ class NotepadX:
     def toggle_autocomplete(self):
         if not self.autocomplete_enabled.get():
             self.hide_autocomplete_popup()
+        self.save_session()
+        return "break"
+
+    def toggle_spell_check(self, event=None):
+        if event is not None:
+            self.spell_check_enabled.set(not self.spell_check_enabled.get())
+        if self.spell_check_enabled.get() and SpellChecker is None:
+            self.spell_check_enabled.set(False)
+            messagebox.showinfo(
+                self.tr('spellcheck.unavailable_title', 'Spell Check Unavailable'),
+                self.tr('spellcheck.unavailable_message', 'Install pyspellchecker to use spell check in Notepad-X.'),
+                parent=self.root
+            )
+            return "break"
+        for doc in self.documents.values():
+            if self.spell_check_enabled.get():
+                self.schedule_spellcheck(doc)
+            else:
+                self.clear_spellcheck(doc)
         self.save_session()
         return "break"
 
@@ -6086,6 +6134,7 @@ class NotepadX:
         text.tag_config(self.find_matches_tag, background=self.match_bg, foreground='black')
         text.tag_config(self.find_current_tag, background='#ff8c42', foreground='black')
         text.tag_config(self.bracket_match_tag, background='#2f81f7', foreground='white')
+        text.tag_config(self.spellcheck_tag, underline=1)
         self.raise_find_tags(text)
 
         if content:
@@ -6127,6 +6176,7 @@ class NotepadX:
             'last_note_cycle_tag': None,
             'theme_effect_job': None,
             'syntax_job': None,
+            'spellcheck_job': None,
             'syntax_mode': None,
             'syntax_override': None,
             'last_insert_index': '1.0',
@@ -6393,6 +6443,7 @@ class NotepadX:
             self.clear_custom_syntax_tags(doc)
 
         self.apply_text_theme_effect(doc)
+        self.schedule_spellcheck(doc)
 
     def build_rainbow_theme_palette(self, color_count=28):
         palette = []
@@ -6473,6 +6524,159 @@ class NotepadX:
             self.raise_find_tags(text_widget)
         except tk.TclError:
             return
+
+    def get_spell_checker(self):
+        if self.spell_checker_ready:
+            return self.spell_checker
+        self.spell_checker_ready = True
+        if SpellChecker is None:
+            self.spell_checker = None
+            return None
+        try:
+            checker = SpellChecker(language='en')
+            checker.word_frequency.load_words(sorted(self.spellcheck_custom_words))
+            self.spell_checker = checker
+        except Exception as exc:
+            self.log_exception("initialize spell checker", exc)
+            self.spell_checker = None
+        return self.spell_checker
+
+    def cancel_spellcheck_job(self, doc):
+        if not doc:
+            return
+        job = doc.get('spellcheck_job')
+        if not job:
+            return
+        try:
+            self.root.after_cancel(job)
+        except tk.TclError:
+            pass
+        doc['spellcheck_job'] = None
+
+    def clear_spellcheck(self, doc_or_widget):
+        if isinstance(doc_or_widget, dict):
+            doc = doc_or_widget
+            self.cancel_spellcheck_job(doc)
+            text_widget = doc.get('text')
+        else:
+            doc = None
+            text_widget = doc_or_widget
+        if not isinstance(text_widget, tk.Text):
+            return
+        try:
+            if text_widget.winfo_exists():
+                text_widget.tag_remove(self.spellcheck_tag, '1.0', tk.END)
+        except tk.TclError:
+            pass
+
+    def doc_supports_spellcheck(self, doc):
+        if not doc or not self.spell_check_enabled.get():
+            return False
+        if doc.get('virtual_mode') or doc.get('preview_mode') or doc.get('large_file_mode'):
+            return False
+        if doc.get('syntax_mode') not in self.spellcheck_supported_modes:
+            return False
+        text_widget = doc.get('text')
+        if not isinstance(text_widget, tk.Text):
+            return False
+        try:
+            if not text_widget.winfo_exists():
+                return False
+        except tk.TclError:
+            return False
+        return self.get_spell_checker() is not None
+
+    def is_spellcheck_candidate_word(self, content, match):
+        token = match.group(0)
+        normalized = token.lower()
+        if len(normalized) < 3 or len(normalized) > 32:
+            return False
+        if normalized in self.spellcheck_custom_words:
+            return False
+        if token.isupper():
+            return False
+        if re.search(r'[a-z][A-Z]|[A-Z]{2,}[a-z]', token):
+            return False
+        start = match.start()
+        end = match.end()
+        before_char = content[start - 1] if start > 0 else ''
+        after_char = content[end] if end < len(content) else ''
+        if before_char in self.spellcheck_skip_neighbor_chars or after_char in self.spellcheck_skip_neighbor_chars:
+            return False
+        return True
+
+    def iter_misspelled_word_ranges(self, content):
+        checker = self.get_spell_checker()
+        if checker is None or not content or len(content) > self.spellcheck_max_chars:
+            return []
+
+        pending = []
+        unique_words = set()
+        for match in self.spellcheck_token_pattern.finditer(content):
+            if len(pending) >= self.spellcheck_max_words:
+                break
+            if not self.is_spellcheck_candidate_word(content, match):
+                continue
+            normalized = match.group(0).lower()
+            pending.append((match.start(), match.end(), normalized))
+            unique_words.add(normalized)
+
+        if not pending:
+            return []
+
+        try:
+            unknown_words = checker.unknown(unique_words)
+        except Exception as exc:
+            self.log_exception("spellcheck scan", exc)
+            return []
+
+        return [
+            (start, end)
+            for start, end, normalized in pending
+            if normalized in unknown_words
+        ]
+
+    def apply_spellcheck(self, doc):
+        if not doc:
+            return
+        doc['spellcheck_job'] = None
+        text_widget = doc.get('text')
+        self.clear_spellcheck(text_widget)
+        if not self.doc_supports_spellcheck(doc):
+            return
+        try:
+            content = text_widget.get('1.0', 'end-1c')
+        except tk.TclError:
+            return
+        misspelled_ranges = self.iter_misspelled_word_ranges(content)
+        if not misspelled_ranges:
+            return
+        for start_offset, end_offset in misspelled_ranges:
+            start_index = self.text_index_from_offset(text_widget, start_offset, content=content)
+            end_index = self.text_index_from_offset(text_widget, end_offset, content=content)
+            if not start_index or not end_index:
+                continue
+            try:
+                text_widget.tag_add(self.spellcheck_tag, start_index, end_index)
+            except tk.TclError:
+                continue
+        self.raise_editor_overlay_tags(text_widget)
+
+    def schedule_spellcheck(self, doc):
+        if not doc:
+            return
+        if not self.doc_supports_spellcheck(doc):
+            self.clear_spellcheck(doc)
+            return
+        self.cancel_spellcheck_job(doc)
+        try:
+            doc['spellcheck_job'] = self.root.after(
+                self.spellcheck_delay_ms,
+                lambda current=doc: self.apply_spellcheck(current)
+            )
+        except tk.TclError:
+            doc['spellcheck_job'] = None
+            self.apply_spellcheck(doc)
 
     def apply_rainbow_theme_to_widget(self, text_widget):
         if not text_widget:
@@ -7427,15 +7631,153 @@ class NotepadX:
 
         action_target = action_tab_id if action_tab_id is not None else tab_id
         menu = tk.Menu(self.root, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
-        menu.add_command(label=self.tr('context.cut', 'Cut'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.cut))
+        doc['context_menu'] = menu
+        self.rebuild_text_context_menu(
+            doc,
+            action_target,
+            note_state='disabled',
+            note_action_state='disabled',
+            is_readonly_target=False,
+            word_index=None
+        )
+
+    def rebuild_text_context_menu(self, doc, action_target, note_state, note_action_state, is_readonly_target, word_index=None):
+        menu = doc.get('context_menu')
+        if menu is None:
+            return
+        menu.delete(0, tk.END)
+
+        target_widget = doc.get('context_target_widget') or doc.get('text')
+        word_info = None
+        if not is_readonly_target and isinstance(target_widget, tk.Text):
+            word_info = self.get_misspelled_word_info_at_index(target_widget, word_index, doc=doc)
+
+        if word_info:
+            suggestions = self.get_spellcheck_suggestions(word_info['word'])
+            if suggestions:
+                for suggestion in suggestions:
+                    menu.add_command(
+                        label=suggestion,
+                        command=lambda frame=action_target, start=word_info['start'], end=word_info['end'], replacement=suggestion:
+                            self.run_context_menu_action(lambda current_frame=frame, current_start=start, current_end=end, current_replacement=replacement:
+                                self.replace_word_in_widget(current_frame, current_start, current_end, current_replacement))
+                    )
+            else:
+                menu.add_command(label=self.tr('context.no_suggestions', 'No suggestions'), state='disabled')
+            menu.add_command(
+                label=self.tr('context.add_to_dictionary', 'Add to Dictionary'),
+                command=lambda word=word_info['normalized']: self.run_context_menu_action(
+                    lambda current_word=word: self.add_word_to_spellcheck_dictionary(current_word)
+                )
+            )
+            menu.add_separator()
+
+        menu.add_command(label=self.tr('context.cut', 'Cut'), state='disabled' if is_readonly_target else 'normal', command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.cut))
         menu.add_command(label=self.tr('context.copy', 'Copy'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.copy))
-        menu.add_command(label=self.tr('context.paste', 'Paste'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.paste))
+        menu.add_command(label=self.tr('context.paste', 'Paste'), state='disabled' if is_readonly_target else 'normal', command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.paste))
         menu.add_separator()
         menu.add_command(label=self.tr('context.select_all', 'Select All'), command=lambda frame=action_target: self.run_context_menu_widget_action(frame, self.select_all))
-        menu.add_command(label=self.tr('context.add_note', 'Add note'), command=lambda frame=action_target: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
-        menu.add_command(label=self.tr('context.respond', 'Respond'), command=lambda frame=action_target: self.run_context_menu_action(lambda: self.respond_to_note(frame)))
-        menu.add_command(label=self.tr('context.remove_note', 'Remove note'), command=lambda frame=action_target: self.run_context_menu_action(lambda: self.remove_note(frame)))
-        doc['context_menu'] = menu
+        menu.add_command(label=self.tr('context.add_note', 'Add note'), state=note_state, command=lambda frame=action_target: self.run_context_menu_action(lambda: self.add_note_to_selection(frame)))
+        menu.add_command(label=self.tr('context.respond', 'Respond'), state=note_action_state, command=lambda frame=action_target: self.run_context_menu_action(lambda: self.respond_to_note(frame)))
+        menu.add_command(label=self.tr('context.remove_note', 'Remove note'), state=note_action_state, command=lambda frame=action_target: self.run_context_menu_action(lambda: self.remove_note(frame)))
+
+    def replace_word_in_widget(self, action_target, start, end, replacement):
+        target_widget = self.get_context_action_target_widget(action_target)
+        if target_widget is None:
+            return "break"
+        try:
+            target_widget.focus_force()
+        except tk.TclError:
+            pass
+        self.set_last_active_editor_widget(target_widget)
+        try:
+            target_widget.delete(start, end)
+            target_widget.insert(start, replacement)
+            target_widget.mark_set(tk.INSERT, f"{start}+{len(replacement)}c")
+            target_widget.tag_remove('sel', '1.0', tk.END)
+        except tk.TclError:
+            return "break"
+        doc = self.get_doc_for_text_widget(target_widget)
+        if doc:
+            self.schedule_spellcheck(doc)
+            self.update_status()
+        return "break"
+
+    def add_word_to_spellcheck_dictionary(self, word):
+        checker = self.get_spell_checker()
+        normalized = str(word or '').strip().lower()
+        if not checker or not normalized:
+            return "break"
+        self.spellcheck_custom_words.add(normalized)
+        try:
+            checker.word_frequency.load_words([normalized])
+        except Exception as exc:
+            self.log_exception("add spellcheck dictionary word", exc)
+            return "break"
+        for doc in self.documents.values():
+            self.schedule_spellcheck(doc)
+        return "break"
+
+    def get_spellcheck_suggestions(self, word):
+        checker = self.get_spell_checker()
+        normalized = str(word or '').strip().lower()
+        if not checker or not normalized:
+            return []
+        try:
+            candidates = checker.candidates(normalized) or set()
+            correction = checker.correction(normalized)
+        except Exception as exc:
+            self.log_exception("spellcheck suggestions", exc)
+            return []
+        ordered = []
+        if correction:
+            ordered.append(correction)
+        for candidate in sorted(candidates):
+            if candidate not in ordered:
+                ordered.append(candidate)
+            if len(ordered) >= 6:
+                break
+        return ordered[:6]
+
+    def get_misspelled_word_info_at_index(self, text_widget, index, doc=None):
+        if not isinstance(text_widget, tk.Text):
+            return None
+        doc = doc or self.get_doc_for_text_widget(text_widget)
+        if not self.doc_supports_spellcheck(doc):
+            return None
+        try:
+            resolved_index = text_widget.index(index or tk.INSERT)
+            line_start = text_widget.index(f"{resolved_index} linestart")
+            line_text = text_widget.get(line_start, f"{resolved_index} lineend")
+            line_column = int(resolved_index.split('.', 1)[1])
+        except (tk.TclError, ValueError, IndexError):
+            return None
+
+        checker = self.get_spell_checker()
+        if checker is None:
+            return None
+
+        for match in self.spellcheck_token_pattern.finditer(line_text):
+            if not (match.start() <= line_column < match.end()):
+                continue
+            if not self.is_spellcheck_candidate_word(line_text, match):
+                return None
+            normalized = match.group(0).lower()
+            if normalized in self.spellcheck_custom_words:
+                return None
+            try:
+                if normalized not in checker.unknown([normalized]):
+                    return None
+            except Exception as exc:
+                self.log_exception("spellcheck word lookup", exc)
+                return None
+            return {
+                'word': match.group(0),
+                'normalized': normalized,
+                'start': f"{line_start}+{match.start()}c",
+                'end': f"{line_start}+{match.end()}c"
+            }
+        return None
 
     def run_context_menu_action(self, callback):
         self.dismiss_context_menu()
@@ -7604,17 +7946,16 @@ class NotepadX:
 
         is_readonly_target = bool(doc.get('preview_mode') or doc.get('virtual_mode'))
         if is_readonly_target:
-            doc['context_menu'].entryconfig(self.tr('context.cut', 'Cut'), state='disabled')
-            doc['context_menu'].entryconfig(self.tr('context.paste', 'Paste'), state='disabled')
             note_state = 'disabled'
-        else:
-            doc['context_menu'].entryconfig(self.tr('context.cut', 'Cut'), state='normal')
-            doc['context_menu'].entryconfig(self.tr('context.paste', 'Paste'), state='normal')
-
-        doc['context_menu'].entryconfig(self.tr('context.add_note', 'Add note'), state=note_state)
         note_action_state = 'normal' if doc.get('context_note_tag') else 'disabled'
-        doc['context_menu'].entryconfig(self.tr('context.respond', 'Respond'), state=note_action_state)
-        doc['context_menu'].entryconfig(self.tr('context.remove_note', 'Remove note'), state=note_action_state)
+        self.rebuild_text_context_menu(
+            doc,
+            doc.get('frame') if select_tab else '__compare__',
+            note_state=note_state,
+            note_action_state=note_action_state,
+            is_readonly_target=is_readonly_target,
+            word_index=index
+        )
         try:
             self.dismiss_context_menu()
             self.active_context_menu = doc['context_menu']
@@ -9215,6 +9556,7 @@ class NotepadX:
             'status_bar_enabled': bool(self.status_bar_enabled.get()),
             'numbered_lines_enabled': bool(self.numbered_lines_enabled.get()),
             'autocomplete_enabled': bool(self.autocomplete_enabled.get()),
+            'spell_check_enabled': bool(self.spell_check_enabled.get()),
             'sync_page_navigation_enabled': bool(self.sync_page_navigation_enabled.get()),
             'edit_with_shell_enabled': bool(self.edit_with_shell_enabled.get()),
             'current_font_size': int(self.current_font_size),
@@ -9430,6 +9772,7 @@ class NotepadX:
         self.status_bar_enabled.set(bool(session.get('status_bar_enabled', True)))
         self.numbered_lines_enabled.set(bool(session.get('numbered_lines_enabled', True)))
         self.autocomplete_enabled.set(bool(session.get('autocomplete_enabled', True)))
+        self.spell_check_enabled.set(bool(session.get('spell_check_enabled', SpellChecker is not None)) and SpellChecker is not None)
         self.sync_page_navigation_enabled.set(bool(session.get('sync_page_navigation_enabled', False)))
         saved_edit_with_shell = bool(session.get('edit_with_shell_enabled', False))
         shell_registered = self.is_edit_with_shell_registered()
@@ -9653,6 +9996,7 @@ class NotepadX:
         if doc.get('syntax_mode') and doc.get('syntax_mode') != 'python':
             self.schedule_syntax_highlight(doc)
         self.schedule_text_theme_effect(doc)
+        self.schedule_spellcheck(doc)
         self.update_line_number_gutter(doc)
         self.refresh_tab_title(tab_id)
         self.schedule_recovery_save()
@@ -9771,11 +10115,19 @@ class NotepadX:
             except tk.TclError:
                 pass
             doc['syntax_job'] = None
+        spellcheck_job = doc.get('spellcheck_job')
+        if spellcheck_job:
+            try:
+                self.root.after_cancel(spellcheck_job)
+            except tk.TclError:
+                pass
+            doc['spellcheck_job'] = None
 
         text_widget = doc.get('text')
         if text_widget:
             try:
                 if text_widget.winfo_exists():
+                    text_widget.tag_remove(self.spellcheck_tag, '1.0', tk.END)
                     text_widget.configure(undo=False, autoseparators=False)
                     text_widget.edit_reset()
                     text_widget.delete('1.0', tk.END)
@@ -9863,6 +10215,7 @@ class NotepadX:
         view_menu.add_checkbutton(label=t('menu.view.status_bar', 'Status Bar'), variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator=t('accel.status_bar', 'Ctrl+B'))
         view_menu.add_checkbutton(label=t('menu.view.numbered_lines', 'Numbered Lines'), variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
         view_menu.add_checkbutton(label=t('menu.view.autocomplete', 'Autocomplete'), variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
+        view_menu.add_checkbutton(label=t('menu.view.spell_check', 'Spell Check'), variable=self.spell_check_enabled, command=self.toggle_spell_check, accelerator=t('accel.spell_check', 'F7'))
         view_menu.add_checkbutton(label=t('menu.view.word_wrap', 'Word Wrap'), variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
         view_menu.add_command(label=t('menu.view.currently_editing', 'Currently Editing'), command=self.toggle_currently_editing_panel, accelerator=t('accel.currently_editing', 'Ctrl+Shift+C'))
         view_menu.add_command(label=t('menu.edit.cycle_notes', 'Cycle Notes'), command=self.goto_next_note, accelerator=t('accel.cycle_notes', 'F4'))
