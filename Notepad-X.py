@@ -135,6 +135,7 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.view.edit_with_notepadx": "Edit with Notepad-X",
     "menu.view.word_wrap": "Word Wrap",
     "menu.view.sound": "Sound",
+    "menu.view.preview_markdown": "Preview Markdown",
     "menu.view.syntax_theme": "Syntax Theme",
     "menu.view.create_theme": "Create Theme",
     "menu.view.syntax_mode": "Syntax Mode",
@@ -192,6 +193,8 @@ DEFAULT_LOCALE_STRINGS = {
     "compare.need_two_tabs": "Open at least two tabs to compare.",
     "compare.choose_prompt": "Choose a tab to compare with the current one:",
     "compare.header": "Comparing with: {title}",
+    "markdown.preview.header": "Markdown Preview: {title}",
+    "markdown.preview.empty": "Nothing to preview.",
     "find.panel.find": "Find:",
     "find.panel.find_next": "Find Next",
     "find.panel.search_all_tabs": "Search across all tabs",
@@ -403,6 +406,7 @@ DEFAULT_LOCALE_STRINGS = {
     "accel.switch_tab": "Ctrl+Tab",
     "accel.status_bar": "Ctrl+B",
     "accel.spell_check": "F7",
+    "accel.preview_markdown": "Ctrl+Shift+P",
     "accel.currently_editing": "Ctrl+Shift+C",
     "accel.compare_tabs": "Ctrl+Q",
     "accel.close_compare_tabs": "Ctrl+Shift+X",
@@ -682,6 +686,7 @@ class NotepadX:
         self.closed_session_files = set()
         self.note_sync_interval_ms = 100
         self.note_editor_heartbeat_interval_ms = 1500
+        self.markdown_preview_delay_ms = 120
         self.single_instance_host = '127.0.0.1'
         self.single_instance_port = get_notepadx_single_instance_port(self.app_dir)
         self.single_instance_server = None
@@ -711,11 +716,14 @@ class NotepadX:
         self.syntax_theme = tk.StringVar(value='Default')
         self.syntax_mode_selection = tk.StringVar(value='auto')
         self.language_selection = tk.StringVar(value=self.locale_code)
+        self.markdown_preview_enabled = tk.BooleanVar(value=False)
         self.recovery_job = None
         self.find_change_job = None
         self.compare_active = False
         self.compare_source_tab = None
         self.compare_refresh_job = None
+        self.markdown_preview_source_tab = None
+        self.markdown_preview_refresh_job = None
         self.compare_view = None
         self.last_active_editor_widget = None
         self.toast_popup = None
@@ -2619,6 +2627,7 @@ class NotepadX:
             'numbered_lines_enabled': bool(session.get('numbered_lines_enabled', True)),
             'autocomplete_enabled': bool(session.get('autocomplete_enabled', True)),
             'spell_check_enabled': bool(session.get('spell_check_enabled', SpellChecker is not None)),
+            'markdown_preview_enabled': bool(session.get('markdown_preview_enabled', False)),
             'sync_page_navigation_enabled': bool(session.get('sync_page_navigation_enabled', False)),
             'edit_with_shell_enabled': bool(session.get('edit_with_shell_enabled', False)),
             'current_font_size': current_font_size,
@@ -2988,6 +2997,8 @@ class NotepadX:
         if self.compare_view:
             self.compare_view['text'].configure(font=font_tuple)
             self.update_line_number_gutter(self.compare_view)
+        if self.markdown_preview_enabled.get():
+            self.schedule_markdown_preview_refresh()
 
     def toggle_numbered_lines(self):
         show_gutters = self.numbered_lines_enabled.get()
@@ -3017,6 +3028,8 @@ class NotepadX:
             doc['text'].configure(wrap=wrap_mode)
         if self.compare_view:
             self.compare_view['text'].configure(wrap=wrap_mode)
+        if self.markdown_preview_enabled.get():
+            self.schedule_markdown_preview_refresh()
 
     def on_ctrl_mousewheel(self, event):
         if event.state & 0x4:  # Ctrl held
@@ -3411,6 +3424,9 @@ class NotepadX:
 
         if self.currently_editing_panel_visible:
             self.refresh_currently_editing_panel()
+
+    def is_side_panel_visible(self):
+        return bool(self.compare_active or self.markdown_preview_enabled.get())
 
     def hide_toast(self):
         popup = getattr(self, 'toast_popup', None)
@@ -5190,6 +5206,8 @@ class NotepadX:
         self.root.bind('<Control-Shift-E>', lambda e: self.save_encrypted_copy())
         self.root.bind('<Control-Shift-r>', self.save_and_run)
         self.root.bind('<Control-Shift-R>', self.save_and_run)
+        self.root.bind('<Control-Shift-p>', self.toggle_markdown_preview)
+        self.root.bind('<Control-Shift-P>', self.toggle_markdown_preview)
         self.root.bind('<F7>', self.toggle_spell_check)
         self.root.bind_all('<KeyPress>', self.handle_global_ctrl_shift_shortcuts, add='+')
         self.root.bind_all('<Control-Shift-x>', self.ctrl_shift_x)
@@ -5262,6 +5280,8 @@ class NotepadX:
     def ctrl_shift_x(self, event=None):
         if self.close_help_or_about_window():
             return "break"
+        if self.markdown_preview_enabled.get():
+            return self.close_markdown_preview()
         if self.compare_active:
             return self.close_compare_panel()
         if self.find_panel_visible or self.replace_panel_visible:
@@ -5345,6 +5365,18 @@ class NotepadX:
                 self.schedule_spellcheck(doc)
             else:
                 self.clear_spellcheck(doc)
+        self.save_session()
+        return "break"
+
+    def toggle_markdown_preview(self, event=None):
+        if event is not None:
+            self.markdown_preview_enabled.set(not self.markdown_preview_enabled.get())
+        if self.markdown_preview_enabled.get():
+            if self.compare_active:
+                self.close_compare_panel(persist=False, restore_focus=False)
+            self.schedule_markdown_preview_refresh()
+        else:
+            self.close_markdown_preview(persist=False, restore_focus=False)
         self.save_session()
         return "break"
 
@@ -5988,6 +6020,7 @@ class NotepadX:
             'frame': self.compare_container,
             'text': self.compare_text,
             'line_numbers': self.compare_line_numbers,
+            'notes': {},
             'percolator': None,
             'colorizer': None,
             'theme_effect_job': None,
@@ -6065,7 +6098,7 @@ class NotepadX:
         self.create_tab()
 
     def on_editor_paned_configure(self):
-        if self.compare_active:
+        if self.compare_active or self.markdown_preview_enabled.get():
             self.set_compare_sash_position()
 
     def create_tab(self, file_path=None, content="", select=True):
@@ -6818,6 +6851,8 @@ class NotepadX:
         elif getattr(self, 'compare_view', None):
             self.apply_syntax_tag_colors(self.compare_text)
             self.update_line_number_gutter(self.compare_view)
+        if self.markdown_preview_enabled.get():
+            self.schedule_markdown_preview_refresh()
         self.save_session()
 
     def set_current_syntax_override(self, syntax_mode):
@@ -7916,7 +7951,10 @@ class NotepadX:
         return self.show_context_menu_for_doc(event, doc, select_tab=True)
 
     def show_compare_context_menu(self, event):
-        doc = self.documents.get(self.compare_source_tab) if self.compare_source_tab else None
+        if self.markdown_preview_enabled.get():
+            doc = self.compare_view
+        else:
+            doc = self.documents.get(self.compare_source_tab) if self.compare_source_tab else None
         return self.show_context_menu_for_doc(event, doc, select_tab=False)
 
     def show_context_menu_for_doc(self, event, doc, select_tab):
@@ -9510,6 +9548,8 @@ class NotepadX:
         self.refresh_tab_title(doc['frame'])
         if self.compare_active and self.compare_source_tab == str(doc['frame']):
             self.refresh_compare_panel()
+        if self.markdown_preview_enabled.get() and str(doc['frame']) == self.notebook.select():
+            self.schedule_markdown_preview_refresh()
         if str(doc['frame']) == self.notebook.select():
             self.update_status()
         return True
@@ -9557,6 +9597,7 @@ class NotepadX:
             'numbered_lines_enabled': bool(self.numbered_lines_enabled.get()),
             'autocomplete_enabled': bool(self.autocomplete_enabled.get()),
             'spell_check_enabled': bool(self.spell_check_enabled.get()),
+            'markdown_preview_enabled': bool(self.markdown_preview_enabled.get()),
             'sync_page_navigation_enabled': bool(self.sync_page_navigation_enabled.get()),
             'edit_with_shell_enabled': bool(self.edit_with_shell_enabled.get()),
             'current_font_size': int(self.current_font_size),
@@ -9773,6 +9814,7 @@ class NotepadX:
         self.numbered_lines_enabled.set(bool(session.get('numbered_lines_enabled', True)))
         self.autocomplete_enabled.set(bool(session.get('autocomplete_enabled', True)))
         self.spell_check_enabled.set(bool(session.get('spell_check_enabled', SpellChecker is not None)) and SpellChecker is not None)
+        self.markdown_preview_enabled.set(bool(session.get('markdown_preview_enabled', False)))
         self.sync_page_navigation_enabled.set(bool(session.get('sync_page_navigation_enabled', False)))
         saved_edit_with_shell = bool(session.get('edit_with_shell_enabled', False))
         shell_registered = self.is_edit_with_shell_registered()
@@ -9804,6 +9846,8 @@ class NotepadX:
         self.toggle_numbered_lines()
         self.refresh_recent_files_menu()
         if not open_files:
+            if self.markdown_preview_enabled.get():
+                self.schedule_markdown_preview_refresh()
             return
 
         current_doc = self.get_current_doc()
@@ -9839,6 +9883,8 @@ class NotepadX:
         if selected_tab is not None:
             self.notebook.select(selected_tab)
             self.set_active_document(selected_tab)
+        if self.markdown_preview_enabled.get():
+            self.schedule_markdown_preview_refresh()
 
         compare_tab = restored_tabs.get(compare_file) if isinstance(compare_file, str) else None
         if compare_tab is not None and compare_tab != selected_tab:
@@ -9936,6 +9982,9 @@ class NotepadX:
         self.restore_doc_view_state(doc)
         self.update_line_number_gutter(doc)
         self.update_window_title()
+        if self.markdown_preview_enabled.get():
+            self.markdown_preview_source_tab = str(tab_id)
+            self.schedule_markdown_preview_refresh()
         self.update_status()
 
     def on_tab_changed(self, event=None):
@@ -9971,6 +10020,8 @@ class NotepadX:
             self.update_window_title()
         if self.compare_active and self.compare_source_tab == str(tab_id):
             self.refresh_compare_header()
+        if self.markdown_preview_enabled.get() and self.markdown_preview_source_tab == str(tab_id):
+            self.schedule_markdown_preview_refresh()
         self.save_session()
 
     def update_window_title(self):
@@ -9997,6 +10048,8 @@ class NotepadX:
             self.schedule_syntax_highlight(doc)
         self.schedule_text_theme_effect(doc)
         self.schedule_spellcheck(doc)
+        if self.markdown_preview_enabled.get() and self.markdown_preview_source_tab == str(tab_id):
+            self.schedule_markdown_preview_refresh()
         self.update_line_number_gutter(doc)
         self.refresh_tab_title(tab_id)
         self.schedule_recovery_save()
@@ -10217,6 +10270,7 @@ class NotepadX:
         view_menu.add_checkbutton(label=t('menu.view.autocomplete', 'Autocomplete'), variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
         view_menu.add_checkbutton(label=t('menu.view.spell_check', 'Spell Check'), variable=self.spell_check_enabled, command=self.toggle_spell_check, accelerator=t('accel.spell_check', 'F7'))
         view_menu.add_checkbutton(label=t('menu.view.word_wrap', 'Word Wrap'), variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
+        view_menu.add_checkbutton(label=t('menu.view.preview_markdown', 'Preview Markdown'), variable=self.markdown_preview_enabled, command=self.toggle_markdown_preview, accelerator=t('accel.preview_markdown', 'Ctrl+Shift+P'))
         view_menu.add_command(label=t('menu.view.currently_editing', 'Currently Editing'), command=self.toggle_currently_editing_panel, accelerator=t('accel.currently_editing', 'Ctrl+Shift+C'))
         view_menu.add_command(label=t('menu.edit.cycle_notes', 'Cycle Notes'), command=self.goto_next_note, accelerator=t('accel.cycle_notes', 'F4'))
         note_filter_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
@@ -10401,6 +10455,224 @@ class NotepadX:
                 pass
         self.compare_refresh_job = self.root.after(120, self.refresh_compare_panel)
 
+    def schedule_markdown_preview_refresh(self):
+        if not self.markdown_preview_enabled.get():
+            return
+        if self.markdown_preview_refresh_job:
+            try:
+                self.root.after_cancel(self.markdown_preview_refresh_job)
+            except tk.TclError:
+                pass
+        self.markdown_preview_refresh_job = self.root.after(self.markdown_preview_delay_ms, self.refresh_markdown_preview)
+
+    def configure_markdown_preview_tags(self, text_widget):
+        try:
+            base_font = tkfont.Font(font=text_widget.cget('font'))
+        except Exception:
+            base_font = tkfont.Font(family=self.font_family, size=self.current_font_size)
+        family = base_font.actual('family') or self.font_family
+        size = int(base_font.actual('size') or self.current_font_size)
+        code_family = 'Consolas' if self.is_windows else 'DejaVu Sans Mono'
+
+        text_widget.tag_config('md_heading_1', font=(family, size + 9, 'bold'), spacing1=12, spacing3=6)
+        text_widget.tag_config('md_heading_2', font=(family, size + 6, 'bold'), spacing1=10, spacing3=5)
+        text_widget.tag_config('md_heading_3', font=(family, size + 4, 'bold'), spacing1=8, spacing3=4)
+        text_widget.tag_config('md_heading_4', font=(family, size + 2, 'bold'), spacing1=6, spacing3=3)
+        text_widget.tag_config('md_heading_5', font=(family, size + 1, 'bold'), spacing1=5, spacing3=3)
+        text_widget.tag_config('md_heading_6', font=(family, size, 'bold'), spacing1=4, spacing3=2)
+        text_widget.tag_config('md_bold', font=(family, size, 'bold'))
+        text_widget.tag_config('md_italic', font=(family, size, 'italic'))
+        text_widget.tag_config('md_code_inline', font=(code_family, size), background='#1f2630', foreground='#ffb86c')
+        text_widget.tag_config('md_code_block', font=(code_family, size), background='#161b22', foreground='#d2e4ff', lmargin1=16, lmargin2=16, spacing1=5, spacing3=5)
+        text_widget.tag_config('md_quote', foreground='#8b949e', lmargin1=18, lmargin2=18, spacing1=3, spacing3=3)
+        text_widget.tag_config('md_list', lmargin1=14, lmargin2=24)
+        text_widget.tag_config('md_rule', foreground='#7d8590')
+
+    def insert_markdown_segment(self, text_widget, content, tags=()):
+        if content == "":
+            return
+        start_index = text_widget.index(tk.END)
+        text_widget.insert(tk.END, content)
+        if tags:
+            end_index = text_widget.index(tk.END)
+            for tag in tags:
+                text_widget.tag_add(tag, start_index, end_index)
+
+    def render_markdown_inline(self, text_widget, line_text, base_tags=()):
+        source = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', line_text)
+        token_patterns = (
+            ('md_code_inline', re.compile(r'`([^`]+)`')),
+            ('md_bold', re.compile(r'(\*\*|__)(.+?)\1')),
+            ('md_italic', re.compile(r'(?<!\*)\*([^*\n]+)\*(?!\*)|(?<!_)_([^_\n]+)_(?!_)')),
+        )
+        position = 0
+        while position < len(source):
+            best_match = None
+            best_tag = None
+            for tag_name, pattern in token_patterns:
+                match = pattern.search(source, position)
+                if match is None:
+                    continue
+                if best_match is None or match.start() < best_match.start():
+                    best_match = match
+                    best_tag = tag_name
+            if best_match is None:
+                self.insert_markdown_segment(text_widget, source[position:], base_tags)
+                break
+            if best_match.start() > position:
+                self.insert_markdown_segment(text_widget, source[position:best_match.start()], base_tags)
+            groups = [group for group in best_match.groups() if group]
+            token_text = groups[-1] if groups else best_match.group(0)
+            self.insert_markdown_segment(text_widget, token_text, tuple(base_tags) + (best_tag,))
+            position = best_match.end()
+
+    def render_markdown_preview(self, text_widget, markdown_text):
+        lines = str(markdown_text or '').splitlines()
+        if not lines:
+            self.insert_markdown_segment(text_widget, self.tr('markdown.preview.empty', 'Nothing to preview.'), ('md_quote',))
+            return
+
+        in_code_block = False
+        for raw_line in lines:
+            line = raw_line.rstrip('\r')
+            stripped = line.strip()
+            if stripped.startswith('```'):
+                in_code_block = not in_code_block
+                continue
+            if in_code_block:
+                self.insert_markdown_segment(text_widget, line + '\n', ('md_code_block',))
+                continue
+            if not stripped:
+                text_widget.insert(tk.END, '\n')
+                continue
+            compact_rule = stripped.replace(' ', '')
+            if len(compact_rule) >= 3 and set(compact_rule) <= {'-', '*', '_'}:
+                self.insert_markdown_segment(text_widget, '-' * 32 + '\n', ('md_rule',))
+                continue
+            heading_match = re.match(r'^(#{1,6})\s+(.*)$', line)
+            if heading_match:
+                level = len(heading_match.group(1))
+                self.render_markdown_inline(text_widget, heading_match.group(2).strip(), (f'md_heading_{level}',))
+                text_widget.insert(tk.END, '\n')
+                continue
+            quote_match = re.match(r'^\s*>\s?(.*)$', line)
+            if quote_match:
+                self.render_markdown_inline(text_widget, quote_match.group(1), ('md_quote',))
+                text_widget.insert(tk.END, '\n')
+                continue
+            list_match = re.match(r'^(\s*)([-*+])\s+(.*)$', line)
+            if list_match:
+                indent = ' ' * (len(list_match.group(1)) // 2)
+                self.insert_markdown_segment(text_widget, f"{indent}- ", ('md_list',))
+                self.render_markdown_inline(text_widget, list_match.group(3), ('md_list',))
+                text_widget.insert(tk.END, '\n')
+                continue
+            ordered_match = re.match(r'^(\s*)(\d+)[.)]\s+(.*)$', line)
+            if ordered_match:
+                indent = ' ' * (len(ordered_match.group(1)) // 2)
+                self.insert_markdown_segment(text_widget, f"{indent}{ordered_match.group(2)}. ", ('md_list',))
+                self.render_markdown_inline(text_widget, ordered_match.group(3), ('md_list',))
+                text_widget.insert(tk.END, '\n')
+                continue
+            self.render_markdown_inline(text_widget, line)
+            text_widget.insert(tk.END, '\n')
+
+    def refresh_markdown_preview(self):
+        self.markdown_preview_refresh_job = None
+        if not self.markdown_preview_enabled.get():
+            return
+        doc = self.get_current_doc()
+        if not doc:
+            self.close_markdown_preview(persist=False, restore_focus=False)
+            return
+
+        self.markdown_preview_source_tab = str(doc['frame'])
+        self.rebuild_editor_panes()
+        self.compare_title.config(text=self.tr('markdown.preview.header', 'Markdown Preview: {title}', title=self.get_doc_title(doc['frame'])))
+
+        compare_doc = self.compare_view
+        compare_doc['file_path'] = doc.get('file_path')
+        compare_doc['syntax_override'] = None
+        compare_doc['large_file_mode'] = False
+        compare_doc['preview_mode'] = True
+        compare_doc['virtual_mode'] = False
+        compare_doc['window_start_line'] = 1
+        compare_doc['window_end_line'] = 1
+        compare_doc['total_file_lines'] = 1
+
+        compare_text = compare_doc['text']
+        try:
+            previous_yview = compare_text.yview()[0]
+        except (tk.TclError, IndexError):
+            previous_yview = 0.0
+
+        try:
+            markdown_text = doc['text'].get('1.0', 'end-1c')
+        except tk.TclError:
+            markdown_text = ''
+
+        compare_doc['suspend_modified_events'] = True
+        try:
+            compare_text.configure(state='normal')
+            compare_text.delete('1.0', tk.END)
+            self.configure_markdown_preview_tags(compare_text)
+            self.render_markdown_preview(compare_text, markdown_text)
+            compare_text.edit_modified(False)
+            compare_text.mark_set(tk.INSERT, '1.0')
+            compare_text.configure(state='disabled')
+        finally:
+            compare_doc['suspend_modified_events'] = False
+
+        try:
+            compare_text.yview_moveto(float(previous_yview))
+        except (tk.TclError, TypeError, ValueError):
+            pass
+        compare_doc['total_file_lines'] = max(1, int(compare_text.index('end-1c').split('.')[0]))
+        compare_doc['window_end_line'] = compare_doc['total_file_lines']
+        self.update_line_number_gutter(compare_doc)
+        self.schedule_compare_layout_refresh()
+        self.update_status()
+
+    def close_markdown_preview(self, event=None, persist=True, restore_focus=True):
+        if self.markdown_preview_refresh_job:
+            try:
+                self.root.after_cancel(self.markdown_preview_refresh_job)
+            except tk.TclError:
+                pass
+            self.markdown_preview_refresh_job = None
+        self.markdown_preview_source_tab = None
+        self.markdown_preview_enabled.set(False)
+        if self.compare_view:
+            try:
+                self.compare_view['text'].configure(state='normal')
+                self.compare_view['text'].delete('1.0', tk.END)
+            except tk.TclError:
+                pass
+            self.compare_view['preview_mode'] = False
+            self.compare_view['virtual_mode'] = False
+            self.compare_view['large_file_mode'] = False
+            self.compare_view['file_path'] = None
+            self.compare_view['syntax_override'] = None
+            self.compare_view['syntax_mode'] = None
+            self.compare_view['window_start_line'] = 1
+            self.compare_view['window_end_line'] = 1
+            self.compare_view['total_file_lines'] = 1
+        self.compare_title.config(text="")
+        try:
+            self.editor_paned.forget(self.compare_container)
+        except tk.TclError:
+            pass
+        self.rebuild_editor_panes()
+        self.root.after_idle(self.set_currently_editing_sash_position)
+        if hasattr(self, 'compare_status'):
+            self.compare_status.place_forget()
+        if persist:
+            self.save_session()
+        self.update_status()
+        if restore_focus and self.text and self.text.winfo_exists():
+            self.text.focus_set()
+        return "break"
+
     def refresh_compare_panel(self):
         self.compare_refresh_job = None
         if not self.compare_active or not self.compare_view:
@@ -10432,6 +10704,7 @@ class NotepadX:
             pass
 
         compare_doc['suspend_modified_events'] = True
+        compare_text.configure(state='normal')
         compare_text.delete('1.0', tk.END)
         compare_text.insert('1.0', doc['text'].get('1.0', 'end-1c'))
         compare_text.edit_modified(False)
@@ -10456,7 +10729,7 @@ class NotepadX:
         self.update_status()
 
     def set_compare_sash_position(self):
-        if not self.compare_active:
+        if not self.is_side_panel_visible():
             return
         try:
             self.editor_paned.update_idletasks()
@@ -10490,7 +10763,7 @@ class NotepadX:
         except tk.TclError:
             pass
         try:
-            if self.compare_active:
+            if self.is_side_panel_visible():
                 self.editor_paned.add(self.compare_container, stretch='always')
         except tk.TclError:
             pass
@@ -10499,7 +10772,7 @@ class NotepadX:
         return
 
     def schedule_compare_layout_refresh(self):
-        if not self.compare_active:
+        if not self.is_side_panel_visible():
             return
         self.root.after_idle(self.set_compare_sash_position)
         self.root.after(10, self.set_compare_sash_position)
@@ -10512,6 +10785,8 @@ class NotepadX:
     def start_inline_compare(self, source_doc):
         if not source_doc:
             return "break"
+        if self.markdown_preview_enabled.get():
+            self.close_markdown_preview(persist=False, restore_focus=False)
         self.compare_source_tab = str(source_doc['frame'])
         self.compare_active = True
         self.rebuild_editor_panes()
@@ -10522,7 +10797,7 @@ class NotepadX:
         self.save_session()
         return "break"
 
-    def close_compare_panel(self, event=None):
+    def close_compare_panel(self, event=None, persist=True, restore_focus=True):
         if self.compare_refresh_job:
             try:
                 self.root.after_cancel(self.compare_refresh_job)
@@ -10547,6 +10822,7 @@ class NotepadX:
             self.compare_view['large_file_mode'] = False
             self.compare_view['preview_mode'] = False
             self.compare_view['virtual_mode'] = False
+            self.compare_view['text'].configure(state='normal')
             self.compare_view['text'].delete('1.0', tk.END)
 
         self.compare_active = False
@@ -10561,8 +10837,9 @@ class NotepadX:
         if hasattr(self, 'compare_status'):
             self.compare_status.place_forget()
         self.update_status()
-        self.save_session()
-        if self.text and self.text.winfo_exists():
+        if persist:
+            self.save_session()
+        if restore_focus and self.text and self.text.winfo_exists():
             self.text.focus_set()
         return "break"
 
