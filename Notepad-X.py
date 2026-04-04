@@ -679,7 +679,7 @@ class NotepadX:
             'json', 'yaml', 'toml', 'xml', 'html', 'css', 'javascript', 'typescript',
             'python', 'java', 'powershell', 'markdown', 'autocomplete'
         }
-        self.spellcheck_supported_modes = {None, 'ini', 'nfo', 'tex'}
+        self.spellcheck_supported_modes = {None, 'ini', 'nfo', 'tex', 'markdown'}
         self.spell_checker = None
         self.spell_checker_ready = False
         self.recent_files = []
@@ -6566,13 +6566,33 @@ class NotepadX:
             self.spell_checker = None
             return None
         try:
-            checker = SpellChecker(language='en')
+            dictionary_path = self.get_spellcheck_dictionary_path()
+            if dictionary_path:
+                checker = SpellChecker(language=None, local_dictionary=dictionary_path)
+            else:
+                checker = SpellChecker(language='en')
             checker.word_frequency.load_words(sorted(self.spellcheck_custom_words))
             self.spell_checker = checker
         except Exception as exc:
             self.log_exception("initialize spell checker", exc)
             self.spell_checker = None
         return self.spell_checker
+
+    def get_spellcheck_dictionary_path(self):
+        candidates = []
+        for base_dir in (self.app_dir, self.resource_dir):
+            if not base_dir:
+                continue
+            candidates.append(os.path.join(base_dir, 'cfg', 'spellcheck', 'en.json.gz'))
+        seen = set()
+        for candidate in candidates:
+            normalized = os.path.normcase(os.path.abspath(candidate))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if os.path.isfile(candidate):
+                return candidate
+        return None
 
     def cancel_spellcheck_job(self, doc):
         if not doc:
@@ -10491,10 +10511,10 @@ class NotepadX:
     def insert_markdown_segment(self, text_widget, content, tags=()):
         if content == "":
             return
-        start_index = text_widget.index(tk.END)
-        text_widget.insert(tk.END, content)
+        start_index = text_widget.index('end-1c')
+        text_widget.insert('end-1c', content)
         if tags:
-            end_index = text_widget.index(tk.END)
+            end_index = text_widget.index('end-1c')
             for tag in tags:
                 text_widget.tag_add(tag, start_index, end_index)
 
