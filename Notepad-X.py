@@ -603,6 +603,7 @@ class NotepadX:
         self.note_color_order = ('yellow', 'green', 'red', 'blue')
         self.note_bg      = self.note_colors['yellow']
         self.panel_bg     = '#252525'
+        self.spellcheck_fg = '#ff5d73'
 
         self.current_file = None
         self.find_matches_tag = 'find_match'
@@ -6162,7 +6163,7 @@ class NotepadX:
         text.tag_config(self.find_matches_tag, background=self.match_bg, foreground='black')
         text.tag_config(self.find_current_tag, background='#ff8c42', foreground='black')
         text.tag_config(self.bracket_match_tag, background='#2f81f7', foreground='white')
-        text.tag_config(self.spellcheck_tag, underline=1)
+        text.tag_config(self.spellcheck_tag, underline=1, foreground=self.spellcheck_fg)
         self.raise_find_tags(text)
 
         if content:
@@ -6548,6 +6549,7 @@ class NotepadX:
             for tag_name in text_widget.tag_names():
                 if str(tag_name).startswith('note_'):
                     text_widget.tag_raise(tag_name)
+            text_widget.tag_raise(self.spellcheck_tag)
             text_widget.tag_raise(self.bracket_match_tag)
             self.raise_find_tags(text_widget)
         except tk.TclError:
