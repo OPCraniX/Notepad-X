@@ -26,6 +26,13 @@ from ctypes import wintypes
 from pathlib import Path
 from types import SimpleNamespace
 
+_null_streams = []
+for _stream_name in ('stdout', 'stderr'):
+    if getattr(sys, _stream_name, None) is None:
+        _stream = open(os.devnull, 'w', encoding='utf-8', buffering=1)
+        setattr(sys, _stream_name, _stream)
+        _null_streams.append(_stream)
+
 try:
     import resource
 except ImportError:
