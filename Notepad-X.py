@@ -570,7 +570,7 @@ class NotepadX:
     def init_config(self):
         self.is_windows = os.name == 'nt'
         self.is_linux = sys.platform.startswith('linux')
-        self.app_version = "v1.0.2"
+        self.app_version = "v1.0.3"
         self.resource_dir = self.get_resource_dir()
         self.app_dir = self.get_app_dir()
         self.machine_profile_slug = self.get_machine_profile_slug()
@@ -5516,8 +5516,8 @@ class NotepadX:
         self.root.bind('<Control-S>', self.save)
         self.root.bind('<Control-Shift-s>', self.save_all)
         self.root.bind('<Control-Shift-S>', self.save_all)
-        self.root.bind('<Control-Shift-q>', lambda e: self.save_copy_as())
-        self.root.bind('<Control-Shift-Q>', lambda e: self.save_copy_as())
+        self.root.bind('<Control-Shift-q>', lambda e: self.save_as())
+        self.root.bind('<Control-Shift-Q>', lambda e: self.save_as())
         self.root.bind('<Control-Shift-e>', lambda e: self.save_encrypted_copy())
         self.root.bind('<Control-Shift-E>', lambda e: self.save_encrypted_copy())
         self.root.bind('<Control-Shift-r>', self.save_and_run)
@@ -10724,7 +10724,8 @@ class NotepadX:
         file_menu.add_command(label=t('menu.file.close_tab', 'Close Tab'), command=self.close_current_tab, accelerator=t('accel.close_tab', 'Ctrl+Shift+T'))
         file_menu.add_command(label=t('menu.file.save', 'Save'), command=self.save, accelerator=t('accel.save', 'Ctrl+S'))
         file_menu.add_command(label=t('menu.file.save_all', 'Save All'), command=self.save_all, accelerator=t('accel.save_all', 'Ctrl+Shift+S'))
-        file_menu.add_command(label=t('menu.file.save_as', 'Save As'), command=self.save_copy_as, accelerator=t('accel.save_as', 'Ctrl+Shift+Q'))
+        file_menu.add_command(label=t('menu.file.save_as', 'Save As'), command=self.save_as, accelerator=t('accel.save_as', 'Ctrl+Shift+Q'))
+        file_menu.add_command(label=t('save.copy_title', 'Save Copy As'), command=self.save_copy_as)
         file_menu.add_command(label=t('menu.file.save_and_run', 'Save and Run'), command=self.save_and_run, accelerator=t('accel.save_and_run', 'Ctrl+Shift+R'))
         file_menu.add_command(label=t('menu.file.save_as_encrypted', 'Save As Encrypted'), command=self.save_encrypted_copy, accelerator=t('accel.save_as_encrypted', 'Ctrl+Shift+E'))
         file_menu.add_command(label=t('menu.file.print', 'Print'), command=self.print_file, accelerator=t('accel.print', 'Ctrl+P'))
@@ -12293,6 +12294,82 @@ class NotepadX:
         all_supported_entry = (all_supported_label, " ".join(supported_patterns))
         return [all_supported_entry, encrypted_entry, *other_filetypes, all_files_entry]
 
+    def get_primary_save_extension(self, pattern):
+        for token in str(pattern or '').split():
+            token = token.strip()
+            if not token or token == '*.*':
+                continue
+            if token.startswith('*.') and len(token) > 2:
+                return token[1:]
+            if token.startswith('.'):
+                return token
+        return None
+
+    def get_selected_save_extension(self, selected_filetype, filetypes, fallback_extension='.txt'):
+        selected_value = str(selected_filetype or '').strip().lower()
+        fallback_value = fallback_extension if str(fallback_extension).startswith('.') else f".{str(fallback_extension).lstrip('.')}"
+
+        for label, pattern in filetypes:
+            extension = self.get_primary_save_extension(pattern)
+            if not extension:
+                continue
+            label_value = str(label or '').strip().lower()
+            pattern_value = str(pattern or '').strip().lower()
+            if selected_value and (selected_value == label_value or selected_value == pattern_value or selected_value in pattern_value.split()):
+                return extension
+        return fallback_value
+
+    def normalize_save_file_path(self, file_path, selected_filetype='', filetypes=None, fallback_extension='.txt'):
+        if not file_path:
+            return file_path
+
+        base_name = os.path.basename(file_path)
+        if not base_name:
+            return file_path
+        if base_name.startswith('.') and base_name.count('.') == 1:
+            return file_path
+
+        _, extension = os.path.splitext(base_name)
+        if extension:
+            return file_path
+
+        effective_filetypes = filetypes if filetypes is not None else self.get_save_filetypes()
+        selected_extension = self.get_selected_save_extension(
+            selected_filetype,
+            effective_filetypes,
+            fallback_extension=fallback_extension
+        )
+        if not selected_extension.startswith('.'):
+            selected_extension = f".{selected_extension.lstrip('.')}"
+        return f"{file_path}{selected_extension}"
+
+    def prompt_plain_text_save_path(self, title, initialfile=None):
+        filetypes = self.get_save_filetypes()
+        dialog_options = {
+            'parent': self.root,
+            'title': title,
+            'defaultextension': '.txt',
+            'filetypes': filetypes,
+        }
+        if initialfile:
+            dialog_options['initialfile'] = initialfile
+
+        selected_filetype = tk.StringVar(master=self.root, value='')
+        try:
+            file_path = filedialog.asksaveasfilename(typevariable=selected_filetype, **dialog_options)
+        except tk.TclError:
+            file_path = filedialog.asksaveasfilename(**dialog_options)
+            selected_value = ''
+        else:
+            selected_value = selected_filetype.get()
+
+        return self.normalize_save_file_path(
+            file_path,
+            selected_filetype=selected_value,
+            filetypes=filetypes,
+            fallback_extension='.txt'
+        )
+
     def get_save_and_run_language(self, doc, file_path):
         extension = os.path.splitext(file_path or '')[1].lower()
         syntax_mode = self.get_syntax_mode(doc) if doc else 'plain'
@@ -12538,11 +12615,7 @@ class NotepadX:
                 parent=self.root
             )
             return False
-        file_path = filedialog.asksaveasfilename(
-            parent=self.root,
-            title=self.tr('save.as_title', 'Save As'),
-            filetypes=self.get_save_filetypes()
-        )
+        file_path = self.prompt_plain_text_save_path(self.tr('save.as_title', 'Save As'))
         if file_path:
             old_file_path = doc.get('file_path')
             if old_file_path and old_file_path != file_path:
@@ -12560,11 +12633,9 @@ class NotepadX:
         if not doc:
             return "break"
         suggested_name = self.get_doc_name(doc['frame'])
-        output_path = filedialog.asksaveasfilename(
-            parent=self.root,
-            title=self.tr('save.as_title', 'Save As'),
-            initialfile=suggested_name,
-            filetypes=self.get_save_filetypes()
+        output_path = self.prompt_plain_text_save_path(
+            self.tr('save.copy_title', 'Save Copy As'),
+            initialfile=suggested_name
         )
         if not output_path:
             return "break"

@@ -155,7 +155,7 @@ The benchmark compares Microsoft Notepad and Notepad-X across launch time, memor
 - Large files load in the background to keep the UI responsive
 - Extremely large files can fall back to buffered virtual mode
 - Virtual mode keeps navigation available while disabling direct editing and normal save operations
-- `Save As` remains available for copying the source file elsewhere
+- `Save Copy As` remains available for copying the source file elsewhere
 - Binary-like files open in a safer preview-style mode instead of being treated as normal editable text
 
 ### File Safety

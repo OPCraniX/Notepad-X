@@ -64,7 +64,8 @@ File Menu
 - Close Tab: Closes the current tab and prompts to save if needed.
 - Save: Saves the current tab.
 - Save all: Saves every normal editable tab and skips large virtual or read-only tabs.
-- Save As: Saves a copy of the current tab to a new path. In very large virtual or preview modes, this copies the source file stream to a new location.
+- Save As: Saves the current tab to a new path and updates the tab to the new file.
+- Save Copy As: Saves a copy of the current tab to a new path without changing the current tab.
 - Save and Run: Saves the current tab and launches supported script or HTML files.
 - Save As Encrypted: Saves a passphrase-protected `.npxe` copy.
 - Print: Sends the current saved file to the Windows print action.
@@ -219,7 +220,7 @@ Large Files
   Find and Replace are disabled
   Go To Line still works against the full file
   scrolling and selection are limited to the loaded buffer window
-- `Save As` remains available for copying the source file elsewhere.
+- `Save Copy As` remains available for copying the source file elsewhere.
 
 Saving and File Safety
 - Normal saves use an atomic temp-file replacement pattern.

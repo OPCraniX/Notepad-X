@@ -1,0 +1,23 @@
+{
+  "name": "startrek",
+  "surface": {
+    "text_bg": "#000000",
+    "text_fg": "#f2d6a2",
+    "cursor": "#f79a62",
+    "selection": "#4a3a4a",
+    "gutter_bg": "#000000",
+    "gutter_current_bg": "#1a0f0a",
+    "gutter_fg": "#c78fc7",
+    "gutter_current_fg": "#ff9900",
+    "gutter_divider": "#9999ff"
+  },
+  "syntax": {
+    "keyword": "#9999ff",
+    "type": "#cc99cc",
+    "string": "#f79a62",
+    "comment": "#c78fc7",
+    "number": "#ff9900",
+    "preprocessor": "#cc6666",
+    "tag": "#f4c38b"
+  }
+}
