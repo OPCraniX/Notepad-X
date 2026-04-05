@@ -4,6 +4,12 @@ Notepad-X is a tabbed desktop text editor for Windows focused on fast everyday e
 
 It keeps a familiar desktop editor workflow while adding session restore, live search, folder-wide search, Markdown preview, syntax-aware themes, encrypted saves, note sharing, and crash recovery.
 
+## Benchmark Snapshot
+
+![EXE benchmark comparison](gfx/exe_benchmark.png)
+
+The benchmark compares Microsoft Notepad and Notepad-X across launch time, memory use, CPU activity, and disk activity. In this snapshot, Notepad-X launches slightly faster on average and uses much less memory, while showing heavier startup CPU and disk work as the app initializes its extra editor features. The result is a lighter runtime footprint with a busier startup profile.
+
 ## Highlights
 
 - Tabbed editing with persistent sessions and caret/scroll restore
