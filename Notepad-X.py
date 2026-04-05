@@ -204,17 +204,16 @@ DEFAULT_LOCALE_STRINGS = {
     "markdown.preview.empty": "Nothing to preview.",
     "find.panel.find": "Find:",
     "find.panel.find_next": "Find Next",
-    "find.panel.search_all_tabs": "Search across all tabs",
     "find.panel.browse": "Browse",
-    "find.panel.find_in_label": "Find in:",
+    "find.panel.find_in_label": "Find In:",
     "find.panel.find_in_button": "Find In",
     "find.panel.found_summary": "| Found: {count} {instance_word} of \"{query}\"",
     "find.panel.instance_singular": "instance",
     "find.panel.instance_plural": "instances",
     "find.in.title": "Find In Files",
     "find.in.choose_directory": "Choose a folder to search",
-    "find.in.query_required": "Enter some text in Find first.",
-    "find.in.directory_required": "Choose a valid folder to search.",
+    "find.in.query_required": "Enter some text in Find In first.",
+    "find.in.directory_required": "Choose a folder with Browse first.",
     "find.in.searching_prompt": "Searching:\n{directory}\n\nPlease wait...",
     "find.in.results_summary": "Found {match_count} {instance_word} across {file_count} matching file(s).\nDirectory: {directory}\nScanned {scanned_count} supported files.",
     "find.in.no_matches": "No matching files were found for \"{query}\" in:\n{directory}",
@@ -718,7 +717,7 @@ class NotepadX:
         self.autocomplete_enabled = tk.BooleanVar(value=True)
         self.spell_check_enabled = tk.BooleanVar(value=SpellChecker is not None)
         self.edit_with_shell_enabled = tk.BooleanVar(value=False)
-        self.search_all_tabs = tk.BooleanVar(value=False)
+        self.find_in_selected_directory = ""
         self.note_filter = tk.StringVar(value='all')
         self.syntax_theme = tk.StringVar(value='Default')
         self.syntax_mode_selection = tk.StringVar(value='auto')
@@ -3626,24 +3625,15 @@ class NotepadX:
             .pack(side='left', padx=(8,4), pady=6)
         self.find_entry = tk.Entry(self.find_frame, width=40)
         self.find_entry.pack(side='left', padx=4, pady=6)
-        tk.Button(self.find_frame, text=self.tr('find.panel.find_next', 'Find Next'), command=self.find_next)\
+        tk.Button(self.find_frame, text=self.tr('menu.edit.find', 'Find'), command=self.find_next)\
             .pack(side='left', padx=4, pady=6)
-        tk.Checkbutton(
-            self.find_frame,
-            text=self.tr('find.panel.search_all_tabs', 'Search across all tabs'),
-            variable=self.search_all_tabs,
-            command=self.on_search_all_tabs_toggle,
-            bg=self.panel_bg,
-            fg=self.fg_color,
-            activebackground=self.panel_bg,
-            activeforeground='white',
-            selectcolor=self.panel_bg
-        ).pack(side='left', padx=(10, 4), pady=6)
-        tk.Button(self.find_frame, text=self.tr('find.panel.browse', 'Browse'), command=self.choose_find_in_directory_and_search)\
-            .pack(side='left', padx=(10,4), pady=6)
-        self.find_in_directory_var = tk.StringVar()
-        self.find_in_entry = tk.Entry(self.find_frame, width=42, textvariable=self.find_in_directory_var)
+        tk.Label(self.find_frame, text=self.tr('find.panel.find_in_label', 'Find In:'), bg=self.panel_bg, fg=self.fg_color)\
+            .pack(side='left', padx=(10, 4), pady=6)
+        self.find_in_query_var = tk.StringVar()
+        self.find_in_entry = tk.Entry(self.find_frame, width=42, textvariable=self.find_in_query_var)
         self.find_in_entry.pack(side='left', padx=4, pady=6)
+        tk.Button(self.find_frame, text=self.tr('find.panel.browse', 'Browse'), command=self.choose_find_in_directory_and_search)\
+            .pack(side='left', padx=4, pady=6)
         self.find_results_label = tk.Label(
             self.find_frame,
             text="",
@@ -3669,17 +3659,6 @@ class NotepadX:
         self.replace_entry.pack(side='left', padx=4, pady=6)
         tk.Button(self.replace_frame, text=self.tr('replace.panel.replace_all', 'Replace All'), command=self.replace_all)\
             .pack(side='left', padx=8, pady=6)
-        tk.Checkbutton(
-            self.replace_frame,
-            text=self.tr('find.panel.search_all_tabs', 'Search across all tabs'),
-            variable=self.search_all_tabs,
-            command=self.on_search_all_tabs_toggle,
-            bg=self.panel_bg,
-            fg=self.fg_color,
-            activebackground=self.panel_bg,
-            activeforeground='white',
-            selectcolor=self.panel_bg
-        ).pack(side='left', padx=(10, 4), pady=6)
         self.replace_results_label = tk.Label(
             self.replace_frame,
             text="",
@@ -3867,6 +3846,7 @@ class NotepadX:
             self.find_frame.grid_remove()
             self.find_panel_visible = False
             self.find_entry.delete(0, tk.END)
+            self.find_in_entry.delete(0, tk.END)
             self.clear_find_highlights()
             self.update_find_match_summary("")
             self.focus_last_active_editor()
@@ -4116,7 +4096,7 @@ class NotepadX:
         return None
 
     def clear_current_find_marker(self):
-        widgets = self.get_find_target_widgets()
+        widgets = self.get_find_highlight_widgets()
         seen = set()
         for widget in widgets:
             widget_key = str(widget)
@@ -4205,39 +4185,20 @@ class NotepadX:
         self.update_status()
         return pos, end
 
-    def refresh_compare_find_highlights(self, query, max_matches=None, allow_short_query=False):
-        if self.search_all_tabs.get() or not self.compare_active or not query:
+    def refresh_find_highlights(self, query, max_matches=None, allow_short_query=False):
+        cleaned_query = str(query or "").strip()
+        if not cleaned_query:
+            self.clear_find_highlights()
             return False
-        if not allow_short_query and len(query) < self.live_find_min_chars:
+        if not allow_short_query and len(cleaned_query) < self.live_find_min_chars:
+            self.clear_find_highlights()
             return False
-
-        widgets = []
-        seen = set()
-        for widget in (self.text, self.get_compare_text_widget()):
-            if not widget:
-                continue
-            try:
-                if not widget.winfo_exists():
-                    continue
-            except tk.TclError:
-                continue
-            widget_id = str(widget)
-            if widget_id in seen:
-                continue
-            seen.add(widget_id)
-            widgets.append(widget)
-
-        if len(widgets) < 2:
-            return False
-
         self.clear_find_highlights()
-        for widget in widgets:
-            self.highlight_matches_in_widget(
-                widget,
-                query,
-                max_matches=max_matches,
-                allow_short_query=allow_short_query
-            )
+        self.highlight_all_matches(
+            cleaned_query,
+            max_matches=max_matches,
+            allow_short_query=allow_short_query
+        )
         return True
 
     def find_next(self, event=None):
@@ -4257,18 +4218,14 @@ class NotepadX:
         if target_widget is None:
             return "break"
 
-        self.refresh_compare_find_highlights(query, allow_short_query=True)
+        self.refresh_find_highlights(query, allow_short_query=True)
 
         compare_widget = self.get_compare_text_widget()
         if target_widget == compare_widget:
             self.search_next_in_widget(target_widget, query, wrap=True)
             return "break"
 
-        if self.search_all_tabs.get():
-            return self.find_next_across_tabs(query, target_widget)
-
-        self.search_next_in_widget(target_widget, query, wrap=True)
-        return "break"
+        return self.find_next_across_tabs(query, target_widget)
 
     def find_previous(self, event=None):
         if self.find_panel_visible:
@@ -4287,18 +4244,14 @@ class NotepadX:
         if target_widget is None:
             return "break"
 
-        self.refresh_compare_find_highlights(query, allow_short_query=True)
+        self.refresh_find_highlights(query, allow_short_query=True)
 
         compare_widget = self.get_compare_text_widget()
         if target_widget == compare_widget:
             self.search_previous_in_widget(target_widget, query, wrap=True)
             return "break"
 
-        if self.search_all_tabs.get():
-            return self.find_previous_across_tabs(query, target_widget)
-
-        self.search_previous_in_widget(target_widget, query, wrap=True)
-        return "break"
+        return self.find_previous_across_tabs(query, target_widget)
 
     def find_next_across_tabs(self, query, start_widget=None, start_from_top=False):
         tab_ids = list(self.notebook.tabs())
@@ -4386,18 +4339,14 @@ class NotepadX:
         if target_widget is None:
             return "break"
 
-        self.refresh_compare_find_highlights(query, allow_short_query=True)
+        self.refresh_find_highlights(query, allow_short_query=True)
 
         compare_widget = self.get_compare_text_widget()
         if target_widget == compare_widget:
             self.search_next_in_widget(target_widget, query, start_index='1.0', wrap=True)
             return "break"
 
-        if self.search_all_tabs.get():
-            return self.find_next_across_tabs(query, target_widget, start_from_top=True)
-
-        self.search_next_in_widget(target_widget, query, start_index='1.0', wrap=True)
-        return "break"
+        return self.find_next_across_tabs(query, target_widget, start_from_top=True)
 
     def goto_next_unread_note(self):
         try:
@@ -4535,16 +4484,24 @@ class NotepadX:
             seen.add(widget_id)
             widgets.append(widget)
 
-        if self.search_all_tabs.get():
-            for doc in self.documents.values():
-                if doc.get('virtual_mode') or doc.get('preview_mode'):
-                    continue
-                add_widget(doc.get('text'))
-        elif self.text:
-            add_widget(self.text)
+        for doc in self.documents.values():
+            if doc.get('virtual_mode') or doc.get('preview_mode'):
+                continue
+            add_widget(doc.get('text'))
+        return widgets
 
-        if self.compare_active and self.compare_view and self.compare_view.get('text'):
-            add_widget(self.compare_view.get('text'))
+    def get_find_highlight_widgets(self):
+        widgets = list(self.get_find_target_widgets())
+        seen = {str(widget) for widget in widgets}
+        compare_widget = self.get_compare_text_widget()
+        if compare_widget:
+            try:
+                if compare_widget.winfo_exists():
+                    widget_id = str(compare_widget)
+                    if widget_id not in seen:
+                        widgets.append(compare_widget)
+            except tk.TclError:
+                pass
         return widgets
 
     def clear_find_highlights(self):
@@ -4640,19 +4597,33 @@ class NotepadX:
                     exact_names.add(normalized)
         return exact_names, extensions
 
+    def get_selected_find_in_directory(self):
+        directory = str(getattr(self, 'find_in_selected_directory', '') or '').strip()
+        if directory and os.path.isdir(directory):
+            return os.path.abspath(directory)
+        return ""
+
     def get_find_in_initial_directory(self):
-        try:
-            selected_directory = self.find_in_directory_var.get().strip()
-        except (AttributeError, tk.TclError):
-            selected_directory = ""
-        if selected_directory and os.path.isdir(selected_directory):
-            return os.path.abspath(selected_directory)
+        selected_directory = self.get_selected_find_in_directory()
+        if selected_directory:
+            return selected_directory
         current_doc = self.get_current_doc()
         if current_doc:
             file_path = current_doc.get('file_path')
             if file_path and os.path.exists(file_path):
                 return os.path.dirname(os.path.abspath(file_path))
         return os.getcwd()
+
+    def prompt_for_find_in_directory(self):
+        selected_directory = filedialog.askdirectory(
+            parent=self.root,
+            title=self.tr('find.in.choose_directory', 'Choose a folder to search'),
+            initialdir=self.get_find_in_initial_directory()
+        )
+        if not selected_directory:
+            return ""
+        self.find_in_selected_directory = os.path.abspath(selected_directory)
+        return self.find_in_selected_directory
 
     def count_query_matches_in_file(self, file_path, query):
         match_count = 0
@@ -4903,42 +4874,34 @@ class NotepadX:
         progress_dialog.after(120, finish_search)
 
     def choose_find_in_directory_and_search(self):
-        query = self.find_entry.get().strip()
+        query = self.find_in_query_var.get().strip()
         if not query:
             messagebox.showinfo(
                 self.tr('find.in.title', 'Find In Files'),
-                self.tr('find.in.query_required', 'Enter some text in Find first.'),
+                self.tr('find.in.query_required', 'Enter some text in Find In first.'),
                 parent=self.root
             )
             return "break"
-        selected_directory = filedialog.askdirectory(
-            parent=self.root,
-            title=self.tr('find.in.choose_directory', 'Choose a folder to search'),
-            initialdir=self.get_find_in_initial_directory()
-        )
+        selected_directory = self.prompt_for_find_in_directory()
         if not selected_directory:
             return "break"
-        self.find_in_directory_var.set(selected_directory)
         self.start_find_in_directory_search(selected_directory, query)
         return "break"
 
     def find_in_directory_from_entry(self, event=None):
-        query = self.find_entry.get().strip()
+        query = self.find_in_query_var.get().strip()
         if not query:
             messagebox.showinfo(
                 self.tr('find.in.title', 'Find In Files'),
-                self.tr('find.in.query_required', 'Enter some text in Find first.'),
+                self.tr('find.in.query_required', 'Enter some text in Find In first.'),
                 parent=self.root
             )
             return "break"
-        directory = self.find_in_directory_var.get().strip()
-        if not directory or not os.path.isdir(directory):
-            messagebox.showinfo(
-                self.tr('find.in.title', 'Find In Files'),
-                self.tr('find.in.directory_required', 'Choose a valid folder to search.'),
-                parent=self.root
-            )
-            return "break"
+        directory = self.get_selected_find_in_directory()
+        if not directory:
+            directory = self.prompt_for_find_in_directory()
+            if not directory:
+                return "break"
         self.start_find_in_directory_search(directory, query)
         return "break"
 
@@ -5067,7 +5030,7 @@ class NotepadX:
         )
 
     def highlight_all_matches(self, query, max_matches=None, allow_short_query=False):
-        widgets = self.get_find_target_widgets()
+        widgets = self.get_find_highlight_widgets()
         for widget in widgets:
             self.highlight_matches_in_widget(
                 widget,
@@ -5086,22 +5049,7 @@ class NotepadX:
             pass
 
     def highlight_live_find_matches(self, query):
-        if not query:
-            self.clear_find_highlights()
-            return
-        if len(query) < self.live_find_min_chars:
-            return
-        target_widget = self.get_active_search_widget()
-        if target_widget is None:
-            return
-        if self.refresh_compare_find_highlights(
-            query,
-            max_matches=self.live_find_max_matches_typing
-        ):
-            return
-        self.clear_find_highlights()
-        self.highlight_matches_in_widget(
-            target_widget,
+        self.refresh_find_highlights(
             query,
             max_matches=self.live_find_max_matches_typing
         )
@@ -5157,16 +5105,6 @@ class NotepadX:
             self.find_change_job = self.root.after(30, self.apply_live_find_change)
         except tk.TclError as exc:
             self.log_exception("schedule live find change", exc)
-
-    def on_search_all_tabs_toggle(self):
-        query = self.get_visible_find_query()
-        self.cancel_find_change_job()
-        self.update_find_match_summary(query, allow_short_query=True)
-        if not query:
-            self.clear_find_highlights()
-            return
-        if len(query) >= self.live_find_min_chars:
-            self.highlight_live_find_matches(query)
 
     def replace_all(self):
         query = self.replace_find_entry.get().strip()
@@ -10107,6 +10045,13 @@ class NotepadX:
         if self.text:
             self.set_last_active_editor_widget(self.text)
             self.text.focus_set()
+        if self.find_panel_visible or self.replace_panel_visible:
+            query = self.get_visible_find_query()
+            self.update_find_match_summary(query, allow_short_query=True)
+            if query and len(query) >= self.live_find_min_chars:
+                self.highlight_live_find_matches(query)
+            else:
+                self.clear_find_highlights()
 
     def get_doc_name(self, tab_id):
         doc = self.documents[str(tab_id)]

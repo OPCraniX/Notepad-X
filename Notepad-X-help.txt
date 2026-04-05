@@ -1,260 +1,289 @@
 Notepad-X Help
 
 Overview
-Notepad-X is a tabbed desktop text editor focused on everyday writing, shared notes, side-by-side comparison, and safer handling of large files. It adds persistent sessions, live search, visual themes, compare mode, encrypted saves, crash-safe recovery, and a built-in help viewer.
+Notepad-X is a tabbed desktop text editor focused on fast editing, search, side-by-side comparison, shared notes, and safer handling of large files. The app keeps a familiar single-window editor layout while adding session restore, Markdown preview, syntax-aware themes, language switching, encrypted saves, and recovery tools.
+
+Quick Start
+- `Ctrl+W` opens a file.
+- `Ctrl+T` opens a new untitled tab.
+- `Ctrl+S` saves the current tab.
+- `Ctrl+F` opens the Find panel.
+- `Ctrl+R` opens the Replace panel.
+- `Ctrl+Q` opens compare mode.
+- `Ctrl+Shift+P` opens Markdown Preview.
+- `Ctrl+Shift+X` closes Help, About, Markdown Preview, compare mode, Find, or Replace before exiting the app.
 
 Main Window
 - The title bar shows Notepad-X and the active document name.
 - The menu bar contains File, Edit, View, and Help.
 - The tab strip holds every open document.
-- The editor area shows the active tab.
-- A GitHub-style line number gutter appears on the left when numbered lines are enabled.
-- The bottom status bar shows editor position and document state on the left, and the live clock on the far right.
-- The About window shows the current version (`v1.0.1`) and a clickable GitHub project link.
+- The center editor shows the active tab.
+- The optional right pane shows compare output or Markdown preview.
+- The optional far-right sidebar shows `Currently Editing` information for the active saved file.
+- The bottom status bar shows document position and state on the left and a live clock on the right.
 
 Status Bar
-- Position is shown as Ln X of Y, Col Z.
-- Character counts show total characters, or selected count and total count when text is selected.
-- UTF-8 is shown as the current encoding indicator.
-- Zoom shows Normal at the default size and a percentage when zoomed.
-- File-backed tabs can also show:
-  ID: Notepad-X-<md5>
+- Position is shown as line and column.
+- Character counts show the total document length and selection length when text is selected.
+- UTF-8 is shown as the active encoding indicator.
+- Zoom shows `Normal` at default size and a percentage when zoomed.
+- File-backed tabs can show:
+  ID: the editor identity for the current file
   Notes Synced
-  unread note count with the F3 hint
+  unread note count with the `F3` hint
   active editor count
-- In compare mode, the compared file also shows its own status readout aligned on the right side of the bottom bar.
-- Large-file tabs can show Virtual or Preview markers.
-- Memory used is shown in MB.
-- The far-right clock shows Day | Time | Date.
+- Compare mode adds a status readout for the right-side compared document.
+- Large-file tabs can show `Virtual` or `Preview`.
+- Memory usage is shown in MB.
+- The far-right clock shows day, time, and date.
 
 Tabs
-- Every document is opened in its own tab.
-- Blank tabs are named Untitled 1, Untitled 2, and so on.
+- Every document opens in its own tab.
+- Untitled tabs are named `Untitled 1`, `Untitled 2`, and so on.
 - Untitled numbering reuses the lowest available untitled name still open.
 - Modified tabs show an asterisk after the tab name.
-- If you open a file that is already open, Notepad-X switches to that tab instead of opening a duplicate.
-- Dragging tabs with the mouse lets you reorder them.
-- Tabs remember their caret position and scroll position when you switch away and come back.
-- File-backed tabs are restored on startup from the saved session.
-- If the only open tab is the default Untitled 1 tab, Close Tab is blocked so the editor never closes down to zero tabs while still running.
+- Opening an already open file switches to the existing tab instead of opening a duplicate.
+- Tabs can be reordered with drag and drop.
+- Tabs remember caret position and scroll position when switching away and back.
+- File-backed tabs are restored from the saved session on launch.
+- The app keeps at least one tab open while it is running.
 
 Line Numbers
-- Notepad-X shows a GitHub-style line number gutter on the left side of the editor.
-- Numbered lines are enabled by default.
+- The editor includes a GitHub-style line number gutter.
+- `View > Numbered Lines` shows or hides the gutter.
 - Clicking a line number copies that full line to the clipboard.
-- A small in-window notification appears next to the clicked line number area to confirm the copy.
-- The gutter stays in sync while typing, scrolling, switching tabs, using compare mode, and in large-file virtual mode.
+- A small in-window notification appears beside the copied line.
+- The gutter stays in sync during typing, scrolling, compare mode, and large-file virtual mode.
 
 File Menu
-- Open: Opens a single file. If the current tab is a blank unmodified untitled tab, Notepad-X can reuse it instead of opening another tab.
-- Open Project: Opens the chosen file and then other related files from the same folder. After loading, Notepad-X switches back to the originally chosen file.
-- Grab Git: Opens a centered dialog that asks for a GitHub project as `username/project`, asks where to save it, downloads it, then shows the downloaded project root so you can choose one or several files to open.
-- Recent: Shows recently opened files and lets you reopen them. Clear list removes the stored recent-file history.
+- Open: Opens a single file.
+- Open Project: Opens a chosen file and then other related files from the same folder.
+- Grab Git: Downloads a public GitHub repository from a `username/project` entry and then opens selected files from the downloaded project.
+- Recent: Reopens recently used files or clears the recent list.
 - New Tab: Opens a fresh untitled tab.
 - Close Tab: Closes the current tab and prompts to save if needed.
 - Save: Saves the current tab.
-- Save all: Saves every normal editable tab. Modified untitled tabs prompt for a file name. Large virtual/read-only tabs are skipped.
-- Save As: Opens the standard save dialog with common text and document file type filters.
-- Save Copy As: Saves a copy of the current tab. In very large virtual or preview modes, this copies the source file stream to a new path without trying to edit the original.
-- Save As Encrypted: Saves a passphrase-protected encrypted copy. It suggests a .npxe filename automatically and adds .npxe if you leave it off.
-- Print: Sends the current saved file to the Windows print action. If the tab has never been saved, Notepad-X prompts you to save it first.
+- Save all: Saves every normal editable tab and skips large virtual or read-only tabs.
+- Save As: Saves a copy of the current tab to a new path. In very large virtual or preview modes, this copies the source file stream to a new location.
+- Save and Run: Saves the current tab and launches supported script or HTML files.
+- Save As Encrypted: Saves a passphrase-protected `.npxe` copy.
+- Print: Sends the current saved file to the Windows print action.
 - Export Notes: Exports the current tab's notes to JSON or Markdown.
-- Exit: Closes the app. If Find or Replace is open, Ctrl+Shift+X closes the panel first and exits only when no panel is open.
+- Exit: Closes the app. Open panels are closed first by `Ctrl+Shift+X`.
 
 Edit Menu
-- Undo: Reverses the last edit.
-- Redo: Reapplies the last undone edit.
-- Cut / Copy / Paste: Standard clipboard actions.
-- Select All: Selects all text in the current tab.
-- Find: Opens the live find panel.
-- Find Next: Moves to the next match. If Find and Replace are closed, F3 jumps through unread notes instead.
-- Find Previous: Moves to the previous match while Find or Replace is open.
-- Replace: Opens the Find/Replace panel.
-- Date: Inserts the current date.
-- Time/Date: Inserts the current time and date.
-- Font: Opens the font picker for editor family and size.
-- Edit with Notepad-X: Enables or disables a Windows Explorer right-click entry for supported text files.
-- Sound: Enables or disables note sounds. The checkmark shows whether it is enabled.
-- Language: Lets you switch the visible UI text language.
+- Undo and Redo reverse or reapply edits.
+- Cut, Copy, Paste, and Select All provide standard clipboard actions.
+- Find opens the live Find panel.
+- Find Next moves to the next match, or to the next unread note when Find and Replace are closed.
+- Find Previous moves to the previous match while Find or Replace is open.
+- Replace opens the Find/Replace panel.
+- Date inserts the current date.
+- Time/Date inserts the current time and date.
+- Font opens the editor font picker.
+- Edit with Notepad-X toggles the Windows Explorer context-menu entry for supported text files.
+- Sound toggles note sounds.
+- Language switches the visible UI language.
 
 Editing Helpers
-- Pressing Enter in a normal editable tab carries the current line indentation forward automatically.
-- If the text before the caret ends in `(`, `[`, `{`, or `:`, Notepad-X adds one extra indent level on the new line.
+- Pressing `Enter` carries the current line indentation forward.
+- If the text before the caret ends in `(`, `[`, `{`, or `:`, one extra indent level is added on the new line.
 - Bracket matching highlights the nearest matching `()`, `[]`, or `{}` pair around the caret.
 - These helpers work in the main editor and in the editable compare pane.
 
-View Menu
-- Full Screen: Toggles fullscreen while keeping the tab strip, text area, and status bar visible.
-- Switch Tab: Moves to the next tab.
-- Status Bar: Shows or hides the status bar. The checkmark shows whether it is enabled.
-- Numbered Lines: Shows or hides the line number gutter. The checkmark shows whether it is enabled.
-- Word Wrap: Turns wrapping on or off. The checkmark shows whether it is enabled.
-- Currently Editing: Toggles a far-right sidebar that shows the editors currently tracked on the active saved file.
-- Cycle Notes: Moves through every note in the current tab from first to last, then wraps back to the beginning.
-- Filter Notes: Filters note cycling to All, Unread, Yellow, Green, or Red notes.
-- Go To Line: Jumps to a specific line number.
-- Top of Document: Jumps to line 1, column 1.
-- Bottom of Document: Jumps to the last line, column 1.
-- Sync PgUp/PgDn in Compare: Keeps page-up and page-down navigation synchronized across both compare panes when enabled.
-- Syntax Theme: Changes the editor color theme.
-- Create Theme: Opens a color-picker dialog that lets you name a new theme and add it to the theme list immediately.
-- Compare Tabs: Opens a side-by-side compare view using the current tab and another open tab.
-- Normal editable tabs can also be edited from the compare pane on the right.
-- When compare mode is open, the Currently Editing sidebar stays on the far right.
-- Opening or closing the Currently Editing sidebar re-centers the compare split evenly again.
-- Close Compare Tabs: Closes the compare pane.
+Autocomplete
+- Autocomplete is enabled by default for normal editable tabs.
+- Suggestions are built from words already present in the current tab.
+- The suggestion list opens below the caret while typing.
+- `Up` and `Down` move through suggestions.
+- `Tab` or `Enter` accepts the selected suggestion.
+- `Esc` closes the suggestion list.
+- `View > Autocomplete` shows or hides autocomplete.
 
-Opening Files
-- Files are loaded as text with replacement for unreadable characters when needed.
-- Opening a file moves the caret to line 1, column 1, clears any old selection, and scrolls to the top.
-- Opening a file adds it to the recent-files list.
+Spell Check
+- Spell Check can underline misspelled words in normal editable text-oriented tabs.
+- Right-clicking a marked word can show replacements and `Add to Dictionary`.
+- `View > Spell Check` or `F7` toggles the checker.
+- Spell Check stays out of buffered large-file tabs, preview tabs, and most syntax-highlighted code tabs.
 
-Saving and Save Safety
-- Normal saves use an atomic temp-file replacement pattern. Notepad-X writes a temporary file first and then replaces the original file.
-- This reduces the chance of partial writes if a save is interrupted.
-- Save all keeps you on your original tab when it finishes.
-- If a file changed on disk after it was opened, Notepad-X warns before overwriting the newer disk version.
-- Very large virtual-mode files are intentionally read-only and cannot be directly saved from that mode.
-- Save Copy As is the supported way to create a second copy of a very large read-only tab.
-
-Encrypted Files
-- Notepad-X can save encrypted copies using Save As Encrypted.
-- Encrypted files use the .npxe extension.
-- On open, Notepad-X detects its encrypted file format automatically and prompts for a passphrase.
-- Normal Save As and Save Copy As remain plain-text save flows.
-
-Find and Replace
-- Find highlights matches live while you type.
-- Live find does not move the caret while you type.
-- Pressing Enter in the Find or Replace query box jumps to the first match from the top of the active editor pane.
-- After that jump, the caret is placed at the end of the found match.
-- F3 continues forward through matches.
-- Shift+F3 moves backward through matches.
+Find, Replace, and Find In Files
+- Find highlights matches live while typing.
+- Live find does not move the caret during typing.
+- Pressing `Enter` in the Find or Replace query box jumps to the first match from the top of the active editor pane.
+- After that jump, the caret lands at the end of the found match.
+- The Find panel's `Find` button and `F3` continue forward through matches.
+- `Shift+F3` moves backward through matches.
 - Replace uses the same live highlighting in its Find field.
-- Closing Find or Replace clears the field and removes the highlights.
-- The Find and Replace panels include a Search across all tabs checkbox.
-- When Search across all tabs is enabled, Find Next and Find Previous can continue into other open tabs instead of stopping at the current tab.
-- In compare mode, Find Next, Find Previous, F3, and Shift+F3 follow the editor pane you most recently clicked instead of always jumping back to the left side.
+- Forward and backward search continue across open tabs by default.
+- The Find panel also includes a `Find In:` query field and a `Browse` button.
+- Type the folder-search text into `Find In:`.
+- Match highlighting follows the visible query across open tabs, including after switching tabs.
+- `Browse` chooses the folder for Find In Files without replacing the text in the `Find In:` box.
+- Pressing `Enter` in `Find In:` searches the most recently selected folder or prompts for one if none has been chosen yet.
+- Find In Files searches supported files in the selected folder and shows a results window with match counts and an `Open Selected` action.
+- In compare mode, search commands follow the editor pane clicked most recently.
 - Find is not available in buffered large-file virtual mode.
 - Replace is not available in buffered large-file virtual mode.
-- Ctrl+Shift+X closes the Find or Replace panel if one is open.
-- If Help Contents or About Notepad-X is open, Ctrl+Shift+X closes that window before it falls through to compare, Find/Replace, or exit behavior.
 
-Large Files
-- Notepad-X uses safer handling for large files so the editor does not freeze the UI while opening them.
-- Large text files can load in the background and remain editable up to a practical size limit.
-- Very large files still fall back to buffered virtual mode when loading the full file would be too expensive.
-- Large files reduce expensive features to keep performance usable.
-- Binary-like files are treated more cautiously and can be opened in a safer preview-style mode instead of being treated as normal editable text.
-- Very large files can enter virtual buffered mode instead of loading the full file into the editor.
-- Virtual mode indexes the file and loads only a moving line window around your current location.
-- In virtual mode:
-  editing is disabled
-  direct saving is disabled
-  Find and Replace are disabled
-  Go To Line still works against the full file
-  scrolling and selection are limited to the currently loaded buffer window
-- Preview mode may be used for very large files where only a partial view is appropriate.
+Markdown Preview
+- `View > Preview Markdown` or `Ctrl+Shift+P` opens a live rendered Markdown preview in the right pane.
+- The preview updates while the source tab changes.
+- Headings, lists, quotes, divider rules, fenced code blocks, bold, italic, inline code, and links are rendered.
+- Opening Markdown Preview closes compare mode first.
 
-Shared Notes
-- Select text, right-click, and choose Add note.
-- Add note is disabled if no text is selected.
-- New notes ask for:
+Compare Mode
+- `View > Compare Tabs` or `Ctrl+Q` opens compare mode.
+- The active tab stays on the left and the selected comparison tab opens on the right.
+- Normal tabs remain editable in both panes.
+- The compared file shows its own bottom status readout.
+- `Currently Editing` remains on the far right if that sidebar is open.
+- Opening or closing the sidebar re-centers the compare split.
+- Search commands follow the compare pane clicked most recently.
+- `Ctrl+Shift+X` closes compare mode.
+- If compare mode is open when the app closes, the same pair can be restored on the next launch when both files still exist.
+
+Currently Editing
+- `View > Currently Editing` opens a right-side sidebar for saved files.
+- The sidebar shows editors currently tracked on the active file.
+- The sidebar remains separate from compare mode and Markdown preview.
+
+Notes
+- Notes attach to selected text through the context menu.
+- Add note is unavailable when no text is selected.
+- Notes include:
   author name
   note text
   note color
-- Notes can be yellow, green, red, or light blue.
-- Clicking highlighted text opens the note popup.
-- The popup shows note details, responses, and timestamps.
-- Right-clicking an existing note can show:
-  Respond
-  Remove note
-- A note can have more than one response.
-- The latest response color is used for the current highlight color.
-- Remove note deletes the note highlight and note data.
-- Notes are synced beside the document so multiple editors can share them.
+- Available note colors are Yellow, Green, Red, and Light Blue.
+- Clicking a highlighted note opens the note popup.
+- The popup shows note details, timestamps, and responses.
+- Existing notes support `Respond` and `Remove note`.
+- The latest response color becomes the current highlight color.
+- Note data is stored beside the document so multiple editors can share it.
 
 Unread Notes and Navigation
-- F3 jumps to the oldest unread note when Find and Replace are closed.
-- Each F3 press continues through unread notes from oldest to newest.
-- F4 cycles through all notes in the current tab from first to last and wraps around.
-- The Filter Notes menu affects which notes are included when cycling with F4.
-- Opening a note by clicking it also clears its unread state for your editor identity.
+- `F3` jumps to the oldest unread note when Find and Replace are closed.
+- Each `F3` press continues through unread notes from oldest to newest.
+- `F4` cycles all notes in the current tab and wraps at the end.
+- `View > Filter Notes` limits note cycling to All, Unread, Yellow, Green, Red, or Light Blue.
+- Opening a note by clicking it clears its unread state for the current editor identity.
 
 Note Export
 - Export Notes writes the current tab's notes to:
   JSON for machine-readable export
   Markdown for a readable report
 
-Audio Notifications
+Audio
 - A sound can play when a new unread note arrives for the active file.
 - A second sound can play when a note is removed.
-- The Sound checkmark enables or disables sound playback.
+- `Edit > Sound` toggles sound playback.
 
-Languages
-- Notepad-X includes a translation layer for visible UI text.
-- The Language submenu under Edit shows available languages automatically.
-- The Language menu shows friendly native language names instead of raw codes when it knows the locale.
-- The selected language is saved in the session and restored when Notepad-X starts again.
-- Current language coverage includes the main menus, displayed hotkeys, status bar text, note popup labels, and core dialog captions.
-- Arabic language support automatically switches the UI text direction to right-to-left.
+Themes and Syntax
+- Built-in themes are available from `View > Syntax Theme`.
+- `Create Theme` opens a color-picker workflow for building a new theme.
+- Newly created themes appear in the theme list immediately.
+- `View > Syntax Mode` overrides automatic syntax detection for the active tab.
+- Available syntax overrides include Auto, Plain Text, Python, C, C++, Rust, Java, JavaScript, HTML, PHP, XML, and SQL.
+
+Language Support
+- `Edit > Language` lists available UI languages.
+- Friendly native language names are shown when available.
+- The selected language is saved in the session and restored on launch.
+- Arabic switches the visible UI text direction to right-to-left.
 - Locale changes can also switch the editor font to a better installed script-friendly fallback automatically.
+
+Save and Run
+- Save and Run saves the current tab before launching it.
+- Supported launch targets include Python, JavaScript, PHP, batch, PowerShell, shell, and HTML.
+- HTML opens in the default browser.
+- Script files launch in a new console window when a matching runtime is available.
+- Save and Run can also use the current Syntax Mode for Python, JavaScript, PHP, and HTML tabs without the usual file extension.
+- Save and Run is unavailable in buffered large-file or preview tabs.
+
+Encrypted Files
+- `Save As Encrypted` creates `.npxe` encrypted copies.
+- Encrypted saves suggest a `.npxe` file name automatically.
+- Opening an encrypted file prompts for the passphrase.
+- Normal `Save` and `Save As` remain plain-text save flows.
+
+Large Files
+- Large files load in the background to keep the UI responsive.
+- Large text files remain editable up to a practical limit.
+- Extremely large files can fall back to buffered virtual mode.
+- Binary-like files are treated more cautiously and can open in a safer preview-style mode.
+- In virtual mode:
+  editing is disabled
+  direct saving is disabled
+  Find and Replace are disabled
+  Go To Line still works against the full file
+  scrolling and selection are limited to the loaded buffer window
+- `Save As` remains available for copying the source file elsewhere.
+
+Saving and File Safety
+- Normal saves use an atomic temp-file replacement pattern.
+- Session and note support files are also written atomically.
+- Save all keeps the previously active tab selected when it finishes.
+- A warning appears before overwriting a file that changed on disk after it was opened.
+- Recovery restores content into tabs instead of overwriting existing user files directly.
+- Permissions problems are shown to the user instead of failing silently.
 
 Session Restore and Recovery
 - File-backed tabs are written to the session and restored on startup.
 - The last active tab is restored when possible.
-- If compare mode was open when the app closed, the same compared file pair is restored on startup when both files still exist.
-- Sound, status bar, numbered lines, and theme settings are also restored.
-- Unsaved untitled tabs are not part of normal session restore, but they can be recovered after a crash through the recovery system.
+- Compare mode can be restored when both files still exist.
+- Sound, status bar, numbered lines, autocomplete, spell check, Markdown Preview, compare page-sync, and theme settings are restored.
+- Unsaved untitled tabs are not part of normal session restore, but they can be recovered after a crash.
 - Modified file-backed tabs can also be restored after a crash without overwriting the on-disk file automatically.
-- If Notepad-X finds recovery data from a previous crash, it asks whether you want to restore the saved recovery state.
-- Recovery restores content back into tabs and never overwrites real user files directly.
+- If recovery data is found after a previous crash, the app offers to restore it.
 
 Zoom
-- Ctrl+Mouse Wheel zooms in and out.
-- Ctrl++ zooms in.
-- Ctrl+- zooms out.
-- Zoom affects the editor font size within the configured minimum and maximum range.
+- `Ctrl+Mouse Wheel` zooms in and out.
+- `Ctrl++` zooms in.
+- `Ctrl+-` zooms out.
+- Zoom affects the editor font size within the configured limits.
 
 Printing
 - Print uses the Windows file print action on the saved file path.
-- If the current tab has never been saved, Notepad-X prompts you to save it first.
+- If the current tab has never been saved, the app prompts for a save first.
 
 Keyboard Shortcuts
-- Ctrl+W: Open
-- Ctrl+Shift+W: Open Project
-- Ctrl+Shift+G: Grab Git
-- Ctrl+T: New Tab
-- Ctrl+Shift+T: Close Tab
-- Ctrl+S: Save
-- Ctrl+Shift+S: Save all
-- Ctrl+Shift+Q: Save Copy As
-- Ctrl+Shift+E: Save As Encrypted
-- Ctrl+E: Export Notes
-- Ctrl+P: Print
-- Ctrl+Shift+X: Close compare mode or Find/Replace if open, otherwise exit
-- Ctrl+Z: Undo
-- Ctrl+Shift+Z: Redo
-- Ctrl+X: Cut
-- Ctrl+C: Copy
-- Ctrl+V: Paste
-- Ctrl+A: Select All
-- Ctrl+F: Find
-- Shift+F3: Find Previous
-- F3: Find Next, or next unread note when Find and Replace are closed
-- F4: Cycle Notes
-- Ctrl+R: Replace
-- Ctrl+G: Go To Line
-- Ctrl+D: Date
-- Ctrl+Shift+D: Time/Date
-- Ctrl+Shift+F: Font
-- Ctrl+Tab: Switch Tab
-- Ctrl+Shift+C: Toggle Currently Editing
-- Ctrl+Q: Compare Tabs
-- Ctrl+B: Toggle Status Bar
-- Ctrl+PgUp: Top of Document
-- Ctrl+PgDn: Bottom of Document
-- Ctrl++: Zoom in
-- Ctrl+-: Zoom out
-- Ctrl+Mouse Wheel: Zoom
-- F11: Full Screen
+- `Ctrl+W`: Open
+- `Ctrl+Shift+W`: Open Project
+- `Ctrl+Shift+G`: Grab Git
+- `Ctrl+T`: New Tab
+- `Ctrl+Shift+T`: Close Tab
+- `Ctrl+S`: Save
+- `Ctrl+Shift+S`: Save all
+- `Ctrl+Shift+Q`: Save As
+- `Ctrl+Shift+R`: Save and Run
+- `Ctrl+Shift+E`: Save As Encrypted
+- `Ctrl+E`: Export Notes
+- `Ctrl+P`: Print
+- `Ctrl+Shift+X`: Close Help/About, Markdown Preview, compare mode, or Find/Replace if open, otherwise exit
+- `Ctrl+Z`: Undo
+- `Ctrl+Shift+Z`: Redo
+- `Ctrl+X`: Cut
+- `Ctrl+C`: Copy
+- `Ctrl+V`: Paste
+- `Ctrl+A`: Select All
+- `Ctrl+F`: Find
+- `Ctrl+R`: Replace
+- `Shift+F3`: Find Previous
+- `F3`: Find Next, or next unread note when Find and Replace are closed
+- `F4`: Cycle Notes
+- `F7`: Toggle Spell Check
+- `Ctrl+G`: Go To Line
+- `Ctrl+D`: Date
+- `Ctrl+Shift+D`: Time/Date
+- `Ctrl+Shift+F`: Font
+- `Ctrl+Shift+P`: Toggle Preview Markdown
+- `Ctrl+Shift+C`: Toggle Currently Editing
+- `Ctrl+Q`: Compare Tabs
+- `Ctrl+B`: Toggle Status Bar
+- `Ctrl+Tab`: Switch Tab
+- `Ctrl+PgUp`: Top of Document
+- `Ctrl+PgDn`: Bottom of Document
+- `Ctrl++`: Zoom in
+- `Ctrl+-`: Zoom out
+- `Ctrl+Mouse Wheel`: Zoom
+- `F11`: Full Screen

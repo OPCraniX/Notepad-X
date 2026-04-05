@@ -1,195 +1,159 @@
 # Notepad-X
 
-Notepad-X is a tabbed desktop text editor focused on everyday writing, shared notes, side-by-side comparison, and safer handling of large files.
+Notepad-X is a tabbed desktop text editor for Windows focused on fast everyday editing, side-by-side comparison, shared notes, and safer handling of large files.
 
-It keeps a simple desktop-editor feel, but adds persistent sessions, live search, visual themes, compare mode, encrypted saves, note sharing, crash-safe recovery, and a built-in help viewer.
+It keeps a familiar desktop editor workflow while adding session restore, live search, folder-wide search, Markdown preview, syntax-aware themes, encrypted saves, note sharing, and crash recovery.
 
-## Benchmark Snapshot
+## Highlights
 
-![EXE benchmark comparison](gfx/exe_benchmark.png)
+- Tabbed editing with persistent sessions and caret/scroll restore
+- Live Find, Find/Replace, automatic cross-tab search, and folder-wide Find In Files
+- Side-by-side compare mode inside the main window
+- Shared notes with unread tracking, threaded replies, filters, and export
+- Live Markdown preview in the right pane
+- Syntax themes, syntax mode overrides, autocomplete, and spell check
+- `Save and Run` for supported script and HTML files
+- `Save As Encrypted` for passphrase-protected `.npxe` files
+- Background large-file loading plus buffered virtual mode for very large files
+- Crash recovery, conflict detection, and atomic save behavior
+- Language switching with friendly locale names and Arabic RTL support
+- Built-in Help, About dialog, and Windows shell integration toggle
 
-The image presents a performance comparison between Microsoft Notepad and Notepad-X across several metrics. Notepad-X shows a slightly faster average launch time and dramatically lower memory usage compared to Microsoft Notepad, indicating a more lightweight footprint. However, it exhibits higher CPU usage during startup, with noticeable spikes in the CPU timeline, suggesting heavier initial processing. Disk activity is also significantly higher for Notepad-X, while Microsoft Notepad remains minimal and consistent across all metrics. Overall, Notepad-X appears optimized for memory efficiency and speed but at the cost of increased CPU and disk usage during execution.
+## How It Works
 
-## Features
+### Tabs and Editing
 
-- Tabbed editing with persistent file-backed sessions
-- Tabs remember your caret and scroll position when you switch away and come back
-- Recent files, `Open Project`, and `Grab Git`
-- Drag-reorder tabs
-- GitHub-style line number gutter with click-to-copy line support
-- Auto-indent on Enter
-- Live bracket matching for `()`, `[]`, and `{}`
-- Local autocomplete using words from the current document
-- Optional `Edit with Notepad-X` Explorer right-click integration for supported text files
-- Live Find and Find/Replace
-- Optional `Search across all tabs`
-- Multiple built-in visual themes plus a custom theme creator
-- Large-file protection with buffered virtual mode
-- `Save Copy As` for huge read-only files
-- `Save As Encrypted` for passphrase-protected encrypted copies
-- Background large-file loading so the UI stays responsive while big text files open
-- Color-coded shared notes on selected text
-- Shared note sidecars with unread tracking and multi-response note threads
-- Export notes to JSON or Markdown
-- Inline compare mode inside the main editor
-- `Find Next`, `Find Previous`, `F3`, and `Shift+F3` follow the active pane during compare mode
-- Crash recovery for unsaved tabs and modified file-backed tabs
-- Conflict detection before saving if a file changed on disk
-- Safer handling of malformed, oversized, and binary-like files
-- Status bar with line info, memory usage, note sync state, editor ID, compare status, and live clock
-- Word Wrap, Sound toggle, Full Screen, zoom controls, font picker, printing
-- `View > Numbered Lines` toggle with saved preference
-- `View > Autocomplete` toggle with saved preference
-- `Edit > Edit with Notepad-X` toggle with saved preference
-- `Edit > Sound` toggle with saved preference
-- `Edit > Language` menu for switching the visible UI language
-- Friendly native language names in the Language menu with locale-aware font fallback
-- `View > Currently Editing` opens a right-side live editor sidebar
-- Built-in Help viewer and About dialog
-- About shows `v1.0.1` and a clickable GitHub link
+- Every document opens in its own tab
+- Tabs remember caret position and scroll position when switching away and back
+- Duplicate opens focus the existing tab instead of creating a second copy
+- GitHub-style line numbers can be shown or hidden from `View > Numbered Lines`
+- Auto-indent, bracket matching, autocomplete, and spell check support normal editing workflows
 
-## Grab Git
+### Search and Navigation
 
-Notepad-X can download a public GitHub project and then let you choose which files to open.
+- `Ctrl+F` opens the Find panel
+- The `Find` button and `F3` move forward through matches
+- `Shift+F3` moves backward through matches
+- The Replace panel uses the same live highlighting as Find
+- Search continues across open tabs by default
+- `Find In:` accepts a folder-search query, and `Browse` chooses the folder to search
+- Pressing `Enter` in `Find In:` searches the most recently selected folder or prompts for one if none has been chosen yet
 
-- `File > Grab Git` or `Ctrl+Shift+G` starts the flow
-- enter the project as `username/project`
-- choose where the GitHub project should be saved
-- after the download finishes, Notepad-X shows the project root folder and lets you select one or several files to open
+### Compare and Preview
 
-## Compare Mode
+- `View > Compare Tabs` opens two tabs side by side in the main window
+- The right pane can also show live Markdown preview
+- Compare mode and Markdown preview share the same right-side workspace
+- `View > Currently Editing` adds a far-right sidebar for active-editor visibility on shared files
 
-Notepad-X can compare two open tabs side by side inside the main window.
+### Notes and Collaboration
+
+- Notes attach to selected text through the context menu
+- Notes support color tags, threaded replies, unread tracking, and per-editor state
+- `F3` jumps unread notes when Find and Replace are closed
+- `F4` cycles note markers using the current note filter
+- Notes export to JSON or Markdown
+
+### File Handling and Safety
+
+- Normal saves use an atomic temp-file replace pattern
+- Save conflict checks warn before overwriting a file that changed on disk
+- Recovery restores into tabs instead of overwriting existing files
+- Large files stay responsive by loading in the background
+- Very large files can open in buffered virtual mode with limited editing features
+
+## Feature Guide
+
+### Grab Git
+
+`File > Grab Git` downloads a public GitHub repository from a `username/project` entry, lets a folder be chosen for the download, and then opens one or more selected files from the downloaded project.
+
+### Compare Mode
 
 - `View > Compare Tabs` or `Ctrl+Q` opens compare mode
-- the normal editor stays usable on the left
-- the compared file appears on the right
-- both sides are editable for normal tabs
-- the compared file shows its own bottom compare status readout
-- `Currently Editing` stays as a separate far-right sidebar even while compare mode is open
-- opening and closing the sidebar restores the compare split evenly
-- `Find Next`, `Find Previous`, `F3`, and `Shift+F3` follow whichever compare pane you last clicked
+- The active tab stays on the left and the compared file appears on the right
+- Both panes remain editable for normal tabs
+- Compare mode has its own bottom status readout for the right pane
+- Search commands follow whichever compare pane was clicked most recently
 - `Ctrl+Shift+X` closes compare mode
-- if you close the app while compare mode is open, the same compare pair is restored on next launch
 
 <p align="center">
   <img src="gfx/compairing_files.png" alt="Compare mode screenshot in Notepad-X" width="900">
 </p>
 
-## Line Numbers
+### Search, Replace, and Find In Files
 
-Notepad-X includes a GitHub-style line number gutter on the left side of the editor.
+- Live search highlights matches while typing without moving the caret
+- Pressing `Enter` in the Find or Replace query box jumps to the first match from the top
+- The Find panel includes a `Find In:` query field and `Browse`
+- Match highlighting follows the visible query across open tabs, including after switching tabs
+- `Browse` chooses the folder for Find In Files without replacing the query text in the box
+- Find In Files searches supported files under the selected folder and shows match counts in an `Open Selected` results window
+- In compare mode, search follows the active pane
 
-- line numbers are enabled by default
-- `View > Numbered Lines` hides or shows the gutter
-- the setting is remembered across launches
-- clicking a line number copies that whole line to the clipboard
-- a small in-window notification appears beside the clicked gutter line
+### Shared Notes
 
-## Autocomplete
-
-Notepad-X includes a lightweight local autocomplete system for normal editable tabs.
-
-- enabled by default
-- `View > Autocomplete` hides or shows it
-- the setting is remembered across launches
-- suggestions are based on matching words from the current tab
-- the popup appears under the caret while typing
-- `Up` / `Down` move through suggestions
-- `Tab` or `Enter` accepts the selected suggestion
-- `Esc` closes the popup
-
-## Find Behavior
-
-- live search highlights matches while you type
-- live search does not move the caret while typing
-- pressing `Enter` in the Find or Replace query box jumps to the first match from the top
-- the caret lands at the end of that found match
-- `Find Next` / `F3` move forward through matches
-- `Find Previous` / `Shift+F3` move backward through matches
-
-## Shared Notes
-
-You can select text, right-click, and attach a shared note to the selection.
-
-Notes support:
-
-- yellow, green, red, or light blue note colors
-- note author, machine name, LAN IP, and local-time timestamp display
-- multiple responses on the same note
-- right-click `Respond` workflow
-- unread tracking between editors
-- `F3` to jump unread notes
-- `F4` to cycle notes
-- shared sidecar files for collaboration
-- export to JSON or Markdown
+- Notes attach to selected text from the context menu
+- Available note colors are Yellow, Green, Red, and Light Blue
+- Notes show author, machine name, LAN IP, and local timestamp information
+- Notes support threaded replies and unread tracking
+- `View > Filter Notes` controls which notes are included when cycling with `F4`
 
 <p align="center">
   <img src="gfx/codenotes.png" alt="Shared notes screenshot in Notepad-X" width="760">
 </p>
 
-## Languages
+### Markdown Preview
 
-Notepad-X includes a translation layer for visible UI text.
+- `View > Preview Markdown` or `Ctrl+Shift+P` opens a live rendered preview in the right pane
+- The preview updates while the source tab changes
+- Headings, lists, quotes, rules, fenced code blocks, emphasis, inline code, and links are rendered
+- Opening preview closes compare mode first
 
-- `Edit > Language` shows friendly locale names instead of raw codes
-- additional languages appear automatically in the Language menu
-- the selected language is saved in the session and restored on launch
-- current language coverage includes the main menus, displayed hotkeys, status bar text, note popup labels, and core dialog captions
-- Arabic language support automatically switches the UI text direction to right-to-left
-- locale changes can also switch the editor font to a better installed script-friendly fallback automatically
+### Themes, Syntax, and Language
 
-<p align="center">
-  <img src="gfx/languages.png" alt="Language menu screenshot in Notepad-X" width="520">
-</p>
-
-## Themes
-
-- built-in themes are included out of the box
-- `View > Syntax Theme > Create Theme` opens a color-picker dialog for building a new theme
-- new themes appear in the menu immediately
+- Built-in themes are included out of the box
+- `View > Syntax Theme > Create Theme` builds new custom themes
+- `View > Syntax Mode` overrides automatic syntax detection for the active tab
+- `Edit > Language` switches the visible UI language
+- Locale entries use friendly native names when available
 
 <p align="center">
   <img src="gfx/create_syntax_theme.png" alt="Create theme dialog in Notepad-X" width="420">
 </p>
 
-## Encrypted Files
+<p align="center">
+  <img src="gfx/languages.png" alt="Language menu screenshot in Notepad-X" width="520">
+</p>
 
-Notepad-X can create and open encrypted document copies.
+### Save and Run
 
-- `Save As Encrypted` creates encrypted `.npxe` files
-- encrypted save suggests `file.ext.npxe` automatically
-- Notepad-X detects its encrypted format on open and asks for the passphrase
-- normal `Save As` and `Save Copy As` remain plain-text save flows
+- `File > Save and Run` or `Ctrl+Shift+R` saves first, then launches the current file
+- Supported launch targets include Python, JavaScript, PHP, batch, PowerShell, shell, and HTML
+- HTML opens in the default browser
+- Buffered large-file tabs and preview tabs cannot use Save and Run
 
-## Large File Handling
+### Encrypted Files
 
-Large files now load more safely in the background so the UI does not freeze while opening them.
+- `Save As Encrypted` creates `.npxe` encrypted copies
+- Encrypted save suggests `file.ext.npxe` automatically
+- Opening an `.npxe` file prompts for the passphrase
+- Normal `Save` and `Save As` remain plain-text workflows
 
-Editable large text files are allowed up to a practical limit, and only extremely large files fall back to buffered virtual mode.
+### Large Files
 
-In large-file virtual mode:
+- Large files load in the background to keep the UI responsive
+- Extremely large files can fall back to buffered virtual mode
+- Virtual mode keeps navigation available while disabling direct editing and normal save operations
+- `Save As` remains available for copying the source file elsewhere
+- Binary-like files open in a safer preview-style mode instead of being treated as normal editable text
 
-- navigation stays usable
-- line tracking still works
-- only a moving window of the file is loaded
-- editing is disabled
-- direct saving is disabled
-- `Save Copy As` is available for copying the source file elsewhere
+### File Safety
 
-Notepad-X also treats binary-like files more cautiously:
-
-- binary-looking content is previewed as safe text instead of being treated like a normal editable text document
-- malformed or unusual encodings are opened with replacement instead of crashing the app
-
-## File Safety
-
-- normal saves use an atomic temp-file replace pattern
-- note and session support files are also written atomically
-- if a file changed on disk after it was opened, Notepad-X asks before overwriting it
-- recovery restores into tabs instead of overwriting user files directly
-- crash recovery can restore both untitled work and modified file-backed tabs
-- permissions errors are shown to the user instead of failing silently
+- Atomic saves reduce the risk of partial writes
+- Conflict detection warns before overwriting newer on-disk content
+- Recovery can restore untitled work and modified file-backed tabs after a crash
+- Session and note support files are also written atomically
 
 ## Main Shortcuts
 
@@ -200,26 +164,27 @@ Notepad-X also treats binary-like files more cautiously:
 - `Ctrl+Shift+T` Close Tab
 - `Ctrl+S` Save
 - `Ctrl+Shift+S` Save all
-- `Ctrl+Shift+Q` Save Copy As
+- `Ctrl+Shift+Q` Save As
+- `Ctrl+Shift+R` Save and Run
 - `Ctrl+Shift+E` Save As Encrypted
 - `Ctrl+E` Export Notes
 - `Ctrl+P` Print
-- `Ctrl+Shift+X` Close compare / close Find or Replace / exit
+- `Ctrl+Shift+X` Close Markdown Preview / compare / Find or Replace / exit
 - `Ctrl+F` Find
-- `Shift+F3` Find previous
 - `Ctrl+R` Replace
 - `F3` Find next or next unread note
+- `Shift+F3` Find previous
 - `F4` Cycle notes
+- `F7` Spell Check
 - `Ctrl+G` Go To Line
-- `Ctrl+PgUp` Top of Document
-- `Ctrl+PgDn` Bottom of Document
-- `Ctrl+D` Date
-- `Ctrl+Shift+D` Time/Date
 - `Ctrl+Shift+F` Font
-- `Ctrl+A` Select All
-- `Ctrl+B` Show / hide status bar
-- `Ctrl+Tab` Switch Tab
+- `Ctrl+Shift+P` Preview Markdown
+- `Ctrl+Shift+C` Currently Editing
 - `Ctrl+Q` Compare Tabs
+- `Ctrl+B` Show or hide status bar
+- `Ctrl+Tab` Switch tab
+- `Ctrl+PgUp` Top of document
+- `Ctrl+PgDn` Bottom of document
 - `Ctrl++` Zoom in
 - `Ctrl+-` Zoom out
 - `F11` Full Screen
