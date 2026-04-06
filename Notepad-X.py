@@ -2,6 +2,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk, simpledialog, colorchooser
 import colorsys
+import errno
 import os
 import sys
 import ctypes
@@ -237,6 +238,9 @@ DEFAULT_LOCALE_STRINGS = {
     "spellcheck.unavailable_message": "Spell check needs pyspellchecker and the bundled English dictionary. Rebuild Notepad-X if the menu shows enabled but no words are marked.",
     "file.open_failed_title": "Open Failed",
     "file.open_failed_message": "Notepad-X could not open:\n{file_path}\n\n{error_detail}",
+    "file.open_admin_title": "Administrator Rights Needed",
+    "file.open_admin_message": "Notepad-X needs Administrator rights to open:\n{file_path}\n\nWould you like to restart Notepad-X as Administrator and try again?",
+    "file.open_admin_launch_failed": "Notepad-X could not restart with Administrator rights.\n\n{error_detail}",
     "file.missing_title": "File Missing",
     "file.missing_message": "That file could not be found.",
     "file.changed_title": "File Changed on Disk",
@@ -558,6 +562,7 @@ def send_files_to_running_notepadx(app_dir, startup_files):
 class NotepadX:
     def __init__(self, isolated_session=False, startup_files=None):
         self.root = tk.Tk()
+        self._shutdown_requested = False
         self.root.title("Notepad-X")
         self.isolated_session = isolated_session
         self.startup_files = list(startup_files or [])
@@ -565,7 +570,12 @@ class NotepadX:
         self.root.title(self.app_name)
         self.init_runtime()
         self.init_ui()
-        self.root.mainloop()
+        if not self._shutdown_requested:
+            try:
+                if self.root.winfo_exists():
+                    self.root.mainloop()
+            except tk.TclError:
+                pass
 
     def init_config(self):
         self.is_windows = os.name == 'nt'
@@ -871,8 +881,137 @@ class NotepadX:
                 ctypes.c_void_p,
                 ctypes.c_void_p,
             ]
+            self.shell32.IsUserAnAdmin.restype = wintypes.BOOL
+            self.shell32.IsUserAnAdmin.argtypes = []
         except Exception:
             self.shell32 = None
+
+    def request_app_shutdown(self):
+        self._shutdown_requested = True
+        try:
+            if self.root.winfo_exists():
+                self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def is_running_as_administrator(self):
+        if not self.is_windows or not self.shell32:
+            return False
+        try:
+            return bool(self.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    def is_permission_denied_error(self, exc):
+        if isinstance(exc, PermissionError):
+            return True
+        if not isinstance(exc, OSError):
+            return False
+        return (
+            getattr(exc, 'errno', None) in {errno.EACCES, errno.EPERM}
+            or getattr(exc, 'winerror', None) == 5
+        )
+
+    def build_admin_restart_files(self, target_file):
+        restart_files = []
+        if target_file:
+            restart_files.append(os.path.abspath(target_file))
+        if self.isolated_session:
+            for existing_path in self.get_session_state().get('open_files', []):
+                if not existing_path:
+                    continue
+                normalized_path = os.path.abspath(existing_path)
+                if normalized_path not in restart_files and os.path.exists(normalized_path):
+                    restart_files.append(normalized_path)
+        return restart_files
+
+    def launch_notepadx_as_administrator(self, startup_files=None):
+        if not self.is_windows or not self.shell32:
+            raise OSError("Windows elevation is not available in this build.")
+
+        startup_files = [os.path.abspath(path) for path in (startup_files or []) if path]
+        launch_args = []
+        if getattr(sys, 'frozen', False):
+            executable_path = sys.executable
+        else:
+            executable_path = sys.executable
+            script_path = os.path.abspath(sys.argv[0] or __file__)
+            launch_args.append(script_path)
+        if self.isolated_session:
+            launch_args.append('--isolated')
+        launch_args.extend(startup_files)
+
+        parameters = subprocess.list2cmdline(launch_args) if launch_args else None
+        working_directory = self.app_dir if os.path.isdir(self.app_dir) else None
+
+        ctypes.set_last_error(0)
+        result = self.shell32.ShellExecuteW(
+            None,
+            'runas',
+            executable_path,
+            parameters,
+            working_directory,
+            1,
+        )
+        result_code = int(result)
+        if result_code <= 32:
+            error_code = ctypes.get_last_error() or result_code
+            if error_code == 1223:
+                return False
+            raise OSError(error_code, f"ShellExecuteW failed with code {error_code}")
+        return True
+
+    def maybe_restart_as_administrator_for_file(self, file_path, exc):
+        if not file_path or not self.is_windows or self.is_running_as_administrator():
+            return False
+        if not self.is_permission_denied_error(exc):
+            return False
+
+        normalized_path = os.path.abspath(file_path)
+        wants_restart = messagebox.askyesno(
+            self.tr('file.open_admin_title', 'Administrator Rights Needed'),
+            self.tr(
+                'file.open_admin_message',
+                'Notepad-X needs Administrator rights to open:\n{file_path}\n\nWould you like to restart Notepad-X as Administrator and try again?',
+                file_path=normalized_path
+            ),
+            parent=self.root
+        )
+        if not wants_restart:
+            return True
+        if not self.confirm_exit_app():
+            return True
+
+        self.persist_editor_identity()
+        self.save_session()
+        self.stop_single_instance_server()
+        try:
+            launched = self.launch_notepadx_as_administrator(
+                startup_files=self.build_admin_restart_files(normalized_path)
+            )
+        except OSError as launch_exc:
+            self.log_exception("restart as administrator", launch_exc)
+            if not self.isolated_session:
+                self.start_single_instance_server()
+            messagebox.showerror(
+                self.tr('file.open_admin_title', 'Administrator Rights Needed'),
+                self.tr(
+                    'file.open_admin_launch_failed',
+                    'Notepad-X could not restart with Administrator rights.\n\n{error_detail}',
+                    error_detail=launch_exc
+                ),
+                parent=self.root
+            )
+            return True
+
+        if not launched:
+            if not self.isolated_session:
+                self.start_single_instance_server()
+            return True
+
+        self.finalize_exit_app()
+        self.request_app_shutdown()
+        return True
 
     def get_resource_dir(self):
         if getattr(sys, 'frozen', False):
@@ -2280,7 +2419,12 @@ class NotepadX:
             self.background_file_results.append(result)
 
     def process_background_file_results(self):
-        if not self.root.winfo_exists():
+        if self._shutdown_requested:
+            return
+        try:
+            if not self.root.winfo_exists():
+                return
+        except tk.TclError:
             return
         results = []
         with self.background_file_lock:
@@ -2292,7 +2436,12 @@ class NotepadX:
                 self.handle_background_file_result(result)
             except Exception as exc:
                 self.log_exception("handle background file result", exc)
-        self.root.after(60, self.process_background_file_results)
+        if self._shutdown_requested:
+            return
+        try:
+            self.root.after(60, self.process_background_file_results)
+        except tk.TclError:
+            pass
 
     def build_line_index_background(self, file_path):
         line_starts = [0]
@@ -2422,6 +2571,9 @@ class NotepadX:
         doc.pop('pending_insert_content', None)
         doc.pop('pending_insert_offset', None)
         file_path = doc.get('file_path')
+        if self.maybe_restart_as_administrator_for_file(file_path, exc):
+            self.cleanup_failed_file_open(doc)
+            return
         messagebox.showerror(
             self.tr('file.open_failed_title', 'Open Failed'),
             self.tr(
@@ -2432,6 +2584,9 @@ class NotepadX:
             ),
             parent=self.root
         )
+        self.cleanup_failed_file_open(doc)
+
+    def cleanup_failed_file_open(self, doc):
         if doc.get('background_open_new_tab'):
             try:
                 self.notebook.forget(doc['frame'])
@@ -2577,6 +2732,30 @@ class NotepadX:
             self.tr('filesystem.access_error', 'Notepad-X could not access:\n{location}\n\n{error_detail}', location=location, error_detail=exc),
             parent=self.root
         )
+
+    def confirm_exit_app(self):
+        for doc in list(self.documents.values()):
+            if not self.confirm_close_tab(doc):
+                return False
+        return True
+
+    def finalize_exit_app(self):
+        for doc in list(self.documents.values()):
+            self.unregister_doc_from_shared_notes(doc)
+        self.stop_single_instance_server()
+        if self.recovery_job:
+            try:
+                self.root.after_cancel(self.recovery_job)
+            except tk.TclError:
+                pass
+            self.recovery_job = None
+        if os.path.exists(self.recovery_path):
+            try:
+                os.remove(self.recovery_path)
+            except OSError as exc:
+                self.log_exception("remove recovery file on exit", exc)
+        self.persist_editor_identity()
+        self.save_session()
 
     def is_probably_binary_file(self, file_path, sample_size=8192):
         try:
@@ -2988,7 +3167,12 @@ class NotepadX:
                 pass
 
     def process_remote_open_requests(self):
-        if not self.root.winfo_exists():
+        if self._shutdown_requested:
+            return
+        try:
+            if not self.root.winfo_exists():
+                return
+        except tk.TclError:
             return
         pending_files = []
         with self.remote_open_lock:
@@ -3003,7 +3187,12 @@ class NotepadX:
                 self.root.focus_force()
             except tk.TclError:
                 pass
-        self.root.after(150, self.process_remote_open_requests)
+        if self._shutdown_requested:
+            return
+        try:
+            self.root.after(150, self.process_remote_open_requests)
+        except tk.TclError:
+            pass
 
     # ─── Font Zoom ───────────────────────────────────────────────
     def change_font_size(self, delta):
@@ -6113,12 +6302,14 @@ class NotepadX:
 
         opened_frames = []
         for file_path in normalized_files:
+            if self._shutdown_requested:
+                break
             if self.open_file_path(file_path):
                 current_doc = self.get_current_doc()
                 if current_doc:
                     opened_frames.append(current_doc['frame'])
 
-        if opened_frames:
+        if opened_frames and not self._shutdown_requested:
             self.notebook.select(opened_frames[0])
             self.set_active_document(opened_frames[0])
             if self.text:
@@ -10014,6 +10205,8 @@ class NotepadX:
             file_size = os.path.getsize(file_path)
         except OSError as exc:
             self.log_exception("load content into doc", exc)
+            if self.maybe_restart_as_administrator_for_file(file_path, exc):
+                return False
             messagebox.showerror(
                 self.tr('file.open_failed_title', 'Open Failed'),
                 self.tr(
@@ -10101,6 +10294,8 @@ class NotepadX:
             return False
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             self.log_exception("load content into doc", exc)
+            if self.maybe_restart_as_administrator_for_file(file_path, exc):
+                return False
             messagebox.showerror(
                 self.tr('file.open_failed_title', 'Open Failed'),
                 self.tr(
@@ -10303,6 +10498,8 @@ class NotepadX:
         selected_recovery_key = recovery.get('selected_recovery_key')
         selected_tab = None
         for recovered_tab in recovery_tabs:
+            if self._shutdown_requested:
+                break
             if not isinstance(recovered_tab, dict):
                 continue
             content = str(recovered_tab.get('content', ''))
@@ -10322,6 +10519,8 @@ class NotepadX:
                     tab_id = self.create_tab(file_path=normalized_path, select=False)
                     doc = self.documents[str(tab_id)]
                     if not self.load_content_into_doc(doc, normalized_path):
+                        if self._shutdown_requested:
+                            break
                         try:
                             self.notebook.forget(doc['frame'])
                         except tk.TclError:
@@ -10349,6 +10548,8 @@ class NotepadX:
             self.refresh_tab_title(doc['frame'])
             if recovery_key == selected_recovery_key:
                 selected_tab = doc['frame']
+        if self._shutdown_requested:
+            return
         if selected_tab is None and self.documents:
             selected_tab = next(iter(self.documents.values()))['frame']
         if selected_tab is not None:
@@ -10440,9 +10641,13 @@ class NotepadX:
 
         restored_tabs = {}
         for file_path in open_files:
+            if self._shutdown_requested:
+                break
             tab_id = self.create_tab(file_path=file_path, select=False)
             doc = self.documents[str(tab_id)]
             if not self.load_content_into_doc(doc, file_path):
+                if self._shutdown_requested:
+                    break
                 try:
                     self.notebook.forget(doc['frame'])
                 except tk.TclError:
@@ -10466,6 +10671,8 @@ class NotepadX:
         if selected_tab is not None:
             self.notebook.select(selected_tab)
             self.set_active_document(selected_tab)
+        if self._shutdown_requested:
+            return
         if self.markdown_preview_enabled.get():
             self.schedule_markdown_preview_refresh()
 
@@ -12883,26 +13090,10 @@ class NotepadX:
         return "break"
 
     def exit_app(self, event=None):
-        for doc in list(self.documents.values()):
-            if not self.confirm_close_tab(doc):
-                return "break"
-        for doc in list(self.documents.values()):
-            self.unregister_doc_from_shared_notes(doc)
-        self.stop_single_instance_server()
-        if self.recovery_job:
-            try:
-                self.root.after_cancel(self.recovery_job)
-            except tk.TclError:
-                pass
-            self.recovery_job = None
-        if os.path.exists(self.recovery_path):
-            try:
-                os.remove(self.recovery_path)
-            except OSError as exc:
-                self.log_exception("remove recovery file on exit", exc)
-        self.persist_editor_identity()
-        self.save_session()
-        self.root.quit()
+        if not self.confirm_exit_app():
+            return "break"
+        self.finalize_exit_app()
+        self.request_app_shutdown()
         return "break"
 
     def confirm_close_tab(self, doc):
