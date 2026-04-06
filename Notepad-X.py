@@ -4372,13 +4372,13 @@ class NotepadX:
                 targets.append(compare_widget)
             return targets
 
-        hovered_widget = self.get_hovered_editor_widget()
-        if hovered_widget is not None:
-            return [hovered_widget]
-
         active_widget = self.get_active_search_widget()
         if active_widget is not None:
             return [active_widget]
+
+        hovered_widget = self.get_hovered_editor_widget()
+        if hovered_widget is not None:
+            return [hovered_widget]
         return []
 
     def sync_widget_insert_to_visible_line(self, widget):
@@ -4389,17 +4389,107 @@ class NotepadX:
         except tk.TclError:
             pass
 
+    def get_navigation_doc_for_widget(self, widget):
+        compare_widget = self.get_compare_text_widget()
+        if compare_widget is not None and widget == compare_widget:
+            return self.compare_view
+        for doc in self.documents.values():
+            if doc.get('text') == widget:
+                return doc
+        return None
+
+    def get_visible_widget_line_bounds(self, widget, doc=None):
+        try:
+            widget.update_idletasks()
+            top_local_line = int(widget.index('@0,0').split('.')[0])
+        except (tk.TclError, ValueError, AttributeError):
+            return None
+
+        bottom_local_line = top_local_line
+        try:
+            index = f"{top_local_line}.0"
+            while True:
+                info = widget.dlineinfo(index)
+                if info is None:
+                    break
+                local_line = int(index.split('.')[0])
+                bottom_local_line = max(bottom_local_line, local_line)
+                next_index = widget.index(f"{local_line + 1}.0")
+                if next_index == index:
+                    break
+                index = next_index
+        except (tk.TclError, ValueError, AttributeError):
+            pass
+
+        if doc and doc.get('virtual_mode'):
+            window_start = doc.get('window_start_line', 1)
+            return (
+                window_start + top_local_line - 1,
+                window_start + bottom_local_line - 1
+            )
+        return top_local_line, bottom_local_line
+
+    def scroll_widget_page_by_visible_lines(self, widget, direction):
+        doc = self.get_navigation_doc_for_widget(widget)
+        bounds = self.get_visible_widget_line_bounds(widget, doc)
+
+        if not bounds:
+            try:
+                widget.yview_scroll(direction, 'page')
+            except tk.TclError:
+                return False
+            self.sync_widget_insert_to_visible_line(widget)
+            return True
+
+        top_line, bottom_line = bounds
+        page_lines = max(1, bottom_line - top_line + 1)
+        can_rebuffer_virtual_doc = bool(doc and doc.get('virtual_mode') and doc.get('line_starts') is not None)
+
+        if doc and doc.get('virtual_mode'):
+            last_line = max(
+                1,
+                int(doc.get('total_file_lines' if can_rebuffer_virtual_doc else 'window_end_line', bottom_line))
+            )
+        else:
+            try:
+                last_line = max(1, int(widget.index('end-1c').split('.')[0]))
+            except (tk.TclError, ValueError, AttributeError):
+                last_line = bottom_line
+
+        max_top_line = max(1, last_line - page_lines + 1)
+        if direction < 0:
+            target_top_line = max(1, top_line - page_lines)
+        else:
+            target_top_line = min(max_top_line, bottom_line + 1)
+
+        try:
+            if doc and doc.get('virtual_mode'):
+                window_start = doc.get('window_start_line', 1)
+                if can_rebuffer_virtual_doc and (
+                    target_top_line < window_start or target_top_line > doc.get('window_end_line', window_start)
+                ):
+                    self.load_virtual_window(doc, target_top_line)
+                    window_start = doc.get('window_start_line', 1)
+                target_index = f"{max(1, target_top_line - window_start + 1)}.0"
+            else:
+                target_index = f"{target_top_line}.0"
+
+            widget.mark_set(tk.INSERT, target_index)
+            widget.yview(target_index)
+        except tk.TclError:
+            return False
+
+        self.sync_widget_insert_to_visible_line(widget)
+        return True
+
     def page_up(self, event=None):
         targets = self.get_page_navigation_targets()
         if not targets:
             return
         for widget in targets:
-            try:
-                widget.yview_scroll(-1, 'page')
-                self.sync_widget_insert_to_visible_line(widget)
-                self.set_last_active_editor_widget(widget)
-            except tk.TclError:
+            if not self.scroll_widget_page_by_visible_lines(widget, -1):
                 continue
+            self.set_last_active_editor_widget(widget)
             doc = self.get_doc_for_text_widget(widget)
             if widget == self.get_compare_text_widget():
                 self.update_line_number_gutter(self.compare_view)
@@ -4414,12 +4504,9 @@ class NotepadX:
         if not targets:
             return
         for widget in targets:
-            try:
-                widget.yview_scroll(1, 'page')
-                self.sync_widget_insert_to_visible_line(widget)
-                self.set_last_active_editor_widget(widget)
-            except tk.TclError:
+            if not self.scroll_widget_page_by_visible_lines(widget, 1):
                 continue
+            self.set_last_active_editor_widget(widget)
             doc = self.get_doc_for_text_widget(widget)
             if widget == self.get_compare_text_widget():
                 self.update_line_number_gutter(self.compare_view)
@@ -6381,6 +6468,10 @@ class NotepadX:
         self.compare_text.bind('<Control-Z>', self.undo)
         self.compare_text.bind('<Control-Shift-z>', self.redo)
         self.compare_text.bind('<Control-Shift-Z>', self.redo)
+        self.compare_text.bind('<Prior>', self.page_up)
+        self.compare_text.bind('<Next>', self.page_down)
+        self.compare_text.bind('<Control-Prior>', self.goto_document_start)
+        self.compare_text.bind('<Control-Next>', self.goto_document_end)
         self.compare_text.bind('<FocusIn>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<Enter>', self.remember_hovered_editor, add='+')
         self.compare_text.bind('<Motion>', self.remember_hovered_editor, add='+')
@@ -6531,6 +6622,10 @@ class NotepadX:
         text.bind('<Control-Z>', self.undo)
         text.bind('<Control-Shift-z>', self.redo)
         text.bind('<Control-Shift-Z>', self.redo)
+        text.bind('<Prior>', self.page_up)
+        text.bind('<Next>', self.page_down)
+        text.bind('<Control-Prior>', self.goto_document_start)
+        text.bind('<Control-Next>', self.goto_document_end)
         text.bind('<Control-Shift-r>', self.save_and_run)
         text.bind('<Control-Shift-R>', self.save_and_run)
         text.bind('<Control-Shift-x>', self.ctrl_shift_x)
