@@ -84,6 +84,7 @@ DEFAULT_LOCALE_STRINGS = {
     "common.ok": "OK",
     "common.cancel": "Cancel",
     "common.save": "Save",
+    "common.unknown": "Unknown",
     "common.go": "Go",
     "common.color": "Color:",
     "clipboard.line_copied": "Copied line {line_number} to clipboard",
@@ -191,6 +192,7 @@ DEFAULT_LOCALE_STRINGS = {
     "status.mode.virtual": "Virtual",
     "status.mode.preview": "Preview",
     "status.main": "{line_label} {row} {of_label} {total_lines}, {col_label} {col} | {char_info} | {encoding} | {zoom_text}{mode_suffix}",
+    "status.compare": "{line_label} {row} {of_label} {total_lines}, {col_label} {col} | {char_info}{mode_suffix}",
     "status.char_count": "{total_chars} {characters_label}",
     "status.selected_char_count": "{selected_count} {of_label} {total_chars} {characters_label}",
     "status.byte_count": "{total_bytes} {bytes_label}",
@@ -257,6 +259,7 @@ DEFAULT_LOCALE_STRINGS = {
     "print.failed_title": "Print Failed",
     "print.unsafe_path": "That file path could not be sent to the print command safely.",
     "print.unavailable": "Print is not available on this platform.",
+    "print.windows_failed_code": "Windows print action failed with code {code}",
     "app.crash_title": "Notepad-X Crash",
     "app.crash_message": "An unexpected error occurred.\nA crash log was written to:\n{crash_log_path}",
     "recover.tabs_title": "Recover Tabs",
@@ -268,8 +271,22 @@ DEFAULT_LOCALE_STRINGS = {
     "shell_integration.update_failed": "Notepad-X could not update the OS shell integration.\n\n{error_detail}",
     "shell_integration.generic_name": "Text Editor",
     "shell_integration.desktop_comment": "Edit text files with Notepad-X",
+    "shell_integration.app_description": "Edit supported text and code files with Notepad-X.",
+    "shell_integration.error.unsafe_windows_executable": "Unsafe executable path for Windows shell integration.",
+    "shell_integration.error.unsafe_windows_script": "Unsafe interpreter or script path for Windows shell integration.",
+    "shell_integration.error.unsafe_linux_executable": "Unsafe executable path for Linux desktop integration.",
+    "shell_integration.error.unsafe_linux_script": "Unsafe interpreter or script path for Linux desktop integration.",
+    "shell_integration.error.write_linux_desktop_entry": "Could not write Linux desktop entry to {desktop_entry_path}",
+    "shell_integration.error.unsafe_icon_shell": "Unsafe icon path for Windows shell integration.",
+    "shell_integration.error.unsafe_icon_registration": "Unsafe icon path for Windows application registration.",
     "export.notes.none": "There are no notes to export in this tab.",
     "export.notes.saved": "Notes exported to:\n{output_path}",
+    "export.notes.markdown.title": "Notes Export for {doc_name}",
+    "export.notes.markdown.note_heading": "Note {note_id}",
+    "export.notes.markdown.range": "Range",
+    "export.notes.markdown.color": "Color",
+    "export.notes.markdown.selected_text_heading": "Selected Text",
+    "export.notes.markdown.code_note_heading": "Code Note",
     "filetype.all_supported": "All Supported",
     "filetype.text_document": "Text Document",
     "filetype.markdown": "Markdown",
@@ -335,6 +352,18 @@ DEFAULT_LOCALE_STRINGS = {
     "encryption.open_title": "Open Encrypted File",
     "encryption.open_prompt": "Passphrase for:\n{file_name}",
     "encryption.unlock_failed": "That passphrase did not unlock the encrypted file.",
+    "encryption.error.cryptography_required": "The cryptography package is required for encrypted files.",
+    "encryption.error.passphrase_required": "A passphrase is required.",
+    "encryption.error.missing_salt": "Encrypted file is missing its salt.",
+    "encryption.error.scrypt_memory": "Notepad-X could not derive the encryption key because the scrypt memory limit was exceeded on this machine.",
+    "encryption.error.header_incomplete": "Encrypted file header is incomplete.",
+    "encryption.error.header_invalid": "Encrypted file header is invalid.",
+    "encryption.error.unsupported_settings": "Unsupported encrypted file settings.",
+    "encryption.error.no_ciphertext": "Encrypted file has no ciphertext.",
+    "encryption.error.support_unavailable": "Encryption support is unavailable.",
+    "encryption.error.metadata_missing": "Encrypted file metadata is missing.",
+    "encryption.error.write_failed": "Could not write encrypted file: {file_path}",
+    "encryption.error.open_cancelled": "Encrypted file open cancelled.",
     "syntax.theme.default": "Default",
     "syntax.theme.soft": "Soft",
     "syntax.theme.vivid": "Vivid",
@@ -429,6 +458,7 @@ DEFAULT_LOCALE_STRINGS = {
     "grab_git.not_found": "GitHub could not find \"{repo_identifier}\".\n\nCheck the username/project and try again.",
     "grab_git.private_repo": "That GitHub project could not be downloaded.\n\nIt may be private or require authentication.",
     "grab_git.no_files": "The project downloaded successfully, but no matching files were found to open.",
+    "grab_git.unknown_failure": "Unknown git clone failure.",
     "grab_git.open_title": "Open Downloaded Project Files",
     "grab_git.open_prompt": "Downloaded project root:\n{root_dir}\n\nSelect one or more files to open.",
     "grab_git.select_files": "Select one or more files to open.",
@@ -438,7 +468,37 @@ DEFAULT_LOCALE_STRINGS = {
     "run.large_file_unavailable": "Save and Run is not available for buffered large-file tabs.",
     "run.unsafe_path": "That file path could not be sent to a runtime safely.",
     "run.runtime_missing": "Notepad-X could not find a runtime for {language} on this system.",
-    "run.open_browser_failed": "Notepad-X could not open this file in your browser."
+    "run.open_browser_failed": "Notepad-X could not open this file in your browser.",
+    "locale.language.en": "English",
+    "locale.language.ar": "Arabic",
+    "locale.language.de": "German",
+    "locale.language.es": "Spanish",
+    "locale.language.fr": "French",
+    "locale.language.hi": "Hindi",
+    "locale.language.it": "Italian",
+    "locale.language.ja": "Japanese",
+    "locale.language.nl": "Dutch",
+    "locale.language.pt": "Portuguese",
+    "locale.language.ru": "Russian",
+    "locale.language.uk": "Ukrainian",
+    "locale.language.zh": "Chinese",
+    "locale.region.us": "US",
+    "locale.region.sa": "Saudi Arabia",
+    "locale.region.ae": "United Arab Emirates",
+    "locale.region.eg": "Egypt",
+    "locale.region.ma": "Morocco",
+    "locale.region.de": "Germany",
+    "locale.region.419": "Latin America",
+    "locale.region.es": "Spain",
+    "locale.region.ca": "Canada",
+    "locale.region.in": "India",
+    "locale.region.it": "Italy",
+    "locale.region.jp": "Japan",
+    "locale.region.nl": "Netherlands",
+    "locale.region.br": "Brazil",
+    "locale.region.ru": "Russia",
+    "locale.region.ua": "Ukraine",
+    "locale.region.cn": "China"
 }
 
 RTL_LOCALE_CODES = {'ar', 'ar_sa', 'ar_ae', 'ar_eg', 'ar_ma'}
@@ -560,7 +620,7 @@ class NotepadX:
     def __init__(self, isolated_session=False, startup_files=None):
         self.root = tk.Tk()
         self._shutdown_requested = False
-        self.root.title("Notepad-X")
+        self.root.title(DEFAULT_LOCALE_STRINGS.get('app.name', 'Notepad-X'))
         self.isolated_session = isolated_session
         self.startup_files = list(startup_files or [])
         self.init_config()
@@ -1640,20 +1700,32 @@ class NotepadX:
 
     def get_language_display_name(self, locale_code):
         code = str(locale_code or '').strip().lower()
-        if code in LOCALE_DISPLAY_NAMES:
-            return LOCALE_DISPLAY_NAMES[code]
+        if not code:
+            return self.tr('common.unknown', 'Unknown')
+        exact_key = f'locale.display.{code}'
+        exact_translation = self.locale_strings.get(exact_key)
+        if isinstance(exact_translation, str) and exact_translation.strip():
+            return exact_translation
         parts = [part for part in code.split('_') if part]
         if parts:
             language = parts[0]
             region = parts[1] if len(parts) > 1 else ''
             if language in LANGUAGE_NATIVE_NAMES:
-                language_name = LANGUAGE_NATIVE_NAMES[language]
+                language_name = self.tr(
+                    f'locale.language.{language}',
+                    LANGUAGE_NATIVE_NAMES[language]
+                )
                 if region:
-                    region_name = REGION_DISPLAY_NAMES.get(region, region.upper())
+                    region_name = self.tr(
+                        f'locale.region.{region}',
+                        REGION_DISPLAY_NAMES.get(region, region.upper())
+                    )
                     return f"{language_name} ({region_name})"
                 return language_name
+        if code in LOCALE_DISPLAY_NAMES:
+            return LOCALE_DISPLAY_NAMES[code]
         parts = [part.upper() if len(part) <= 3 else part.title() for part in parts]
-        return " / ".join(parts) if parts else 'Unknown'
+        return " / ".join(parts) if parts else self.tr('common.unknown', 'Unknown')
 
     def is_rtl_locale(self, locale_code=None):
         code = str(locale_code or self.locale_code or '').strip().lower()
@@ -2047,13 +2119,13 @@ class NotepadX:
 
     def derive_encryption_key(self, passphrase, header):
         if not self.encryption_available():
-            raise RuntimeError("The cryptography package is required for encrypted files.")
+            raise RuntimeError(self.tr('encryption.error.cryptography_required', 'The cryptography package is required for encrypted files.'))
         passphrase_bytes = str(passphrase or '').encode('utf-8')
         if not passphrase_bytes:
-            raise ValueError("A passphrase is required.")
+            raise ValueError(self.tr('encryption.error.passphrase_required', 'A passphrase is required.'))
         salt_text = header.get('salt')
         if not isinstance(salt_text, str) or not salt_text.strip():
-            raise ValueError("Encrypted file is missing its salt.")
+            raise ValueError(self.tr('encryption.error.missing_salt', 'Encrypted file is missing its salt.'))
         salt = base64.b64decode(salt_text.encode('ascii'))
         n = int(header.get('n', self.encryption_scrypt_n))
         r = int(header.get('r', self.encryption_scrypt_r))
@@ -2073,8 +2145,10 @@ class NotepadX:
         except ValueError as exc:
             if 'memory limit exceeded' in str(exc).lower():
                 raise RuntimeError(
-                    "Notepad-X could not derive the encryption key because the scrypt memory limit "
-                    "was exceeded on this machine."
+                    self.tr(
+                        'encryption.error.scrypt_memory',
+                        'Notepad-X could not derive the encryption key because the scrypt memory limit was exceeded on this machine.'
+                    )
                 ) from exc
             raise
 
@@ -2093,23 +2167,23 @@ class NotepadX:
             return None
         header_offset = len(self.encryption_magic)
         if len(payload_bytes) < header_offset + 4:
-            raise ValueError("Encrypted file header is incomplete.")
+            raise ValueError(self.tr('encryption.error.header_incomplete', 'Encrypted file header is incomplete.'))
         header_length = int.from_bytes(payload_bytes[header_offset:header_offset + 4], 'big')
         header_start = header_offset + 4
         header_end = header_start + header_length
         if header_length <= 0 or len(payload_bytes) < header_end + self.encryption_nonce_length:
-            raise ValueError("Encrypted file header is invalid.")
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
         header = json.loads(payload_bytes[header_start:header_end].decode('utf-8'))
         nonce_start = header_end
         nonce_end = nonce_start + self.encryption_nonce_length
         nonce = payload_bytes[nonce_start:nonce_end]
         ciphertext = payload_bytes[nonce_end:]
         if not isinstance(header, dict) or header.get('format') != 'Notepad-X Encrypted':
-            raise ValueError("Encrypted file header is invalid.")
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
         if header.get('cipher') != 'AES-256-GCM' or header.get('kdf') != 'scrypt':
-            raise ValueError("Unsupported encrypted file settings.")
+            raise ValueError(self.tr('encryption.error.unsupported_settings', 'Unsupported encrypted file settings.'))
         if not ciphertext:
-            raise ValueError("Encrypted file has no ciphertext.")
+            raise ValueError(self.tr('encryption.error.no_ciphertext', 'Encrypted file has no ciphertext.'))
         return header, nonce, ciphertext
 
     def file_looks_encrypted(self, file_path):
@@ -2547,21 +2621,27 @@ class NotepadX:
 
     def write_encrypted_text_file(self, file_path, text_content, passphrase=None, header=None, key=None, original_name=None):
         if not self.encryption_available():
-            raise RuntimeError("Encryption support is unavailable.")
+            raise RuntimeError(self.tr('encryption.error.support_unavailable', 'Encryption support is unavailable.'))
         encryption_header = dict(header or {})
         if key is None:
             encryption_header = self.create_encryption_header(original_name=original_name or file_path)
             key = self.derive_encryption_key(passphrase, encryption_header)
         else:
             if not encryption_header:
-                raise ValueError("Encrypted file metadata is missing.")
+                raise ValueError(self.tr('encryption.error.metadata_missing', 'Encrypted file metadata is missing.'))
             encryption_header['original_name'] = encryption_header.get('original_name') or os.path.basename(original_name or file_path)
         plaintext_bytes = str(text_content).encode('utf-8')
         nonce = os.urandom(self.encryption_nonce_length)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext_bytes, self.encryption_magic)
         payload_bytes = self.build_encrypted_payload(encryption_header, nonce, ciphertext)
         if not self.write_binary_atomically(file_path, payload_bytes, 'notepadx-encrypted-', 'write encrypted file'):
-            raise OSError(f"Could not write encrypted file: {file_path}")
+            raise OSError(
+                self.tr(
+                    'encryption.error.write_failed',
+                    'Could not write encrypted file: {file_path}',
+                    file_path=file_path
+                )
+            )
         return encryption_header, key
 
     def read_encrypted_text_file(self, file_path):
@@ -2569,14 +2649,14 @@ class NotepadX:
             return None
         if not self.encryption_available():
             self.show_encryption_unavailable(self.root)
-            raise OSError("Encryption support is unavailable.")
+            raise OSError(self.tr('encryption.error.support_unavailable', 'Encryption support is unavailable.'))
         with open(file_path, 'rb') as encrypted_file:
             payload_bytes = encrypted_file.read()
         header, nonce, ciphertext = self.parse_encrypted_payload(payload_bytes)
         while True:
             passphrase = self.prompt_open_passphrase(file_path, parent=self.root)
             if passphrase is None:
-                raise OSError("Encrypted file open cancelled.")
+                raise OSError(self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.'))
             try:
                 key = self.derive_encryption_key(passphrase, header)
                 plaintext_bytes = AESGCM(key).decrypt(nonce, ciphertext, self.encryption_magic)
@@ -2590,7 +2670,7 @@ class NotepadX:
                     parent=self.root
                 )
                 if not retry:
-                    raise OSError("Encrypted file open cancelled.")
+                    raise OSError(self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.'))
 
     def get_file_signature(self, file_path):
         try:
@@ -5934,24 +6014,24 @@ class NotepadX:
         if getattr(sys, 'frozen', False):
             executable_path = os.path.abspath(sys.executable)
             if not self.path_looks_safe_for_shell(executable_path):
-                raise OSError("Unsafe executable path for Windows shell integration.")
+                raise OSError(self.tr('shell_integration.error.unsafe_windows_executable', 'Unsafe executable path for Windows shell integration.'))
             return f'"{executable_path}" "%1"'
         interpreter_path = os.path.abspath(sys.executable)
         script_path = os.path.abspath(__file__)
         if not self.path_looks_safe_for_shell(interpreter_path) or not self.path_looks_safe_for_shell(script_path):
-            raise OSError("Unsafe interpreter or script path for Windows shell integration.")
+            raise OSError(self.tr('shell_integration.error.unsafe_windows_script', 'Unsafe interpreter or script path for Windows shell integration.'))
         return f'"{interpreter_path}" "{script_path}" "%1"'
 
     def get_linux_open_command(self):
         if getattr(sys, 'frozen', False):
             executable_path = os.path.abspath(sys.executable)
             if not self.path_looks_safe_for_shell(executable_path):
-                raise OSError("Unsafe executable path for Linux desktop integration.")
+                raise OSError(self.tr('shell_integration.error.unsafe_linux_executable', 'Unsafe executable path for Linux desktop integration.'))
             return f'"{executable_path}" %F'
         interpreter_path = os.path.abspath(sys.executable)
         script_path = os.path.abspath(__file__)
         if not self.path_looks_safe_for_shell(interpreter_path) or not self.path_looks_safe_for_shell(script_path):
-            raise OSError("Unsafe interpreter or script path for Linux desktop integration.")
+            raise OSError(self.tr('shell_integration.error.unsafe_linux_script', 'Unsafe interpreter or script path for Linux desktop integration.'))
         return f'"{interpreter_path}" "{script_path}" %F'
 
     def get_linux_mime_types(self):
@@ -6010,7 +6090,13 @@ class NotepadX:
                 '',
             ]
             if not self.write_file_atomically(desktop_entry_path, '\n'.join(desktop_entry).rstrip('\n')):
-                raise OSError(f"Could not write Linux desktop entry to {desktop_entry_path}")
+                raise OSError(
+                    self.tr(
+                        'shell_integration.error.write_linux_desktop_entry',
+                        'Could not write Linux desktop entry to {desktop_entry_path}',
+                        desktop_entry_path=desktop_entry_path
+                    )
+                )
             update_db = shutil.which('update-desktop-database')
             if update_db:
                 try:
@@ -6069,7 +6155,7 @@ class NotepadX:
             return True
         icon_source = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else self.icon_path)
         if not self.path_looks_safe_for_shell(icon_source):
-            raise OSError("Unsafe icon path for Windows shell integration.")
+            raise OSError(self.tr('shell_integration.error.unsafe_icon_shell', 'Unsafe icon path for Windows shell integration.'))
         open_command = self.get_windows_open_command()
         app_key = rf"Software\Classes\Applications\{self.get_windows_application_registration_name()}"
         if self.get_registry_string_value(winreg.HKEY_CURRENT_USER, app_key, 'ApplicationName') != 'Notepad-X':
@@ -6080,7 +6166,7 @@ class NotepadX:
             winreg.HKEY_CURRENT_USER,
             app_key,
             'ApplicationDescription'
-        ) != 'Edit supported text and code files with Notepad-X.':
+        ) != self.tr('shell_integration.app_description', 'Edit supported text and code files with Notepad-X.'):
             return False
         if self.get_registry_string_value(winreg.HKEY_CURRENT_USER, rf"{app_key}\DefaultIcon") != icon_source:
             return False
@@ -6114,7 +6200,7 @@ class NotepadX:
         if enabled:
             icon_source = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else self.icon_path)
             if not self.path_looks_safe_for_shell(icon_source):
-                raise OSError("Unsafe icon path for Windows application registration.")
+                raise OSError(self.tr('shell_integration.error.unsafe_icon_registration', 'Unsafe icon path for Windows application registration.'))
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, app_key) as key:
                 winreg.SetValueEx(key, 'ApplicationName', 0, winreg.REG_SZ, 'Notepad-X')
                 winreg.SetValueEx(key, 'FriendlyAppName', 0, winreg.REG_SZ, 'Notepad-X')
@@ -6123,7 +6209,7 @@ class NotepadX:
                     'ApplicationDescription',
                     0,
                     winreg.REG_SZ,
-                    'Edit supported text and code files with Notepad-X.'
+                    self.tr('shell_integration.app_description', 'Edit supported text and code files with Notepad-X.')
                 )
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"{app_key}\DefaultIcon") as icon_key:
                 winreg.SetValueEx(icon_key, '', 0, winreg.REG_SZ, icon_source)
@@ -6144,7 +6230,7 @@ class NotepadX:
         if enabled:
             icon_source = os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else self.icon_path)
             if not self.path_looks_safe_for_shell(icon_source):
-                raise OSError("Unsafe icon path for Windows shell integration.")
+                raise OSError(self.tr('shell_integration.error.unsafe_icon_shell', 'Unsafe icon path for Windows shell integration.'))
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, menu_key) as key:
                 winreg.SetValueEx(key, 'MUIVerb', 0, winreg.REG_SZ, self.tr('menu.view.edit_with_notepadx', 'Edit with Notepad-X'))
                 winreg.SetValueEx(key, 'Icon', 0, winreg.REG_SZ, icon_source)
@@ -9021,26 +9107,40 @@ class NotepadX:
             note_rows.append(row)
         try:
             if output_path.lower().endswith('.md'):
-                markdown_parts = [f"# Notes Export for {self.get_doc_name(doc['frame'])}\n"]
+                markdown_parts = [
+                    f"# {self.tr('export.notes.markdown.title', 'Notes Export for {doc_name}', doc_name=self.get_doc_name(doc['frame']))}\n"
+                ]
+                range_label = self.tr('export.notes.markdown.range', 'Range')
+                author_label = self.tr('note.popup.author', 'Author')
+                color_label = self.tr('export.notes.markdown.color', 'Color')
+                created_label = self.tr('note.popup.created', 'Created')
+                selected_text_heading = self.tr('export.notes.markdown.selected_text_heading', 'Selected Text')
+                code_note_heading = self.tr('export.notes.markdown.code_note_heading', 'Code Note')
+                responses_heading = self.tr('note.popup.responses', 'Responses')
+                unknown_label = self.tr('common.unknown', 'Unknown')
                 for row in note_rows:
-                    markdown_parts.append(f"\n## Note {row['id']}\n")
-                    markdown_parts.append(f"\n- Range: `{row['selection_start']}` to `{row['selection_end']}`\n")
+                    markdown_parts.append(
+                        f"\n## {self.tr('export.notes.markdown.note_heading', 'Note {note_id}', note_id=row['id'])}\n"
+                    )
+                    markdown_parts.append(
+                        f"\n- {range_label}: `{row['selection_start']}` to `{row['selection_end']}`\n"
+                    )
                     if row['author']:
-                        markdown_parts.append(f"- Author: {row['author']}\n")
+                        markdown_parts.append(f"- {author_label}: {row['author']}\n")
                     if row['color']:
-                        markdown_parts.append(f"- Color: {row['color']}\n")
+                        markdown_parts.append(f"- {color_label}: {row['color']}\n")
                     if row['created_at']:
-                        markdown_parts.append(f"- Created: {row['created_at']}\n")
-                    markdown_parts.append("\n### Selected Text\n\n```\n")
+                        markdown_parts.append(f"- {created_label}: {row['created_at']}\n")
+                    markdown_parts.append(f"\n### {selected_text_heading}\n\n```\n")
                     markdown_parts.append(row['selected_text'])
-                    markdown_parts.append("\n```\n\n### Code Note\n\n")
+                    markdown_parts.append(f"\n```\n\n### {code_note_heading}\n\n")
                     markdown_parts.append(row['note'] or '')
                     markdown_parts.append("\n")
                     responses = row.get('responses') or []
                     if responses:
-                        markdown_parts.append("\n### Responses\n")
+                        markdown_parts.append(f"\n### {responses_heading}\n")
                         for response in responses:
-                            author = response.get('author_label') or response.get('author_id') or 'Unknown'
+                            author = response.get('author_label') or response.get('author_id') or unknown_label
                             color = self.get_note_color_label(response.get('color'))
                             created = response.get('created_at') or ''
                             markdown_parts.append(f"\n- {author} | {color}")
@@ -11973,7 +12073,7 @@ class NotepadX:
         return self.tr(
             'grab_git.clone_failed',
             'Notepad-X could not download that GitHub project.\n\n{error_detail}'
-        ).format(error_detail=detail_text or 'Unknown git clone failure.')
+        ).format(error_detail=detail_text or self.tr('grab_git.unknown_failure', 'Unknown git clone failure.'))
 
     def prompt_grab_git_repository(self, parent=None):
         parent = parent or self.root
@@ -12277,7 +12377,12 @@ class NotepadX:
             progress_dialog.destroy()
 
             if result.get('error') is not None or result.get('returncode') != 0:
-                error_detail = str(result.get('error') or result.get('stderr') or result.get('stdout') or 'Unknown git clone failure.')
+                error_detail = str(
+                    result.get('error')
+                    or result.get('stderr')
+                    or result.get('stdout')
+                    or self.tr('grab_git.unknown_failure', 'Unknown git clone failure.')
+                )
                 messagebox.showerror(
                     self.tr('grab_git.title', 'Grab Git'),
                     self.build_grab_git_clone_error_message(repo_identifier, error_detail),
@@ -12632,16 +12737,19 @@ class NotepadX:
         return None
 
     def get_save_and_run_language_name(self, language):
-        display_names = {
-            'python': 'Python',
-            'javascript': 'JavaScript',
-            'php': 'PHP',
-            'batch': 'Batch',
-            'powershell': 'PowerShell',
-            'shell': 'Shell',
-            'html': 'HTML',
+        display_name_keys = {
+            'python': ('filetype.python', 'Python'),
+            'javascript': ('filetype.javascript', 'JavaScript'),
+            'php': ('filetype.php', 'PHP'),
+            'batch': ('filetype.batch', 'Batch'),
+            'powershell': ('filetype.powershell', 'PowerShell'),
+            'shell': ('filetype.shell', 'Shell'),
+            'html': ('filetype.html', 'HTML'),
         }
-        return display_names.get(language, str(language or '').title() or 'Unknown')
+        locale_entry = display_name_keys.get(language)
+        if locale_entry:
+            return self.tr(locale_entry[0], locale_entry[1])
+        return str(language or '').title() or self.tr('common.unknown', 'Unknown')
 
     def choose_available_command(self, candidate_commands):
         for command_args in candidate_commands:
@@ -12991,7 +13099,13 @@ class NotepadX:
                 elif self.shell32:
                     result = self.shell32.ShellExecuteW(None, 'print', doc['file_path'], None, None, 0)
                     if result <= 32:
-                        raise OSError(f"Windows print action failed with code {result}")
+                        raise OSError(
+                            self.tr(
+                                'print.windows_failed_code',
+                                'Windows print action failed with code {code}',
+                                code=result
+                            )
+                        )
                     return "break"
             except OSError as exc:
                 print_error = exc
