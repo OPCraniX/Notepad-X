@@ -471,10 +471,13 @@ DEFAULT_LOCALE_STRINGS = {
     "run.open_browser_failed": "Notepad-X could not open this file in your browser.",
     "locale.language.en": "English",
     "locale.language.ar": "Arabic",
+    "locale.language.bn": "Bengali",
     "locale.language.de": "German",
     "locale.language.es": "Spanish",
     "locale.language.fr": "French",
+    "locale.language.he": "Hebrew",
     "locale.language.hi": "Hindi",
+    "locale.language.id": "Indonesian",
     "locale.language.it": "Italian",
     "locale.language.ja": "Japanese",
     "locale.language.nl": "Dutch",
@@ -485,6 +488,7 @@ DEFAULT_LOCALE_STRINGS = {
     "locale.region.us": "US",
     "locale.region.sa": "Saudi Arabia",
     "locale.region.ae": "United Arab Emirates",
+    "locale.region.bd": "Bangladesh",
     "locale.region.eg": "Egypt",
     "locale.region.ma": "Morocco",
     "locale.region.de": "Germany",
@@ -492,6 +496,8 @@ DEFAULT_LOCALE_STRINGS = {
     "locale.region.es": "Spain",
     "locale.region.ca": "Canada",
     "locale.region.in": "India",
+    "locale.region.il": "Israel",
+    "locale.region.id": "Indonesia",
     "locale.region.it": "Italy",
     "locale.region.jp": "Japan",
     "locale.region.nl": "Netherlands",
@@ -501,7 +507,7 @@ DEFAULT_LOCALE_STRINGS = {
     "locale.region.cn": "China"
 }
 
-RTL_LOCALE_CODES = {'ar', 'ar_sa', 'ar_ae', 'ar_eg', 'ar_ma'}
+RTL_LOCALE_CODES = {'ar', 'ar_sa', 'ar_ae', 'ar_eg', 'ar_ma', 'he', 'he_il'}
 
 LOCALE_DISPLAY_NAMES = {
     'en_us': 'English (US)',
@@ -510,8 +516,11 @@ LOCALE_DISPLAY_NAMES = {
     'ar_ae': 'العربية (الإمارات)',
     'ar_eg': 'العربية (مصر)',
     'ar_ma': 'العربية (المغرب)',
+    'bn_bd': 'বাংলা (বাংলাদেশ)',
     'fr_ca': 'Français (Canada)',
+    'he_il': 'עברית (ישראל)',
     'hi_in': 'हिन्दी (भारत)',
+    'id_id': 'Bahasa Indonesia (Indonesia)',
     'ja_jp': '日本語 (日本)',
     'ru_ru': 'Русский (Россия)',
     'zh_cn': '简体中文 (中国)',
@@ -520,10 +529,13 @@ LOCALE_DISPLAY_NAMES = {
 LANGUAGE_NATIVE_NAMES = {
     'en': 'English',
     'ar': 'العربية',
+    'bn': 'বাংলা',
     'de': 'Deutsch',
     'es': 'Español',
     'fr': 'Français',
+    'he': 'עברית',
     'hi': 'हिन्दी',
+    'id': 'Bahasa Indonesia',
     'it': 'Italiano',
     'ja': '日本語',
     'nl': 'Nederlands',
@@ -537,6 +549,7 @@ REGION_DISPLAY_NAMES = {
     'us': 'US',
     'sa': 'السعودية',
     'ae': 'الإمارات',
+    'bd': 'বাংলাদেশ',
     'eg': 'مصر',
     'ma': 'المغرب',
     'de': 'Deutschland',
@@ -544,6 +557,8 @@ REGION_DISPLAY_NAMES = {
     'es': 'España',
     'ca': 'Canada',
     'in': 'भारत',
+    'il': 'ישראל',
+    'id': 'Indonesia',
     'it': 'Italia',
     'jp': '日本',
     'nl': 'Nederland',
@@ -1761,6 +1776,14 @@ class NotepadX:
             if self.is_windows:
                 return ['Tahoma', 'Arial', 'Segoe UI', 'Courier New']
             return ['Noto Sans Arabic', 'Noto Naskh Arabic', 'DejaVu Sans', 'DejaVu Sans Mono', 'Liberation Sans', 'Monospace']
+        if language == 'he':
+            if self.is_windows:
+                return ['Segoe UI', 'Arial', 'Tahoma', 'Courier New']
+            return ['Noto Sans Hebrew', 'Liberation Sans', 'DejaVu Sans', 'Monospace']
+        if language == 'bn':
+            if self.is_windows:
+                return ['Nirmala UI', 'Vrinda', 'Arial Unicode MS', 'Courier New']
+            return ['Noto Sans Bengali', 'Lohit Bengali', 'Mukti Narrow', 'DejaVu Sans']
         if language == 'ja':
             if self.is_windows:
                 return ['Yu Gothic UI', 'Yu Gothic', 'Meiryo', 'MS Gothic', 'Courier New']
