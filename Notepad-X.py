@@ -62,6 +62,11 @@ try:
 except ImportError:
     SpellChecker = None
 
+
+class EncryptedFileOpenCancelled(OSError):
+    pass
+
+
 DEFAULT_LOCALE_STRINGS = {
     "app.name": "Notepad-X",
     "app.about_title": "About Notepad-X",
@@ -2717,7 +2722,9 @@ class NotepadX:
             passphrase = self.prompt_open_passphrase(file_path, parent=self.root)
             if passphrase is None:
                 self.trace_startup(f"read_encrypted_text_file cancelled={file_path}")
-                raise OSError(self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.'))
+                raise EncryptedFileOpenCancelled(
+                    self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.')
+                )
             try:
                 key = self.derive_encryption_key(passphrase, header)
                 plaintext_bytes = AESGCM(key).decrypt(nonce, ciphertext, self.encryption_magic)
@@ -2733,7 +2740,9 @@ class NotepadX:
                     parent=self.root
                 )
                 if not retry:
-                    raise OSError(self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.'))
+                    raise EncryptedFileOpenCancelled(
+                        self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.')
+                    )
 
     def get_file_signature(self, file_path):
         try:
@@ -10457,6 +10466,9 @@ class NotepadX:
             if str(doc['frame']) == self.notebook.select():
                 self.update_status()
             return True
+        except EncryptedFileOpenCancelled:
+            self.trace_startup(f"load_content_into_doc cancelled={file_path}")
+            return False
         except RuntimeError as exc:
             self.log_exception("load content into doc", exc)
             messagebox.showerror(self.tr('file.open_failed_title', 'Open Failed'), str(exc), parent=self.root)
@@ -10730,15 +10742,26 @@ class NotepadX:
             self.restore_recovery_state()
             return
 
-        current_doc = self.get_current_doc()
-        if current_doc and not current_doc['file_path'] and not current_doc['text'].edit_modified():
-            self.notebook.forget(current_doc['frame'])
-            self.documents.pop(str(current_doc['frame']), None)
+        fallback_doc = self.get_current_doc()
+        if fallback_doc:
+            if fallback_doc.get('file_path') or fallback_doc['text'].edit_modified():
+                fallback_doc = None
 
         restored_tabs = {}
         for file_path in open_files:
             if self._shutdown_requested:
                 break
+            if fallback_doc and not restored_tabs and str(fallback_doc['frame']) in self.documents:
+                doc = fallback_doc
+                doc['file_path'] = file_path
+                doc['background_open_new_tab'] = False
+                if not self.load_content_into_doc(doc, file_path):
+                    self.cleanup_failed_file_open(doc)
+                    continue
+                doc['background_open_new_tab'] = False
+                self.notebook.tab(doc['frame'], text=self.get_doc_title(doc['frame']))
+                restored_tabs[file_path] = doc['frame']
+                continue
             tab_id = self.create_tab(file_path=file_path, select=False)
             doc = self.documents[str(tab_id)]
             if not self.load_content_into_doc(doc, file_path):
@@ -10759,6 +10782,9 @@ class NotepadX:
         selected_tab = restored_tabs.get(primary_file)
         if selected_tab is None and restored_tabs:
             selected_tab = next(iter(restored_tabs.values()))
+        if selected_tab is None and fallback_doc and str(fallback_doc['frame']) in self.documents:
+            selected_tab = fallback_doc['frame']
+            self.refresh_tab_title(selected_tab)
 
         if selected_tab is not None:
             self.notebook.select(selected_tab)
