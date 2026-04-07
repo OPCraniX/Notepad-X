@@ -635,6 +635,7 @@ class NotepadX:
     def __init__(self, isolated_session=False, startup_files=None):
         self.root = tk.Tk()
         self._shutdown_requested = False
+        self.main_loop_started = False
         self.root.title(DEFAULT_LOCALE_STRINGS.get('app.name', 'Notepad-X'))
         self.isolated_session = isolated_session
         self.startup_files = list(startup_files or [])
@@ -645,6 +646,7 @@ class NotepadX:
         if not self._shutdown_requested:
             try:
                 if self.root.winfo_exists():
+                    self.main_loop_started = True
                     self.root.mainloop()
             except tk.TclError:
                 pass
@@ -652,7 +654,7 @@ class NotepadX:
     def init_config(self):
         self.is_windows = os.name == 'nt'
         self.is_linux = sys.platform.startswith('linux')
-        self.app_version = "v1.0.4"
+        self.app_version = "v1.0.5"
         self.resource_dir = self.get_resource_dir()
         self.app_dir = self.get_app_dir()
         self.machine_profile_slug = self.get_machine_profile_slug()
@@ -730,6 +732,7 @@ class NotepadX:
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
         self.recovery_path = os.path.join(self.app_dir, "Notepad-X.recovery.json")
         self.crash_log_path = os.path.join(self.app_dir, "Notepad-X.crash.log")
+        self.startup_trace_path = os.path.join(self.app_dir, "Notepad-X.startup.trace.log")
         self.help_path = os.path.join(self.resource_dir, "Notepad-X-help.txt")
         self.note_color_labels = {
             'yellow': self.tr('note.filter.yellow', 'Yellow'),
@@ -852,6 +855,7 @@ class NotepadX:
         self.currently_editing_panel_visible = False
         self.fullscreen = False
         self.fullscreen_panel_restore = False
+        self.startup_recovery_restore_scheduled = False
 
     def init_runtime(self):
         self.kernel32 = None
@@ -882,8 +886,9 @@ class NotepadX:
         self.create_bottom_panels()
         self.create_menu()
         self.create_status_bar()
+        self.reset_startup_trace()
+        self.trace_startup(f"init_ui session_path={self.session_path}")
         self.restore_session()
-        self.restore_recovery_state()
 
         self.bind_keys()
         self.update_font()
@@ -2334,6 +2339,10 @@ class NotepadX:
 
     def prompt_open_passphrase(self, file_path, parent=None):
         parent = parent or self.root
+        self.trace_startup(
+            f"prompt_open_passphrase create file={file_path} "
+            f"mainloop={self.main_loop_started} viewable={self.root_is_ready_for_dialogs()}"
+        )
         dialog = tk.Toplevel(parent)
         dialog.title(self.tr('encryption.open_title', 'Open Encrypted File'))
         dialog.transient(parent)
@@ -2596,6 +2605,10 @@ class NotepadX:
         self.cleanup_failed_file_open(doc)
 
     def cleanup_failed_file_open(self, doc):
+        self.trace_startup(
+            f"cleanup_failed_file_open frame={doc.get('frame')} "
+            f"file_path={doc.get('file_path')} new_tab={doc.get('background_open_new_tab')}"
+        )
         if doc.get('background_open_new_tab'):
             try:
                 self.notebook.forget(doc['frame'])
@@ -2604,7 +2617,29 @@ class NotepadX:
             self.documents.pop(str(doc['frame']), None)
         else:
             doc['file_path'] = None
-            doc['text'].delete('1.0', tk.END)
+            doc['encrypted_file'] = False
+            doc['encryption_header'] = None
+            doc['encryption_key'] = None
+            doc['preview_mode'] = False
+            doc['virtual_mode'] = False
+            doc['large_file_mode'] = False
+            doc['file_size_bytes'] = 0
+            doc['line_starts'] = None
+            doc['total_file_lines'] = 1
+            doc['window_start_line'] = 1
+            doc['window_end_line'] = 1
+            try:
+                doc['text'].configure(state='normal')
+                doc['text'].delete('1.0', tk.END)
+                doc['text'].edit_modified(False)
+                doc['text'].mark_set(tk.INSERT, '1.0')
+                doc['text'].tag_remove('sel', '1.0', tk.END)
+                doc['text'].see('1.0')
+            except tk.TclError:
+                pass
+            self.refresh_tab_title(doc['frame'])
+            if str(doc['frame']) == self.notebook.select():
+                self.set_active_document(doc['frame'])
         doc['background_open_new_tab'] = False
 
     def handle_background_file_result(self, result):
@@ -2670,6 +2705,7 @@ class NotepadX:
     def read_encrypted_text_file(self, file_path):
         if not self.file_looks_encrypted(file_path):
             return None
+        self.trace_startup(f"read_encrypted_text_file detected={file_path}")
         if not self.encryption_available():
             self.show_encryption_unavailable(self.root)
             raise OSError(self.tr('encryption.error.support_unavailable', 'Encryption support is unavailable.'))
@@ -2677,16 +2713,20 @@ class NotepadX:
             payload_bytes = encrypted_file.read()
         header, nonce, ciphertext = self.parse_encrypted_payload(payload_bytes)
         while True:
+            self.trace_startup(f"read_encrypted_text_file prompting={file_path}")
             passphrase = self.prompt_open_passphrase(file_path, parent=self.root)
             if passphrase is None:
+                self.trace_startup(f"read_encrypted_text_file cancelled={file_path}")
                 raise OSError(self.tr('encryption.error.open_cancelled', 'Encrypted file open cancelled.'))
             try:
                 key = self.derive_encryption_key(passphrase, header)
                 plaintext_bytes = AESGCM(key).decrypt(nonce, ciphertext, self.encryption_magic)
+                self.trace_startup(f"read_encrypted_text_file unlocked={file_path} bytes={len(plaintext_bytes)}")
                 return plaintext_bytes.decode(header.get('encoding') or 'utf-8'), header, key
             except RuntimeError:
                 raise
             except (InvalidTag, ValueError, UnicodeDecodeError):
+                self.trace_startup(f"read_encrypted_text_file retry={file_path}")
                 retry = messagebox.askretrycancel(
                     self.tr('encryption.open_title', 'Open Encrypted File'),
                     self.tr('encryption.unlock_failed', 'That passphrase did not unlock the encrypted file.'),
@@ -2984,6 +3024,21 @@ class NotepadX:
                     f.write(f"{type(exc).__name__}: {exc}\n")
                 f.write(trace)
                 f.write("\n" + ("-" * 80) + "\n")
+        except Exception:
+            pass
+
+    def reset_startup_trace(self):
+        try:
+            if os.path.exists(self.startup_trace_path):
+                os.remove(self.startup_trace_path)
+        except OSError:
+            pass
+
+    def trace_startup(self, message):
+        try:
+            timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+            with open(self.startup_trace_path, 'a', encoding='utf-8') as trace_file:
+                trace_file.write(f"[{timestamp}] {message}\n")
         except Exception:
             pass
 
@@ -3383,6 +3438,43 @@ class NotepadX:
         if self.is_blank_startup_tab_state():
             self.trim_process_working_set()
 
+    def root_is_ready_for_dialogs(self):
+        if self._shutdown_requested:
+            return False
+        if not self.main_loop_started:
+            return False
+        try:
+            return bool(self.root.winfo_exists() and self.root.winfo_viewable())
+        except tk.TclError:
+            return False
+
+    def schedule_when_root_ready(self, callback, attempts=20, delay_ms=75):
+        if self._shutdown_requested or callback is None:
+            return
+
+        def run_when_ready(remaining_attempts):
+            if self._shutdown_requested:
+                return
+            if self.root_is_ready_for_dialogs() or remaining_attempts <= 0:
+                self.trace_startup(
+                    f"schedule_when_root_ready fired callback={getattr(callback, '__name__', repr(callback))} "
+                    f"mainloop={self.main_loop_started} attempts_left={remaining_attempts}"
+                )
+                callback()
+                return
+            try:
+                self.root.after(
+                    delay_ms,
+                    lambda next_attempts=remaining_attempts - 1: run_when_ready(next_attempts)
+                )
+            except tk.TclError:
+                pass
+
+        try:
+            self.root.after_idle(lambda: run_when_ready(attempts))
+        except tk.TclError:
+            pass
+
     def schedule_blank_startup_memory_trim(self):
         for delay_ms in (180, 600, 1400):
             try:
@@ -3395,10 +3487,7 @@ class NotepadX:
             return
         pending_files = list(self.startup_files)
         self.startup_files = []
-        try:
-            self.root.after_idle(lambda files=pending_files: self.open_startup_files(files))
-        except tk.TclError:
-            pass
+        self.schedule_when_root_ready(lambda files=pending_files: self.open_startup_files(files))
 
     # ─── Status Bar ──────────────────────────────────────────────
     def create_status_bar(self):
@@ -10617,6 +10706,75 @@ class NotepadX:
             self.notebook.select(selected_tab)
             self.set_active_document(selected_tab)
 
+    def schedule_startup_recovery_restore(self):
+        if self.startup_recovery_restore_scheduled or self.isolated_session:
+            return
+        self.startup_recovery_restore_scheduled = True
+        self.schedule_when_root_ready(self.run_startup_recovery_restore)
+
+    def run_startup_recovery_restore(self):
+        self.startup_recovery_restore_scheduled = False
+        if self._shutdown_requested:
+            return
+        self.restore_recovery_state()
+
+    def restore_session_tabs(self, open_files, selected_file=None, compare_base_file=None, compare_file=None):
+        if self._shutdown_requested:
+            return
+
+        open_files = list(open_files or [])
+        self.trace_startup(f"restore_session_tabs open_files={open_files}")
+        if not open_files:
+            if self.markdown_preview_enabled.get():
+                self.schedule_markdown_preview_refresh(immediate=True)
+            self.restore_recovery_state()
+            return
+
+        current_doc = self.get_current_doc()
+        if current_doc and not current_doc['file_path'] and not current_doc['text'].edit_modified():
+            self.notebook.forget(current_doc['frame'])
+            self.documents.pop(str(current_doc['frame']), None)
+
+        restored_tabs = {}
+        for file_path in open_files:
+            if self._shutdown_requested:
+                break
+            tab_id = self.create_tab(file_path=file_path, select=False)
+            doc = self.documents[str(tab_id)]
+            if not self.load_content_into_doc(doc, file_path):
+                if self._shutdown_requested:
+                    break
+                try:
+                    self.notebook.forget(doc['frame'])
+                except tk.TclError:
+                    pass
+                self.documents.pop(str(tab_id), None)
+                continue
+            restored_tabs[file_path] = doc['frame']
+
+        primary_file = selected_file
+        if isinstance(compare_base_file, str) and compare_base_file in restored_tabs:
+            primary_file = compare_base_file
+
+        selected_tab = restored_tabs.get(primary_file)
+        if selected_tab is None and restored_tabs:
+            selected_tab = next(iter(restored_tabs.values()))
+
+        if selected_tab is not None:
+            self.notebook.select(selected_tab)
+            self.set_active_document(selected_tab)
+        if self._shutdown_requested:
+            return
+        if self.markdown_preview_enabled.get():
+            self.schedule_markdown_preview_refresh(immediate=True)
+
+        compare_tab = restored_tabs.get(compare_file) if isinstance(compare_file, str) else None
+        if compare_tab is not None and compare_tab != selected_tab:
+            compare_doc = self.documents.get(str(compare_tab))
+            if compare_doc:
+                self.start_inline_compare(compare_doc)
+        self.restore_recovery_state()
+
     def save_session(self):
         if self.isolated_session:
             return
@@ -10641,11 +10799,13 @@ class NotepadX:
         if self.isolated_session:
             return
         if not os.path.exists(self.session_path):
+            self.schedule_startup_recovery_restore()
             return
 
         session = self.read_json_file(self.session_path, "restore session", None)
         session = self.sanitize_session_payload(session)
         if session is None:
+            self.schedule_startup_recovery_restore()
             return
 
         open_files = list(session.get('open_files', []))
@@ -10693,55 +10853,21 @@ class NotepadX:
         if not open_files:
             if self.markdown_preview_enabled.get():
                 self.schedule_markdown_preview_refresh()
+            self.schedule_startup_recovery_restore()
             return
-
-        current_doc = self.get_current_doc()
-        if current_doc and not current_doc['file_path'] and not current_doc['text'].edit_modified():
-            self.notebook.forget(current_doc['frame'])
-            self.documents.pop(str(current_doc['frame']), None)
-
-        restored_tabs = {}
-        for file_path in open_files:
-            if self._shutdown_requested:
-                break
-            tab_id = self.create_tab(file_path=file_path, select=False)
-            doc = self.documents[str(tab_id)]
-            if not self.load_content_into_doc(doc, file_path):
-                if self._shutdown_requested:
-                    break
-                try:
-                    self.notebook.forget(doc['frame'])
-                except tk.TclError:
-                    pass
-                self.documents.pop(str(tab_id), None)
-                continue
-            restored_tabs[file_path] = doc['frame']
 
         selected_file = session.get('selected_file')
         compare_base_file = session.get('compare_base_file')
         compare_file = session.get('compare_file')
-
-        primary_file = selected_file
-        if isinstance(compare_base_file, str) and compare_base_file in restored_tabs:
-            primary_file = compare_base_file
-
-        selected_tab = restored_tabs.get(primary_file)
-        if selected_tab is None and restored_tabs:
-            selected_tab = next(iter(restored_tabs.values()))
-
-        if selected_tab is not None:
-            self.notebook.select(selected_tab)
-            self.set_active_document(selected_tab)
-        if self._shutdown_requested:
-            return
-        if self.markdown_preview_enabled.get():
-            self.schedule_markdown_preview_refresh(immediate=True)
-
-        compare_tab = restored_tabs.get(compare_file) if isinstance(compare_file, str) else None
-        if compare_tab is not None and compare_tab != selected_tab:
-            compare_doc = self.documents.get(str(compare_tab))
-            if compare_doc:
-                self.start_inline_compare(compare_doc)
+        self.trace_startup(
+            f"restore_session open_files={open_files} selected={selected_file} "
+            f"compare_base={compare_base_file} compare={compare_file}"
+        )
+        # Wait until the main window is viewable before reopening files so encrypted-file prompts can render reliably.
+        self.schedule_when_root_ready(
+            lambda files=tuple(open_files), selected=selected_file, base=compare_base_file, compare=compare_file:
+            self.restore_session_tabs(files, selected, base, compare)
+        )
 
     def add_recent_file(self, file_path):
         if not file_path or not os.path.exists(file_path):
@@ -12492,7 +12618,7 @@ class NotepadX:
             current_doc['file_path'] = file_path
             current_doc['background_open_new_tab'] = False
             if not self.load_content_into_doc(current_doc, file_path):
-                current_doc['file_path'] = None
+                self.cleanup_failed_file_open(current_doc)
                 return False
             current_doc['background_open_new_tab'] = False
             self.notebook.tab(current_doc['frame'], text=self.get_doc_title(current_doc['frame']))
