@@ -238,7 +238,7 @@ Session Restore and Recovery
 - The last active tab is restored when possible.
 - Compare mode can be restored when both files still exist.
 - Recent file lists and saved Find / Find In histories are restored with the session.
-- Sound, status bar, numbered lines, autocomplete, spell check, Markdown Preview, compare page-sync, and theme settings are restored.
+- Sound, status bar, numbered lines, autocomplete, spell check, Markdown Preview, compare/preview page-sync, and theme settings are restored.
 - Unsaved untitled tabs are not part of normal session restore, but they can be recovered after a crash.
 - Modified file-backed tabs can also be restored after a crash without overwriting the on-disk file automatically.
 - If recovery data is found after a previous crash, the app offers to restore it.

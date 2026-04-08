@@ -133,7 +133,7 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.edit.goto_line": "Go To Line",
     "menu.edit.top_of_document": "Top of Document",
     "menu.edit.bottom_of_document": "Bottom of Document",
-    "menu.edit.sync_page_navigation": "Sync PgUp/PgDn in Compare",
+    "menu.edit.sync_page_navigation": "Sync PgUp/PgDn in Compare/Preview",
     "menu.edit.date": "Date",
     "menu.edit.time_date": "Time/Date",
     "menu.edit.font": "Font",
@@ -4594,6 +4594,17 @@ class NotepadX:
         except tk.TclError:
             return None
 
+    def get_side_panel_text_widget(self):
+        if not self.is_side_panel_visible() or not self.compare_view:
+            return None
+        side_panel_widget = self.compare_view.get('text')
+        if not side_panel_widget:
+            return None
+        try:
+            return side_panel_widget if side_panel_widget.winfo_exists() else None
+        except tk.TclError:
+            return None
+
     def safe_focus_get(self):
         try:
             return self.root.focus_get()
@@ -4634,7 +4645,7 @@ class NotepadX:
             pass
 
     def goto_document_start(self, event=None):
-        targets = self.get_page_navigation_targets()
+        targets = self.get_page_navigation_targets(event)
         if not targets:
             return "break"
         for widget in targets:
@@ -4646,7 +4657,7 @@ class NotepadX:
             except tk.TclError:
                 continue
             doc = self.get_doc_for_text_widget(widget)
-            if widget == self.get_compare_text_widget():
+            if widget == self.get_side_panel_text_widget():
                 self.update_line_number_gutter(self.compare_view)
             elif doc:
                 self.remember_doc_view_state(doc)
@@ -4655,7 +4666,7 @@ class NotepadX:
         return "break"
 
     def goto_document_end(self, event=None):
-        targets = self.get_page_navigation_targets()
+        targets = self.get_page_navigation_targets(event)
         if not targets:
             return "break"
         for widget in targets:
@@ -4669,7 +4680,7 @@ class NotepadX:
             except tk.TclError:
                 continue
             doc = self.get_doc_for_text_widget(widget)
-            if widget == self.get_compare_text_widget():
+            if widget == self.get_side_panel_text_widget():
                 self.update_line_number_gutter(self.compare_view)
             elif doc:
                 self.remember_doc_view_state(doc)
@@ -4703,24 +4714,41 @@ class NotepadX:
                 return widget
         return None
 
-    def get_page_navigation_targets(self):
-        if self.compare_active and self.sync_page_navigation_enabled.get():
-            targets = []
-            if isinstance(self.text, tk.Text):
-                targets.append(self.text)
-            compare_widget = self.get_compare_text_widget()
-            if compare_widget is not None:
-                targets.append(compare_widget)
-            return targets
+    def get_page_navigation_source_widget(self, event=None):
+        widget = getattr(event, 'widget', None)
+        if isinstance(widget, tk.Text):
+            side_panel_widget = self.get_side_panel_text_widget()
+            if side_panel_widget is not None and widget == side_panel_widget:
+                return widget
+            for doc in self.documents.values():
+                if doc.get('text') == widget:
+                    return widget
 
         active_widget = self.get_active_search_widget()
         if active_widget is not None:
-            return [active_widget]
+            return active_widget
 
         hovered_widget = self.get_hovered_editor_widget()
         if hovered_widget is not None:
-            return [hovered_widget]
-        return []
+            return hovered_widget
+        return None
+
+    def get_page_navigation_targets(self, event=None):
+        source_widget = self.get_page_navigation_source_widget(event)
+        if source_widget is None:
+            return []
+
+        if self.sync_page_navigation_enabled.get() and self.is_side_panel_visible():
+            targets = []
+            if isinstance(self.text, tk.Text):
+                targets.append(self.text)
+            side_panel_widget = self.get_side_panel_text_widget()
+            if side_panel_widget is not None and side_panel_widget not in targets:
+                targets.append(side_panel_widget)
+            if targets:
+                return targets
+
+        return [source_widget]
 
     def sync_widget_insert_to_visible_line(self, widget):
         try:
@@ -4731,8 +4759,8 @@ class NotepadX:
             pass
 
     def get_navigation_doc_for_widget(self, widget):
-        compare_widget = self.get_compare_text_widget()
-        if compare_widget is not None and widget == compare_widget:
+        side_panel_widget = self.get_side_panel_text_widget()
+        if side_panel_widget is not None and widget == side_panel_widget:
             return self.compare_view
         for doc in self.documents.values():
             if doc.get('text') == widget:
@@ -4824,7 +4852,7 @@ class NotepadX:
         return True
 
     def page_up(self, event=None):
-        targets = self.get_page_navigation_targets()
+        targets = self.get_page_navigation_targets(event)
         if not targets:
             return
         for widget in targets:
@@ -4832,7 +4860,7 @@ class NotepadX:
                 continue
             self.set_last_active_editor_widget(widget)
             doc = self.get_doc_for_text_widget(widget)
-            if widget == self.get_compare_text_widget():
+            if widget == self.get_side_panel_text_widget():
                 self.update_line_number_gutter(self.compare_view)
             elif doc:
                 self.remember_doc_view_state(doc)
@@ -4841,7 +4869,7 @@ class NotepadX:
         return "break"
 
     def page_down(self, event=None):
-        targets = self.get_page_navigation_targets()
+        targets = self.get_page_navigation_targets(event)
         if not targets:
             return
         for widget in targets:
@@ -4849,7 +4877,7 @@ class NotepadX:
                 continue
             self.set_last_active_editor_widget(widget)
             doc = self.get_doc_for_text_widget(widget)
-            if widget == self.get_compare_text_widget():
+            if widget == self.get_side_panel_text_widget():
                 self.update_line_number_gutter(self.compare_view)
             elif doc:
                 self.remember_doc_view_state(doc)

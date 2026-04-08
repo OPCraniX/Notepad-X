@@ -117,6 +117,7 @@ This updated benchmark compares Microsoft Notepad and Notepad-X across launch ti
 
 - `View > Preview Markdown` or `Ctrl+Shift+P` opens a live rendered preview in the right pane
 - The preview updates while the source tab changes
+- `View > Sync PgUp/PgDn in Compare/Preview` keeps the left editor and right preview moving together
 - Headings, lists, quotes, rules, fenced code blocks, emphasis, inline code, and links are rendered
 - Opening preview closes compare mode first
 
