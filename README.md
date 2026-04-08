@@ -171,4 +171,4 @@ It can also run shell commands from the current document directory. It is a dock
 
 ![EXE benchmark comparison](gfx/exe_benchmark.png)
 
-This benchmark compares Microsoft Notepad and Notepad-X across launch time, memory use, CPU activity, and disk activity over repeated runs. Notepad-X trades a bit of startup work for a much richer editing feature set once the window is open.
+The latest packaged EXE benchmark for Notepad-X `1.0.6.0` was run on April 8, 2026 over 10 launches on Windows 11 Pro 25H2. In this snapshot, Notepad-X opens faster than Microsoft Notepad on average, uses dramatically less memory once running, and stays lean after startup, while paying for that richer editor startup path with a noticeably larger burst of CPU and disk activity during initialization. In practice, the results show the current build getting the window on screen quickly and then settling down after loading its extra features such as recovery, compare tools, diagnostics, minimap, and theming support.
