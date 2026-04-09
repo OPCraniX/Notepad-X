@@ -26,15 +26,16 @@ Tabs
 - Tabs remember caret position and scroll position.
 - Reopening the same file selects the existing tab instead of duplicating it.
 - Tabs can be reordered with drag and drop.
+- Right-click a tab for save, copy name/path, reveal, and move-to-new-window actions.
 - Modified tabs show `*`.
 - Session restore reopens file-backed tabs on launch.
 
 Line Numbers and Folding
-- `View > Numbered Lines` shows or hides the gutter.
+- `Settings > Numbered Lines` shows or hides the gutter.
 - Clicking a line number copies that full line to the clipboard.
 - Foldable sections show a boxed `+` or `-` in the gutter.
 - Clicking the fold box collapses or expands that section.
-- `F9` toggles the fold at the caret.
+- `F9` toggles the nearest foldable section containing the caret.
 - `Shift+F9` collapses all folds.
 - `Ctrl+F9` expands all folds.
 
@@ -67,8 +68,9 @@ Diagnostics
   Python syntax errors
   JSON parse errors
   XML parse errors
+- Log and crash files can also surface traceback/error lines as diagnostics.
 - Hover the mouse over a highlighted warning/error line to see the issue bubble.
-- `View > Diagnostics` toggles diagnostics on or off.
+- `Settings > Diagnostics` toggles diagnostics on or off.
 
 Find, Replace, and Find In Files
 - Find highlights matches live while you type.
@@ -84,7 +86,7 @@ Compare Mode
 - The source tab stays on the left and the selected comparison tab opens on the right.
 - Compare mode uses the main window instead of a separate compare app.
 - Normal text tabs remain editable in both panes.
-- `View > Compare Multi-Edit` can mirror edits between both panes while comparing.
+- `Settings > Compare Multi-Edit` can mirror edits between both panes while comparing.
 - The right pane has its own status readout and minimap.
 - `Ctrl+Shift+X` closes compare mode.
 
@@ -92,14 +94,15 @@ Markdown Preview
 - `Ctrl+Shift+P` opens live Markdown Preview in the right pane.
 - Preview and compare share the same right-side workspace.
 - Headings, lists, quotes, rules, fenced code blocks, emphasis, inline code, and links are rendered.
-- `View > Sync PgUp/PgDn in Compare/Preview` keeps page navigation moving together between panes.
+- `Settings > Sync PgUp/PgDn in Compare/Preview` keeps page navigation moving together between panes.
 
 Minimap and Breadcrumbs
-- `View > Minimap` shows or hides the minimap.
+- `Settings > Minimap` shows or hides the minimap.
 - Click or drag in the minimap to jump through the document.
 - Diagnostic markers also appear in the minimap.
-- `View > Breadcrumbs` shows file/location context above the editor.
+- `Settings > Breadcrumbs` shows file/location context above the editor.
 - Breadcrumbs can include the nearest symbol while editing code.
+- Clicking the breadcrumb filename copies just the file name; clicking the location copies the full path.
 
 Command Panel
 - `Ctrl+Shift+K` opens the docked command panel at the bottom of the app.
@@ -118,6 +121,9 @@ Command Panel
   `:autosave on|off`
   `:minimap on|off`
   `:diagnostics on|off`
+- `cls` or `clear` clears the command output.
+- Previous commands stay visible in the history list and can be revisited with `Up` and `Down`.
+- Drag the top grip to resize the command panel vertically.
 - The command panel is a quick runner, not a full interactive terminal emulator.
 
 Remote Files
@@ -143,6 +149,7 @@ Spell Check
 - Spell Check underlines misspelled words in supported text-oriented modes.
 - Right-click can show replacement suggestions and `Add to Dictionary`.
 - `F7` toggles Spell Check.
+- `Settings > Spell Check` also controls it.
 - Spell Check stays out of preview tabs, virtual large-file tabs, and most code modes.
 
 Themes, Syntax, and Language
@@ -163,12 +170,16 @@ Encrypted Files
 - Normal Save and Save As stay plain text.
 
 Autosave, Backups, Session Restore, and Recovery
-- `View > Auto Save` toggles autosave.
+- `Settings > Auto Save` toggles autosave.
 - Manual saves use atomic replace behavior.
 - Backup snapshots are created on save.
-- Session restore remembers open files and major editor toggles.
+- Session restore remembers open files, major editor toggles, and the main window size/state.
 - Crash recovery can restore untitled work and modified tabs after a crash.
 - Save conflict checks warn before overwriting a newer disk version.
+
+Settings Menu
+- `Settings` collects the checkmark/toggle options that used to be split across `Edit` and `View`.
+- It includes Status Bar, Numbered Lines, Autocomplete, Spell Check, Auto Pair, Compare Multi-Edit, Minimap, Breadcrumbs, Diagnostics, Auto Save, Word Wrap, Markdown Preview, Sync PgUp/PgDn, Sound, and `Edit with Notepad-X`.
 
 Large Files
 - Large files can load in the background.

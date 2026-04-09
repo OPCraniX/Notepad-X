@@ -18,6 +18,8 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - Docked command panel for quick commands and editor actions
 - SSH-style remote open/save for `user@host:/absolute/path` files using `scp`
 - Autosave, atomic saves, backup snapshots, and large-file virtual mode
+- Tab right-click actions for save, copy path/name, reveal, and move-to-new-window
+- A dedicated `Settings` menu for editor toggles and checkmark-based options
 - Shared notes with replies, unread tracking, filters, and export
 - `Save and Run`, encrypted `.npxe` saves, theme support, locale switching, and Windows shell integration
 
@@ -40,7 +42,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
   project symbol lookup with `Ctrl+Alt+P`
 - Folding supports:
   gutter fold boxes
-  `F9` to toggle the fold at the caret
+  `F9` to toggle the nearest foldable section containing the caret
   `Shift+F9` to collapse all folds
   `Ctrl+F9` to expand all folds
 - Diagnostics can flag:
@@ -49,6 +51,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
   Python syntax errors
   JSON parse errors
   XML parse errors
+- Log and crash files can also surface traceback/error lines as hoverable diagnostics
 - Hovering a highlighted diagnostic line shows the issue in a small info bubble
 
 ### Navigation and Search
@@ -59,6 +62,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - `Ctrl+G` jumps to a line
 - Minimap provides a compressed file overview and click-to-jump navigation
 - Breadcrumbs show the current file/path context and nearest symbol
+- Clicking the filename in breadcrumbs copies just the filename; clicking the path copies the full location
 - `Ctrl+PgUp` and `Ctrl+PgDn` jump to the top and bottom of the current document
 - Optional synced `PgUp` / `PgDn` keeps the left editor and right compare/preview pane moving together
 
@@ -68,6 +72,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - Compare mode keeps the source tab on the left and the selected comparison tab on the right
 - Compare multi-edit can mirror typing, delete, paste, tab, and newline edits across both panes
 - `Ctrl+Shift+P` opens live Markdown preview in the same right-side workspace
+- Right-clicking a tab opens file-specific actions like save, copy name/path, reveal, and move to a new Notepad-X window
 - `Ctrl+Shift+C` toggles the `Currently Editing` sidebar for shared file visibility
 - Shared notes support:
   colored note markers
@@ -81,7 +86,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - Normal saves use atomic replace behavior
 - Autosave can write changes back automatically
 - Backup snapshots are created on save
-- Session restore remembers open files, view state, and major editor toggles
+- Session restore remembers open files, view state, window size/state, and major editor toggles
 - Crash recovery can restore untitled work and modified tabs
 - External-file conflict detection warns before overwriting newer disk content
 - Large files can load in the background
@@ -109,7 +114,7 @@ It supports quick built-in commands like:
 - `:minimap on|off`
 - `:diagnostics on|off`
 
-It can also run shell commands from the current document directory. It is a docked command runner, not a full interactive terminal emulator.
+It can also run shell commands from the current document directory. `cls` or `clear` wipes the output pane, submitted commands are stored in a visible history list, and the panel height can be resized by dragging its top grip. It is a docked command runner, not a full interactive terminal emulator.
 
 ## Remote Files
 
@@ -125,6 +130,11 @@ It can also run shell commands from the current document directory. It is a dock
 - Very large files can open in virtual mode
 - Virtual mode keeps navigation available while limiting direct editing features
 - Binary-like content opens in preview-style mode instead of normal editing mode
+
+## Settings Menu
+
+- `Settings` collects the checkmark/toggle options that used to be split across `Edit` and `View`
+- It includes status bar, numbered lines, autocomplete, spell check, auto-pair, compare multi-edit, minimap, breadcrumbs, diagnostics, autosave, word wrap, Markdown preview, sync page navigation, sound, and `Edit with Notepad-X`
 
 ## Main Shortcuts
 
@@ -151,7 +161,7 @@ It can also run shell commands from the current document directory. It is a dock
 - `Shift+F3` Find Previous
 - `F4` Cycle Notes
 - `F7` Toggle Spell Check
-- `F9` Toggle Fold
+- `F9` Toggle Fold at Caret Section
 - `Shift+F9` Collapse All Folds
 - `Ctrl+F9` Expand All Folds
 - `Ctrl+Shift+P` Preview Markdown
