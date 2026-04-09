@@ -994,6 +994,10 @@ class NotepadX:
         self.search_history_entry = None
         self.search_history_items = []
         self.search_history_hide_job = None
+        self.command_suggestion_popup = None
+        self.command_suggestion_listbox = None
+        self.command_suggestion_items = []
+        self.command_suggestion_hide_job = None
         self.command_panel_visible = False
         self.command_history = []
         self.command_history_index = None
@@ -4916,55 +4920,20 @@ class NotepadX:
         self.command_output_scroll = ttk.Scrollbar(self.command_body_frame, orient='vertical', command=self.command_output.yview)
         self.command_output_scroll.grid(row=0, column=1, sticky='ns', padx=(0, 8), pady=(0, 8))
         self.command_output.configure(yscrollcommand=self.command_output_scroll.set)
-        self.command_history_frame = tk.Frame(self.command_body_frame, bg=self.panel_bg)
-        self.command_history_frame.grid(row=0, column=2, sticky='ns', padx=(0, 8), pady=(0, 8))
-        self.command_history_frame.grid_rowconfigure(1, weight=1)
-        tk.Label(
-            self.command_history_frame,
-            text='History',
-            bg=self.panel_bg,
-            fg='#9aa0a6',
-            anchor='w'
-        ).grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 4))
-        self.command_history_listbox = tk.Listbox(
-            self.command_history_frame,
-            height=self.command_panel_height,
-            width=28,
-            bg='#161b22',
-            fg=self.fg_color,
-            selectbackground='#264f78',
-            selectforeground='white',
-            activestyle='none',
-            highlightthickness=1,
-            highlightbackground='#30363d',
-            relief='flat',
-            borderwidth=0,
-            font=('Consolas', 10),
-            exportselection=False,
-            takefocus=False,
-            selectmode='browse'
-        )
-        self.command_history_listbox.grid(row=1, column=0, sticky='ns')
-        self.command_history_scroll = ttk.Scrollbar(
-            self.command_history_frame,
-            orient='vertical',
-            command=self.command_history_listbox.yview
-        )
-        self.command_history_scroll.grid(row=1, column=1, sticky='ns', padx=(4, 0))
-        self.command_history_listbox.configure(yscrollcommand=self.command_history_scroll.set)
         self.command_entry.bind('<Return>', lambda e: self.run_command_panel())
-        self.command_entry.bind('<Escape>', lambda e: self.show_command_panel())
-        self.command_entry.bind('<Up>', self.handle_command_history_keypress)
-        self.command_entry.bind('<Down>', self.handle_command_history_keypress)
+        self.command_entry.bind('<Escape>', self.handle_command_entry_escape)
+        self.command_entry.bind('<Up>', self.handle_command_suggestion_keypress)
+        self.command_entry.bind('<Down>', self.handle_command_suggestion_keypress)
+        self.command_entry.bind('<Tab>', self.handle_command_suggestion_keypress)
         self.command_entry.bind('<KeyRelease>', self.on_command_entry_key_release)
-        self.command_history_listbox.bind('<<ListboxSelect>>', self.on_command_history_select)
+        self.command_entry.bind('<FocusIn>', self.on_command_entry_focus, add='+')
+        self.command_entry.bind('<FocusOut>', self.on_command_entry_focus_out, add='+')
 
         # Hide both initially
         self.find_frame.grid_remove()
         self.replace_frame.grid_remove()
         self.command_frame.grid_remove()
         self.bottom_frame.grid_remove()
-        self.refresh_command_history_list()
 
     def update_bottom_panel_visibility(self):
         if self.find_panel_visible or self.replace_panel_visible or self.command_panel_visible:
@@ -5050,6 +5019,7 @@ class NotepadX:
     def show_command_panel(self, event=None):
         self.hide_search_history_popup()
         self.hide_autocomplete_popup()
+        self.hide_command_suggestion_popup()
         if self.find_panel_visible:
             self.find_frame.grid_remove()
             self.find_panel_visible = False
@@ -5066,7 +5036,12 @@ class NotepadX:
             self.set_command_panel_height(self.command_panel_height, persist=False)
             self.refresh_command_history_list()
             self.command_entry.focus_set()
+            try:
+                self.root.after_idle(lambda: self.update_command_suggestion_popup(self.command_entry, force_show=True))
+            except tk.TclError:
+                pass
         else:
+            self.hide_command_suggestion_popup()
             self.command_frame.grid_remove()
             self.command_panel_visible = False
             self.focus_last_active_editor()
@@ -5075,10 +5050,10 @@ class NotepadX:
 
     def on_command_entry_key_release(self, event=None):
         keysym = str(getattr(event, 'keysym', '') or '')
-        if keysym in {'Up', 'Down', 'Return', 'Escape'}:
+        if keysym in {'Up', 'Down', 'Return', 'Escape', 'Tab', 'ISO_Left_Tab'}:
             return None
         self.command_history_index = None
-        self.select_command_history_value(self.command_entry.get())
+        self.update_command_suggestion_popup(getattr(event, 'widget', None) or getattr(self, 'command_entry', None))
         return None
 
     def on_command_history_select(self, event=None):
@@ -5182,7 +5157,7 @@ class NotepadX:
             safe_height = self.command_panel_default_height
         safe_height = max(self.command_panel_min_height, min(self.command_panel_max_height, safe_height))
         self.command_panel_height = safe_height
-        widgets = [getattr(self, 'command_output', None), getattr(self, 'command_history_listbox', None)]
+        widgets = [getattr(self, 'command_output', None)]
         for widget in widgets:
             if not widget:
                 continue
@@ -5284,6 +5259,541 @@ class NotepadX:
             return True
         return False
 
+    def strip_named_command_argument(self, value_text):
+        value = str(value_text or '').strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            return value[1:-1]
+        return value
+
+    def normalize_named_command_value(self, value_text):
+        return re.sub(r'[^a-z0-9]+', '', str(value_text or '').strip().lower())
+
+    def format_named_toggle_state(self, label, enabled):
+        return f"{label} {'enabled' if enabled else 'disabled'}.\n"
+
+    def get_named_command_catalog(self):
+        return [
+            (
+                'File',
+                [
+                    ':open [path]',
+                    ':open-project [path]',
+                    ':remote user@host:/path/file',
+                    ':grab-git',
+                    ':recent [list|N|clear]',
+                    ':new-tab',
+                    ':close-tab',
+                    ':save',
+                    ':save-all',
+                    ':save-as',
+                    ':save-copy',
+                    ':save-run',
+                    ':save-encrypted',
+                    ':print',
+                    ':export-notes',
+                    ':exit',
+                ],
+            ),
+            (
+                'Edit',
+                [
+                    ':undo',
+                    ':redo',
+                    ':cut',
+                    ':copy',
+                    ':paste',
+                    ':select-all',
+                    ':find',
+                    ':find-next',
+                    ':find-prev',
+                    ':replace',
+                    ':command-panel',
+                    ':symbols',
+                    ':project-symbols',
+                    ':fold',
+                    ':fold-all',
+                    ':unfold-all',
+                    ':lint',
+                    ':date',
+                    ':time-date',
+                    ':font',
+                    ':language [list|code]',
+                ],
+            ),
+            (
+                'View',
+                [
+                    ':fullscreen',
+                    ':switch-tab',
+                    ':currently-editing',
+                    ':cycle-notes',
+                    ':note-filter [list|all|unread|yellow|green|red|blue]',
+                    ':goto-line',
+                    ':top',
+                    ':bottom',
+                    ':theme [list|create|name]',
+                    ':syntax-mode [list|auto|plain|python|c|cpp|rust|java|javascript|html|php|xml|sql]',
+                    ':compare',
+                    ':close-compare',
+                    ':preview [on|off]',
+                ],
+            ),
+            (
+                'Settings',
+                [
+                    ':edit-with-notepad-x on|off',
+                    ':sound on|off',
+                    ':status-bar on|off',
+                    ':numbered-lines on|off',
+                    ':autocomplete on|off',
+                    ':spell-check on|off',
+                    ':auto-pair on|off',
+                    ':compare-multi-edit on|off',
+                    ':minimap on|off',
+                    ':breadcrumbs on|off',
+                    ':diagnostics on|off',
+                    ':autosave on|off',
+                    ':word-wrap on|off',
+                    ':sync-page-navigation on|off',
+                ],
+            ),
+            (
+                'Help',
+                [
+                    ':help',
+                    ':help-contents',
+                    ':about',
+                ],
+            ),
+        ]
+
+    def get_named_command_templates(self):
+        templates = []
+        seen = set()
+        for _, commands in self.get_named_command_catalog():
+            for command in commands:
+                if command in seen:
+                    continue
+                seen.add(command)
+                templates.append(command)
+        return templates
+
+    def cancel_command_suggestion_hide_job(self):
+        if self.command_suggestion_hide_job:
+            try:
+                self.root.after_cancel(self.command_suggestion_hide_job)
+            except tk.TclError:
+                pass
+            self.command_suggestion_hide_job = None
+
+    def hide_command_suggestion_popup(self):
+        self.cancel_command_suggestion_hide_job()
+        popup = getattr(self, 'command_suggestion_popup', None)
+        if popup is not None:
+            try:
+                popup.destroy()
+            except tk.TclError:
+                pass
+        self.command_suggestion_popup = None
+        self.command_suggestion_listbox = None
+        self.command_suggestion_items = []
+
+    def command_suggestion_popup_visible(self):
+        popup = getattr(self, 'command_suggestion_popup', None)
+        if popup is None:
+            return False
+        try:
+            return popup.winfo_exists()
+        except tk.TclError:
+            return False
+
+    def maybe_hide_command_suggestion_popup(self):
+        self.command_suggestion_hide_job = None
+        focus_widget = self.safe_focus_get()
+        listbox = getattr(self, 'command_suggestion_listbox', None)
+        if focus_widget is not None and focus_widget in (getattr(self, 'command_entry', None), listbox):
+            return
+        self.hide_command_suggestion_popup()
+
+    def schedule_command_suggestion_popup_hide(self):
+        self.cancel_command_suggestion_hide_job()
+        try:
+            self.command_suggestion_hide_job = self.root.after(120, self.maybe_hide_command_suggestion_popup)
+        except tk.TclError:
+            self.command_suggestion_hide_job = None
+
+    def get_command_suggestion_matches(self, query_text):
+        normalized_query = str(query_text or '').strip().lower()
+        suggestions = self.get_named_command_templates()
+        if not normalized_query:
+            return suggestions
+
+        prefix_matches = []
+        substring_matches = []
+        for item in suggestions:
+            lowered = item.lower()
+            if lowered.startswith(normalized_query):
+                prefix_matches.append(item)
+            elif normalized_query in lowered:
+                substring_matches.append(item)
+        return prefix_matches + substring_matches
+
+    def select_command_suggestion_index(self, index):
+        if not self.command_suggestion_popup_visible() or not self.command_suggestion_listbox:
+            return False
+        listbox = self.command_suggestion_listbox
+        if listbox.size() <= 0:
+            return False
+        safe_index = max(0, min(listbox.size() - 1, index))
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(safe_index)
+        listbox.activate(safe_index)
+        listbox.see(safe_index)
+        return True
+
+    def update_command_suggestion_popup(self, entry_widget=None, force_show=False):
+        entry_widget = entry_widget or getattr(self, 'command_entry', None)
+        if not entry_widget:
+            self.hide_command_suggestion_popup()
+            return False
+        try:
+            if not entry_widget.winfo_exists() or not entry_widget.winfo_ismapped():
+                self.hide_command_suggestion_popup()
+                return False
+            current_text = entry_widget.get()
+        except tk.TclError:
+            self.hide_command_suggestion_popup()
+            return False
+
+        current_text = str(current_text or '')
+        if not current_text.startswith(':'):
+            self.hide_command_suggestion_popup()
+            return False
+
+        query_text = current_text.strip()
+        suggestions = self.get_command_suggestion_matches(query_text)
+        if not suggestions:
+            self.hide_command_suggestion_popup()
+            return False
+
+        selected_value = None
+        if self.command_suggestion_popup_visible() and self.command_suggestion_listbox:
+            selection = self.command_suggestion_listbox.curselection()
+            if selection:
+                selected_value = self.command_suggestion_listbox.get(selection[0])
+
+        popup = self.command_suggestion_popup
+        if not self.command_suggestion_popup_visible():
+            popup = self.create_popup_toplevel(self.root)
+            popup.configure(bg='#2d2d2d')
+            listbox = tk.Listbox(
+                popup,
+                bg='#161b22',
+                fg=self.fg_color,
+                selectbackground='#264f78',
+                selectforeground='white',
+                activestyle='none',
+                highlightthickness=1,
+                highlightbackground='#30363d',
+                relief='flat',
+                borderwidth=0,
+                font=('Segoe UI', 10),
+                exportselection=False,
+                takefocus=False,
+                selectmode='browse',
+                width=max(22, min(72, max(len(item) for item in suggestions) + 2)),
+                height=min(10, len(suggestions))
+            )
+            listbox.pack(fill='both', expand=True)
+            listbox.bind('<Motion>', self.on_command_suggestion_listbox_motion)
+            listbox.bind('<ButtonRelease-1>', self.on_command_suggestion_listbox_click)
+            self.command_suggestion_popup = popup
+            self.command_suggestion_listbox = listbox
+        else:
+            listbox = self.command_suggestion_listbox
+            listbox.configure(
+                width=max(22, min(72, max(len(item) for item in suggestions) + 2)),
+                height=min(10, len(suggestions))
+            )
+
+        listbox.delete(0, tk.END)
+        for suggestion in suggestions:
+            listbox.insert(tk.END, suggestion)
+
+        selected_index = 0
+        if selected_value in suggestions:
+            selected_index = suggestions.index(selected_value)
+        self.select_command_suggestion_index(selected_index)
+
+        self.show_popup_toplevel(
+            popup,
+            entry_widget.winfo_rootx(),
+            entry_widget.winfo_rooty() + entry_widget.winfo_height() + 2
+        )
+        self.command_suggestion_items = suggestions
+        return True
+
+    def move_command_suggestion_selection(self, direction):
+        if not self.command_suggestion_popup_visible() or not self.command_suggestion_listbox:
+            return None
+        listbox = self.command_suggestion_listbox
+        selection = listbox.curselection()
+        current_index = selection[0] if selection else 0
+        next_index = max(0, min(listbox.size() - 1, current_index + direction))
+        self.select_command_suggestion_index(next_index)
+        return "break"
+
+    def accept_command_suggestion_selection(self):
+        if not self.command_suggestion_popup_visible() or not self.command_suggestion_listbox:
+            return False
+        selection = self.command_suggestion_listbox.curselection()
+        if selection:
+            suggestion = self.command_suggestion_listbox.get(selection[0])
+        elif self.command_suggestion_listbox.size() > 0:
+            suggestion = self.command_suggestion_listbox.get(0)
+        else:
+            return False
+
+        entry_widget = getattr(self, 'command_entry', None)
+        if not entry_widget:
+            self.hide_command_suggestion_popup()
+            return False
+        try:
+            entry_widget.delete(0, tk.END)
+            entry_widget.insert(0, suggestion)
+            entry_widget.icursor(tk.END)
+            entry_widget.focus_set()
+        except tk.TclError:
+            self.hide_command_suggestion_popup()
+            return False
+
+        self.hide_command_suggestion_popup()
+        return True
+
+    def on_command_suggestion_listbox_motion(self, event=None):
+        listbox = getattr(self, 'command_suggestion_listbox', None)
+        if not listbox:
+            return None
+        index = listbox.nearest(getattr(event, 'y', 0))
+        self.select_command_suggestion_index(index)
+        return None
+
+    def on_command_suggestion_listbox_click(self, event=None):
+        listbox = getattr(self, 'command_suggestion_listbox', None)
+        if not listbox:
+            return "break"
+        index = listbox.nearest(getattr(event, 'y', 0))
+        self.select_command_suggestion_index(index)
+        self.accept_command_suggestion_selection()
+        return "break"
+
+    def on_command_entry_focus(self, event=None):
+        entry_widget = getattr(event, 'widget', None) or getattr(self, 'command_entry', None)
+        if not entry_widget:
+            return None
+        self.cancel_command_suggestion_hide_job()
+        try:
+            self.root.after_idle(lambda widget=entry_widget: self.update_command_suggestion_popup(widget, force_show=True))
+        except tk.TclError:
+            return None
+        return None
+
+    def on_command_entry_focus_out(self, event=None):
+        self.schedule_command_suggestion_popup_hide()
+        return None
+
+    def handle_command_suggestion_keypress(self, event=None):
+        entry_widget = getattr(event, 'widget', None) or getattr(self, 'command_entry', None)
+        if not entry_widget:
+            return None
+
+        keysym = str(getattr(event, 'keysym', '') or '')
+        popup_visible = self.command_suggestion_popup_visible()
+
+        if keysym in {'Up', 'Down'}:
+            if popup_visible:
+                return self.move_command_suggestion_selection(-1 if keysym == 'Up' else 1)
+            if self.update_command_suggestion_popup(entry_widget, force_show=True):
+                if keysym == 'Up' and self.command_suggestion_listbox:
+                    self.select_command_suggestion_index(self.command_suggestion_listbox.size() - 1)
+                return "break"
+            return None
+
+        if keysym in {'Tab', 'ISO_Left_Tab'} and popup_visible:
+            if self.accept_command_suggestion_selection():
+                return "break"
+            return None
+
+        if popup_visible and keysym in {'Left', 'Right', 'Home', 'End', 'Prior', 'Next'}:
+            self.hide_command_suggestion_popup()
+        return None
+
+    def handle_command_entry_escape(self, event=None):
+        if self.command_suggestion_popup_visible():
+            self.hide_command_suggestion_popup()
+            return "break"
+        return self.show_command_panel()
+
+    def run_named_toggle_command(self, command_name, argument_text, variable, callback, label):
+        if not argument_text:
+            return self.format_named_toggle_state(label, bool(variable.get()))
+        if not self.set_feature_toggle_from_text(variable, argument_text):
+            return f"Usage: :{command_name} on|off\n"
+        if callable(callback):
+            callback()
+        else:
+            self.save_session()
+        return self.format_named_toggle_state(label, bool(variable.get()))
+
+    def get_named_syntax_mode_choices(self):
+        return [
+            ('Auto', 'auto'),
+            ('Plain Text', 'plain'),
+            ('Python', 'python'),
+            ('C', 'c'),
+            ('C++', 'cpp'),
+            ('Rust', 'rust'),
+            ('Java', 'java'),
+            ('JavaScript', 'javascript'),
+            ('HTML', 'html'),
+            ('PHP', 'php'),
+            ('XML', 'xml'),
+            ('SQL', 'sql'),
+        ]
+
+    def get_named_note_filter_choices(self):
+        return [
+            (self.tr('note.filter.all', 'All'), 'all'),
+            (self.tr('note.filter.unread', 'Unread'), 'unread'),
+            (self.tr('note.filter.yellow', 'Yellow'), 'yellow'),
+            (self.tr('note.filter.green', 'Green'), 'green'),
+            (self.tr('note.filter.red', 'Red'), 'red'),
+            (self.tr('note.filter.blue', 'Light Blue'), 'blue'),
+        ]
+
+    def get_named_command_help_text(self):
+        lines = ["Built-in commands:"]
+        for heading, commands in self.get_named_command_catalog():
+            lines.append(f"{heading}:")
+            lines.extend(commands)
+        return "\n".join(lines) + "\n"
+
+    def run_named_recent_command(self, argument_text):
+        recent_files = [path for path in self.recent_files if isinstance(path, str) and path]
+        argument = self.strip_named_command_argument(argument_text)
+        normalized = self.normalize_named_command_value(argument)
+        if not argument or normalized in {'list', 'ls'}:
+            if not recent_files:
+                return "Recent files list is empty.\n"
+            lines = ["Recent files:"]
+            for index, path in enumerate(recent_files, start=1):
+                lines.append(f"{index}. {os.path.basename(path)} - {path}")
+            return "\n".join(lines) + "\n"
+        if normalized in {'clear', 'clearlist'}:
+            self.clear_recent_files()
+            return "Cleared recent files list.\n"
+        target_path = None
+        if argument.isdigit():
+            selected_index = int(argument) - 1
+            if 0 <= selected_index < len(recent_files):
+                target_path = recent_files[selected_index]
+        else:
+            normalized_path = os.path.normcase(os.path.abspath(os.path.expanduser(argument)))
+            for path in recent_files:
+                if os.path.normcase(os.path.abspath(path)) == normalized_path:
+                    target_path = path
+                    break
+        if not target_path:
+            return "Usage: :recent [list|N|clear]\n"
+        if self.open_file_path(target_path):
+            return f"Opened recent file: {target_path}\n"
+        return f"Could not open recent file: {target_path}\n"
+
+    def run_named_language_command(self, argument_text):
+        argument = self.strip_named_command_argument(argument_text)
+        normalized = self.normalize_named_command_value(argument)
+        language_codes = self.get_available_language_codes()
+        if not argument or normalized in {'list', 'ls'}:
+            current_code = self.locale_code
+            lines = [f"Current language: {self.get_language_display_name(current_code)} ({current_code})", "Available languages:"]
+            for code in language_codes:
+                lines.append(f"- {self.get_language_display_name(code)} ({code})")
+            return "\n".join(lines) + "\n"
+        for code in language_codes:
+            display_name = self.get_language_display_name(code)
+            if normalized in {
+                self.normalize_named_command_value(code),
+                self.normalize_named_command_value(display_name),
+            }:
+                self.apply_locale(code)
+                return f"Language set to {display_name} ({code}).\n"
+        return "Usage: :language [list|code]\n"
+
+    def run_named_theme_command(self, argument_text):
+        argument = self.strip_named_command_argument(argument_text)
+        normalized = self.normalize_named_command_value(argument)
+        theme_names = self.get_available_syntax_theme_names()
+        if not argument or normalized in {'list', 'ls'}:
+            current_theme = self.syntax_theme.get()
+            lines = [f"Current syntax theme: {self.get_syntax_theme_label(current_theme)}", "Available syntax themes:"]
+            for theme_name in theme_names:
+                lines.append(f"- {self.get_syntax_theme_label(theme_name)} ({theme_name})")
+            return "\n".join(lines) + "\n"
+        if normalized in {'create', 'new', 'newtheme'}:
+            self.show_create_theme_dialog()
+            return "Opened syntax theme creator.\n"
+        for theme_name in theme_names:
+            if normalized in {
+                self.normalize_named_command_value(theme_name),
+                self.normalize_named_command_value(self.get_syntax_theme_label(theme_name)),
+            }:
+                self.set_syntax_theme(theme_name)
+                return f"Syntax theme set to {self.get_syntax_theme_label(theme_name)}.\n"
+        return "Usage: :theme [list|create|name]\n"
+
+    def run_named_syntax_mode_command(self, argument_text):
+        argument = self.strip_named_command_argument(argument_text)
+        normalized = self.normalize_named_command_value(argument)
+        choices = self.get_named_syntax_mode_choices()
+        current_mode = self.syntax_mode_selection.get() or 'auto'
+        if not argument or normalized in {'list', 'ls'}:
+            current_label = next((label for label, value in choices if value == current_mode), current_mode)
+            lines = [f"Current syntax mode: {current_label} ({current_mode})", "Available syntax modes:"]
+            for label, value in choices:
+                lines.append(f"- {label} ({value})")
+            return "\n".join(lines) + "\n"
+        for label, value in choices:
+            if normalized in {
+                self.normalize_named_command_value(value),
+                self.normalize_named_command_value(label),
+            }:
+                self.set_current_syntax_override(value)
+                return f"Syntax mode set to {label}.\n"
+        return "Usage: :syntax-mode [list|mode]\n"
+
+    def run_named_note_filter_command(self, argument_text):
+        argument = self.strip_named_command_argument(argument_text)
+        normalized = self.normalize_named_command_value(argument)
+        choices = self.get_named_note_filter_choices()
+        current_filter = self.note_filter.get()
+        if not argument or normalized in {'list', 'ls'}:
+            current_label = next((label for label, value in choices if value == current_filter), current_filter)
+            lines = [f"Current note filter: {current_label} ({current_filter})", "Available note filters:"]
+            for label, value in choices:
+                lines.append(f"- {label} ({value})")
+            return "\n".join(lines) + "\n"
+        for label, value in choices:
+            if normalized in {
+                self.normalize_named_command_value(value),
+                self.normalize_named_command_value(label),
+            }:
+                self.note_filter.set(value)
+                for doc in self.documents.values():
+                    doc['last_note_cycle_tag'] = None
+                self.update_status()
+                return f"Note filter set to {label}.\n"
+        return "Usage: :note-filter [list|all|unread|yellow|green|red|blue]\n"
+
     def run_named_command(self, command_text):
         normalized = str(command_text or '').strip()
         command_name, _, argument_text = normalized.partition(' ')
@@ -5291,12 +5801,101 @@ class NotepadX:
         argument_text = argument_text.strip()
 
         if command_name in {'help', '?'}:
-            return (
-                "Built-in commands:\n"
-                ":help\n:symbols\n:project-symbols\n:fold\n:fold-all\n:unfold-all\n"
-                ":lint\n:preview\n:compare\n:remote user@host:/path/file\n"
-                ":autosave on|off\n:minimap on|off\n:diagnostics on|off\n"
-            )
+            return self.get_named_command_help_text()
+        if command_name in {'open', 'file-open'}:
+            argument = self.strip_named_command_argument(argument_text)
+            if not argument:
+                self.open_file()
+                return "Opened file picker.\n"
+            if self.open_file_path(os.path.expanduser(argument)):
+                return f"Opened file: {os.path.abspath(os.path.expanduser(argument))}\n"
+            return f"Could not open file: {argument}\n"
+        if command_name in {'open-project', 'project-open'}:
+            argument = self.strip_named_command_argument(argument_text)
+            if not argument:
+                self.open_project()
+                return "Opened project picker.\n"
+            if self.open_project_path(os.path.expanduser(argument)):
+                return f"Opened project: {os.path.abspath(os.path.expanduser(argument))}\n"
+            return f"Could not open project: {argument}\n"
+        if command_name in {'open-remote', 'remote'}:
+            argument = self.strip_named_command_argument(argument_text)
+            if not argument:
+                self.open_remote_file_dialog()
+                return "Opened remote file prompt.\n"
+            if self.open_remote_file(argument):
+                return f"Opened remote file: {argument}\n"
+            return f"Remote open failed: {argument}\n"
+        if command_name in {'grab-git', 'git'}:
+            self.grab_git_project()
+            return "Opened Grab Git dialog.\n"
+        if command_name in {'recent', 'recent-files'}:
+            return self.run_named_recent_command(argument_text)
+        if command_name in {'new-tab', 'new'}:
+            self.new_tab()
+            return "Opened a new tab.\n"
+        if command_name in {'close-tab', 'close'}:
+            self.close_current_tab()
+            return "Closed the current tab.\n"
+        if command_name == 'save':
+            self.save()
+            return "Saved current document.\n"
+        if command_name == 'save-all':
+            self.save_all()
+            return "Saved open documents.\n"
+        if command_name == 'save-as':
+            self.save_as()
+            return "Opened Save As.\n"
+        if command_name in {'save-copy', 'save-copy-as'}:
+            self.save_copy_as()
+            return "Opened Save Copy As.\n"
+        if command_name in {'save-run', 'run'}:
+            self.save_and_run()
+            return "Ran Save and Run.\n"
+        if command_name in {'save-encrypted', 'save-as-encrypted'}:
+            self.save_encrypted_copy()
+            return "Opened Save As Encrypted.\n"
+        if command_name == 'print':
+            self.print_file()
+            return "Opened print for the current document.\n"
+        if command_name in {'export-notes', 'notes-export'}:
+            self.export_notes_report()
+            return "Opened Export Notes.\n"
+        if command_name in {'exit', 'quit'}:
+            self.root.after_idle(self.exit_app)
+            return "Closing Notepad-X.\n"
+        if command_name == 'undo':
+            self.undo()
+            return "Undid the last change.\n"
+        if command_name == 'redo':
+            self.redo()
+            return "Redid the last undone change.\n"
+        if command_name == 'cut':
+            self.cut()
+            return "Cut selection.\n"
+        if command_name == 'copy':
+            self.copy()
+            return "Copied selection.\n"
+        if command_name == 'paste':
+            self.paste()
+            return "Pasted clipboard contents.\n"
+        if command_name in {'select-all', 'selectall'}:
+            self.select_all()
+            return "Selected all text.\n"
+        if command_name == 'find':
+            self.show_find_panel()
+            return "Opened Find panel.\n"
+        if command_name in {'find-next', 'next-find', 'next-match'}:
+            self.find_next()
+            return "Moved to next find match.\n"
+        if command_name in {'find-prev', 'find-previous', 'prev-match'}:
+            self.find_previous()
+            return "Moved to previous find match.\n"
+        if command_name == 'replace':
+            self.show_replace_panel()
+            return "Opened Replace panel.\n"
+        if command_name == 'command-panel':
+            return "Command panel is already open.\n"
         if command_name == 'symbols':
             self.show_symbol_navigator()
             return "Opened symbol navigator.\n"
@@ -5324,33 +5923,84 @@ class NotepadX:
                     for item in diagnostics[:25]
                 )
             return "No active document.\n"
-        if command_name == 'preview':
+        if command_name in {'date', 'insert-date'}:
+            self.insert_date()
+            return "Inserted date.\n"
+        if command_name in {'time-date', 'datetime', 'insert-time-date'}:
+            self.insert_time_date()
+            return "Inserted time/date.\n"
+        if command_name == 'font':
+            self.show_font_dialog()
+            return "Opened font dialog.\n"
+        if command_name == 'language':
+            return self.run_named_language_command(argument_text)
+        if command_name in {'fullscreen', 'full-screen'}:
+            self.toggle_fullscreen()
+            return f"{'Entered' if self.fullscreen else 'Exited'} full screen.\n"
+        if command_name in {'switch-tab', 'next-tab'}:
+            self.switch_tab_right()
+            return "Switched to the next tab.\n"
+        if command_name in {'currently-editing', 'editing-panel'}:
+            self.toggle_currently_editing_panel()
+            return f"{'Opened' if self.currently_editing_panel_visible else 'Closed'} currently editing panel.\n"
+        if command_name in {'cycle-notes', 'notes'}:
+            self.goto_next_note()
+            return "Jumped to the next note.\n"
+        if command_name in {'note-filter', 'filter-notes'}:
+            return self.run_named_note_filter_command(argument_text)
+        if command_name in {'goto-line', 'line'}:
+            self.goto_line_dialog()
+            return "Opened Go To Line.\n"
+        if command_name in {'top', 'document-top'}:
+            self.goto_document_start()
+            return "Moved to top of document.\n"
+        if command_name in {'bottom', 'document-bottom'}:
+            self.goto_document_end()
+            return "Moved to bottom of document.\n"
+        if command_name == 'theme':
+            return self.run_named_theme_command(argument_text)
+        if command_name in {'syntax-mode', 'mode'}:
+            return self.run_named_syntax_mode_command(argument_text)
+        if command_name in {'preview', 'markdown-preview'}:
+            if argument_text:
+                return self.run_named_toggle_command('preview', argument_text, self.markdown_preview_enabled, self.toggle_markdown_preview, 'Markdown preview')
+            self.markdown_preview_enabled.set(not self.markdown_preview_enabled.get())
             self.toggle_markdown_preview()
-            return "Toggled markdown preview.\n"
+            return self.format_named_toggle_state('Markdown preview', bool(self.markdown_preview_enabled.get()))
         if command_name == 'compare':
             self.show_split_compare()
             return "Opened compare picker.\n"
-        if command_name == 'autosave':
-            if self.set_feature_toggle_from_text(self.autosave_enabled, argument_text):
-                self.save_session()
-                return f"Autosave {'enabled' if self.autosave_enabled.get() else 'disabled'}.\n"
-            return "Usage: :autosave on|off\n"
-        if command_name == 'minimap':
-            if self.set_feature_toggle_from_text(self.minimap_enabled, argument_text):
-                self.toggle_minimap()
-                return f"Minimap {'enabled' if self.minimap_enabled.get() else 'disabled'}.\n"
-            return "Usage: :minimap on|off\n"
-        if command_name == 'diagnostics':
-            if self.set_feature_toggle_from_text(self.diagnostics_enabled, argument_text):
-                self.toggle_diagnostics()
-                return f"Diagnostics {'enabled' if self.diagnostics_enabled.get() else 'disabled'}.\n"
-            return "Usage: :diagnostics on|off\n"
-        if command_name == 'remote':
-            if not argument_text:
-                return "Usage: :remote user@host:/path/file\n"
-            if self.open_remote_file(argument_text):
-                return f"Opened remote file: {argument_text}\n"
-            return f"Remote open failed: {argument_text}\n"
+        if command_name in {'close-compare', 'compare-close'}:
+            if self.compare_active:
+                self.close_compare_panel()
+                return "Closed compare panel.\n"
+            return "No compare panel is open.\n"
+        toggle_commands = {
+            'autosave': (self.autosave_enabled, self.save_session, 'Autosave'),
+            'minimap': (self.minimap_enabled, self.toggle_minimap, 'Minimap'),
+            'diagnostics': (self.diagnostics_enabled, self.toggle_diagnostics, 'Diagnostics'),
+            'edit-with-notepad-x': (self.edit_with_shell_enabled, self.toggle_edit_with_shell, 'Edit with Notepad-X'),
+            'edit-with-shell': (self.edit_with_shell_enabled, self.toggle_edit_with_shell, 'Edit with Notepad-X'),
+            'sound': (self.sound_enabled, self.toggle_sound, 'Sound'),
+            'status-bar': (self.status_bar_enabled, self.toggle_status_bar, 'Status bar'),
+            'numbered-lines': (self.numbered_lines_enabled, self.toggle_numbered_lines, 'Numbered lines'),
+            'autocomplete': (self.autocomplete_enabled, self.toggle_autocomplete, 'Autocomplete'),
+            'spell-check': (self.spell_check_enabled, self.toggle_spell_check, 'Spell check'),
+            'auto-pair': (self.auto_pair_enabled, self.save_session, 'Auto pair brackets/quotes'),
+            'compare-multi-edit': (self.compare_multi_edit_enabled, self.save_session, 'Compare multi-edit'),
+            'breadcrumbs': (self.breadcrumbs_enabled, self.toggle_breadcrumbs, 'Breadcrumbs'),
+            'word-wrap': (self.word_wrap_enabled, self.toggle_word_wrap, 'Word wrap'),
+            'sync-page-navigation': (self.sync_page_navigation_enabled, self.save_session, 'Sync page navigation'),
+        }
+        if command_name in toggle_commands:
+            variable, callback, label = toggle_commands[command_name]
+            return self.run_named_toggle_command(command_name, argument_text, variable, callback, label)
+        if command_name in {'help-contents', 'contents'}:
+            self.show_help_contents()
+            return "Opened help contents.\n"
+        if command_name == 'about':
+            self.show_about_dialog()
+            return "Opened About Notepad-X.\n"
         return None
 
     def finish_shell_command(self, command_text, result):
@@ -5378,6 +6028,7 @@ class NotepadX:
         if not command_text:
             return "break"
         normalized_command = command_text.lower()
+        self.hide_command_suggestion_popup()
 
         if normalized_command in {'cls', 'clear'}:
             self.record_command_history(command_text)
@@ -5393,6 +6044,12 @@ class NotepadX:
             self.record_command_history(command_text)
             self.command_entry.delete(0, tk.END)
             self.append_command_output(named_result if named_result.endswith('\n') else f"{named_result}\n")
+            self.command_entry.focus_set()
+            return "break"
+        if command_text.startswith(':'):
+            self.record_command_history(command_text)
+            self.command_entry.delete(0, tk.END)
+            self.append_command_output("Unknown built-in command. Type :help for available commands.\n")
             self.command_entry.focus_set()
             return "break"
 
@@ -16339,15 +16996,14 @@ class NotepadX:
             self.open_file_path(file_path)
         return "break"
 
-    def open_project(self, event=None):
-        file_path = filedialog.askopenfilename(
-            parent=self.root,
-            title=self.tr('menu.file.open_project', 'Open Project'),
-            filetypes=self.get_save_filetypes()
-        )
-        if not file_path:
-            return "break"
-
+    def open_project_path(self, file_path):
+        if not file_path or not os.path.exists(file_path):
+            messagebox.showwarning(
+                self.tr('file.missing_title', 'File Missing'),
+                self.tr('file.missing_message', 'That file could not be found.'),
+                parent=self.root
+            )
+            return False
         selected_project_path = os.path.normcase(os.path.abspath(file_path))
         project_files = self.get_project_source_files(file_path)
         for project_file in project_files:
@@ -16360,6 +17016,17 @@ class NotepadX:
                 if self.text:
                     self.text.focus_set()
                 break
+        return True
+
+    def open_project(self, event=None):
+        file_path = filedialog.askopenfilename(
+            parent=self.root,
+            title=self.tr('menu.file.open_project', 'Open Project'),
+            filetypes=self.get_save_filetypes()
+        )
+        if not file_path:
+            return "break"
+        self.open_project_path(file_path)
         return "break"
 
     def open_recent_file(self, file_path):

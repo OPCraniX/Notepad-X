@@ -15,7 +15,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - Auto-pairing for brackets and quotes with matching-pair highlight
 - Minimap, breadcrumbs, numbered lines, and synced `PgUp` / `PgDn` navigation in compare/preview
 - Real-time diagnostics for warnings and syntax problems, including hover tooltips
-- Docked command panel for quick commands and editor actions
+- Docked command panel for quick commands, menu actions, and shell tasks
 - SSH-style remote open/save for `user@host:/absolute/path` files using `scp`
 - Autosave, atomic saves, backup snapshots, and large-file virtual mode
 - Tab right-click actions for save, copy path/name, reveal, and move-to-new-window
@@ -98,7 +98,9 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 
 Press `Ctrl+Shift+K` to open the bottom command panel.
 
-It supports quick built-in commands like:
+It supports built-in commands for the `File`, `Edit`, `View`, `Settings`, and `Help` menus, along with editor tools like symbols, folding, preview, and diagnostics. Type `:` to open the built-in command autocomplete dropdown, use `Up` / `Down` to browse it, press `Tab` to accept a suggestion, and run `:help` to print the full list.
+
+Quick examples:
 
 - `:help`
 - `:symbols`
@@ -114,7 +116,7 @@ It supports quick built-in commands like:
 - `:minimap on|off`
 - `:diagnostics on|off`
 
-It can also run shell commands from the current document directory. `cls` or `clear` wipes the output pane, submitted commands are stored in a visible history list, and the panel height can be resized by dragging its top grip. It is a docked command runner, not a full interactive terminal emulator.
+It can also run shell commands from the current document directory. `cls` or `clear` wipes the output pane, unknown `:` commands stay inside the built-in command system instead of falling through to the shell, and the panel height can be resized by dragging its top grip. It is a docked command runner, not a full interactive terminal emulator.
 
 ## Remote Files
 

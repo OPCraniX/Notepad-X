@@ -107,6 +107,9 @@ Minimap and Breadcrumbs
 Command Panel
 - `Ctrl+Shift+K` opens the docked command panel at the bottom of the app.
 - It supports built-in commands and one-shot shell commands.
+- Type `:` to open the built-in command autocomplete dropdown.
+- Use `Up` / `Down` to move through suggestions and `Tab` to accept one.
+- The built-in commands cover the `File`, `Edit`, `View`, `Settings`, and `Help` menus plus editor tools.
 - Built-in commands include:
   `:help`
   `:symbols`
@@ -122,7 +125,8 @@ Command Panel
   `:minimap on|off`
   `:diagnostics on|off`
 - `cls` or `clear` clears the command output.
-- Previous commands stay visible in the history list and can be revisited with `Up` and `Down`.
+- `:help` prints the full built-in command list.
+- Unknown `:` commands stay inside the built-in command system instead of running in the shell.
 - Drag the top grip to resize the command panel vertically.
 - The command panel is a quick runner, not a full interactive terminal emulator.
 
