@@ -2729,6 +2729,7 @@ class NotepadX:
                     'tab_id': frame_id,
                     'file_path': file_path,
                     'content': content,
+                    'total_lines_hint': max(1, content.count('\n') + 1),
                     'file_size_bytes': file_size,
                 })
             except Exception as exc:
@@ -2772,11 +2773,16 @@ class NotepadX:
 
         threading.Thread(target=worker, name='NotepadXLargeFileIndex', daemon=True).start()
 
-    def begin_background_text_insert(self, doc, content):
+    def begin_background_text_insert(self, doc, content, total_lines_hint=None):
         doc['pending_insert_content'] = content
         doc['pending_insert_offset'] = 0
+        doc['pending_insert_batch_count'] = 0
+        self.invalidate_minimap_cache(doc)
+        self.start_progressive_minimap_build(doc, total_lines_hint)
+        doc['diagnostics'] = []
         doc['text'].configure(state='normal')
         doc['text'].delete('1.0', tk.END)
+        self.refresh_minimap(doc)
         self.continue_background_text_insert(doc)
 
     def continue_background_text_insert(self, doc):
@@ -2785,16 +2791,26 @@ class NotepadX:
         if not text or not isinstance(content, str):
             return
         offset = int(doc.get('pending_insert_offset', 0) or 0)
-        batch_size = self.file_load_chunk_size * 2
+        batch_size = max(64 * 1024, self.file_load_chunk_size // 4)
         next_offset = min(len(content), offset + batch_size)
         if next_offset > offset:
-            text.insert(tk.END, content[offset:next_offset])
+            chunk_text = content[offset:next_offset]
+            text.insert(tk.END, chunk_text)
+            self.append_progressive_minimap_chunk(doc, chunk_text, finalize=(next_offset >= len(content)))
             doc['pending_insert_offset'] = next_offset
+            doc['pending_insert_batch_count'] = int(doc.get('pending_insert_batch_count', 0) or 0) + 1
+            batch_count = int(doc.get('pending_insert_batch_count', 0) or 0)
+            if batch_count == 1 or batch_count % 4 == 0 or next_offset >= len(content):
+                self.refresh_minimap(doc)
+        elif next_offset >= len(content):
+            self.append_progressive_minimap_chunk(doc, '', finalize=True)
+            self.refresh_minimap(doc)
         if next_offset < len(content):
             self.root.after(1, lambda current=doc: self.continue_background_text_insert(current))
             return
         doc.pop('pending_insert_content', None)
         doc.pop('pending_insert_offset', None)
+        doc.pop('pending_insert_batch_count', None)
         doc['total_file_lines'] = max(1, int(text.index('end-1c').split('.')[0]))
         doc['window_start_line'] = 1
         doc['window_end_line'] = doc['total_file_lines']
@@ -2813,6 +2829,10 @@ class NotepadX:
         self.configure_syntax_highlighting(doc['frame'])
         self.restore_doc_notes(doc)
         self.register_doc_for_shared_notes(doc)
+        self.invalidate_fold_regions(doc)
+        self.schedule_diagnostics(doc)
+        self.update_line_number_gutter(doc)
+        self.schedule_minimap_refresh(doc)
         self.refresh_tab_title(doc['frame'])
         if self.compare_active and self.compare_source_tab == str(doc['frame']):
             self.refresh_compare_panel()
@@ -2825,6 +2845,7 @@ class NotepadX:
         doc['background_load_file_path'] = None
         doc.pop('pending_insert_content', None)
         doc.pop('pending_insert_offset', None)
+        doc.pop('pending_insert_batch_count', None)
         self.end_doc_load(doc)
         file_path = doc.get('file_path')
         messagebox.showerror(
@@ -2844,6 +2865,7 @@ class NotepadX:
             f"cleanup_failed_file_open frame={doc.get('frame')} "
             f"file_path={doc.get('file_path')} new_tab={doc.get('background_open_new_tab')}"
         )
+        self.invalidate_minimap_cache(doc)
         if doc.get('background_open_new_tab'):
             try:
                 self.notebook.forget(doc['frame'])
@@ -2864,6 +2886,7 @@ class NotepadX:
             doc['total_file_lines'] = 1
             doc['window_start_line'] = 1
             doc['window_end_line'] = 1
+            doc['pending_insert_batch_count'] = 0
             try:
                 doc['text'].configure(state='normal')
                 doc['text'].delete('1.0', tk.END)
@@ -2910,7 +2933,11 @@ class NotepadX:
                 doc['file_size_bytes'] = int(result.get('file_size_bytes') or 0)
             except (TypeError, ValueError):
                 doc['file_size_bytes'] = 0
-            self.begin_background_text_insert(doc, result.get('content') or '')
+            self.begin_background_text_insert(
+                doc,
+                result.get('content') or '',
+                result.get('total_lines_hint')
+            )
             doc['background_open_new_tab'] = False
 
     def write_encrypted_text_file(self, file_path, text_content, passphrase=None, header=None, key=None, original_name=None):
@@ -3298,6 +3325,8 @@ class NotepadX:
             return
         self.cancel_doc_autosave(doc)
         if not self.autosave_enabled.get():
+            return
+        if doc.get('large_file_mode'):
             return
         if not doc['text'].edit_modified():
             return
@@ -4250,6 +4279,19 @@ class NotepadX:
                 total_bytes=f"{total_chars:,}",
                 bytes_label=self.tr('status.bytes', 'bytes')
             )
+        elif doc and doc.get('large_file_mode'):
+            try:
+                total_lines = max(1, int(text_widget.index('end-1c').split('.')[0]))
+            except (tk.TclError, ValueError):
+                total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+            doc['total_file_lines'] = total_lines
+            total_chars = max(0, int(doc.get('file_size_bytes', 0) or 0))
+            char_info = self.tr(
+                'status.byte_count',
+                '{total_bytes} {bytes_label}',
+                total_bytes=f"{total_chars:,}",
+                bytes_label=self.tr('status.bytes', 'bytes')
+            )
         else:
             full_content = text_widget.get('1.0', 'end-1c')
             total_lines = int(text_widget.index('end-1c').split('.')[0])
@@ -4283,6 +4325,8 @@ class NotepadX:
             mode_suffix = f" | {self.tr('status.mode.virtual', 'Virtual')}"
         elif doc and doc.get('preview_mode'):
             mode_suffix = f" | {self.tr('status.mode.preview', 'Preview')}"
+        elif doc and doc.get('large_file_mode'):
+            mode_suffix = f" | {self.tr('status.mode.large', 'Large')}"
 
         return self.tr(
             'status.main',
@@ -4308,6 +4352,19 @@ class NotepadX:
             row = doc['window_start_line'] + row - 1
             total_lines = doc['total_file_lines']
             total_chars = doc.get('file_size_bytes', 0)
+            char_info = self.tr(
+                'status.byte_count',
+                '{total_bytes} {bytes_label}',
+                total_bytes=f"{total_chars:,}",
+                bytes_label=self.tr('status.bytes', 'bytes')
+            )
+        elif doc and doc.get('large_file_mode'):
+            try:
+                total_lines = max(1, int(text_widget.index('end-1c').split('.')[0]))
+            except (tk.TclError, ValueError):
+                total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+            doc['total_file_lines'] = total_lines
+            total_chars = max(0, int(doc.get('file_size_bytes', 0) or 0))
             char_info = self.tr(
                 'status.byte_count',
                 '{total_bytes} {bytes_label}',
@@ -4345,6 +4402,8 @@ class NotepadX:
             mode_suffix = f" | {self.tr('status.mode.virtual', 'Virtual')}"
         elif doc and doc.get('preview_mode'):
             mode_suffix = f" | {self.tr('status.mode.preview', 'Preview')}"
+        elif doc and doc.get('large_file_mode'):
+            mode_suffix = f" | {self.tr('status.mode.large', 'Large')}"
 
         return self.tr(
             'status.compare',
@@ -5406,6 +5465,146 @@ class NotepadX:
         except tk.TclError:
             doc['minimap_job'] = None
 
+    def invalidate_minimap_cache(self, doc, clear_progress=True):
+        if not doc:
+            return
+        doc['minimap_model'] = None
+        doc['minimap_model_dirty'] = True
+        if clear_progress:
+            doc['minimap_progressive_state'] = None
+
+    def create_minimap_model(self, total_lines, sample_step, segment_max_lengths, complete=True):
+        total_lines = max(1, int(total_lines or 1))
+        sample_step = max(1, int(sample_step or 1))
+        segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
+        segments = []
+        normalized_lengths = []
+        for index in range(segment_count):
+            start_line = (index * sample_step) + 1
+            end_line = min(total_lines, start_line + sample_step - 1)
+            segment_length = 0
+            if index < len(segment_max_lengths):
+                try:
+                    segment_length = max(0, int(segment_max_lengths[index] or 0))
+                except (TypeError, ValueError):
+                    segment_length = 0
+            normalized_lengths.append(segment_length)
+            segments.append({
+                'start_line': start_line,
+                'end_line': end_line,
+                'length': segment_length,
+            })
+        return {
+            'total_lines': total_lines,
+            'sample_step': sample_step,
+            'segments': segments,
+            'max_length': max(1, max(normalized_lengths or [0])),
+            'complete': bool(complete),
+        }
+
+    def build_minimap_model_from_content(self, content, total_lines=None):
+        content = content if isinstance(content, str) else ''
+        line_lengths = [len(line) for line in content.split('\n')]
+        total_lines = max(1, int(total_lines or len(line_lengths) or 1))
+        if len(line_lengths) < total_lines:
+            line_lengths.extend([0] * (total_lines - len(line_lengths)))
+        elif len(line_lengths) > total_lines:
+            total_lines = len(line_lengths)
+        sample_step = max(1, total_lines // self.minimap_max_segments)
+        segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
+        segment_max_lengths = [0] * segment_count
+        for line_number in range(1, total_lines + 1):
+            segment_index = min(segment_count - 1, (line_number - 1) // sample_step)
+            segment_max_lengths[segment_index] = max(segment_max_lengths[segment_index], line_lengths[line_number - 1])
+        return self.create_minimap_model(total_lines, sample_step, segment_max_lengths, complete=True)
+
+    def start_progressive_minimap_build(self, doc, total_lines_hint=None):
+        if not doc:
+            return
+        total_lines = max(1, int(total_lines_hint or 1))
+        sample_step = max(1, total_lines // self.minimap_max_segments)
+        segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
+        doc['minimap_progressive_state'] = {
+            'total_lines': total_lines,
+            'sample_step': sample_step,
+            'segment_max_lengths': [0] * segment_count,
+            'processed_lines': 0,
+            'remainder': '',
+            'max_length': 1,
+        }
+        doc['minimap_model'] = self.create_minimap_model(total_lines, sample_step, [0] * segment_count, complete=False)
+        doc['minimap_model_dirty'] = False
+
+    def append_progressive_minimap_chunk(self, doc, chunk_text, finalize=False):
+        if not doc:
+            return
+        state = doc.get('minimap_progressive_state')
+        if not state:
+            return
+        buffer = f"{state.get('remainder', '')}{chunk_text or ''}"
+        if finalize:
+            lines = buffer.split('\n')
+            state['remainder'] = ''
+        else:
+            lines = buffer.split('\n')
+            state['remainder'] = lines.pop() if lines else ''
+        total_lines = max(1, int(state.get('total_lines', 1) or 1))
+        sample_step = max(1, int(state.get('sample_step', 1) or 1))
+        segment_max_lengths = state.get('segment_max_lengths') or []
+        processed_lines = int(state.get('processed_lines', 0) or 0)
+        max_length = max(1, int(state.get('max_length', 1) or 1))
+        for line in lines:
+            if processed_lines >= total_lines:
+                break
+            processed_lines += 1
+            segment_index = min(len(segment_max_lengths) - 1, (processed_lines - 1) // sample_step)
+            line_length = len(line)
+            if segment_index >= 0:
+                segment_max_lengths[segment_index] = max(segment_max_lengths[segment_index], line_length)
+            max_length = max(max_length, line_length)
+        if finalize and processed_lines < total_lines:
+            processed_lines = total_lines
+        state['processed_lines'] = processed_lines
+        state['max_length'] = max_length
+        doc['minimap_model'] = self.create_minimap_model(total_lines, sample_step, segment_max_lengths, complete=finalize)
+        doc['minimap_model_dirty'] = False
+        if finalize:
+            doc['minimap_progressive_state'] = None
+
+    def draw_minimap_segments(self, minimap, width, height, model):
+        if not model:
+            return
+        total_lines = max(1, int(model.get('total_lines', 1) or 1))
+        max_length = max(1, int(model.get('max_length', 1) or 1))
+        for segment in model.get('segments', []):
+            segment_length = max(0, int(segment.get('length', 0) or 0))
+            if segment_length <= 0:
+                continue
+            start_line = max(1, int(segment.get('start_line', 1) or 1))
+            end_line = max(start_line, min(total_lines, int(segment.get('end_line', start_line) or start_line)))
+            y0 = int((start_line - 1) / total_lines * height)
+            y1 = max(y0 + 1, int(end_line / total_lines * height))
+            bar_width = max(2, int((segment_length / max_length) * max(4, width - 6)))
+            minimap.create_rectangle(2, y0, min(width - 2, 2 + bar_width), y1, fill='#4f708f', outline='')
+
+    def draw_minimap_overlays(self, doc, minimap, text, width, height, total_lines):
+        diagnostics = doc.get('diagnostics', [])
+        for diagnostic in diagnostics:
+            line_number = max(1, int(diagnostic.get('line', 1)))
+            y = int((line_number - 1) / total_lines * height)
+            marker_color = '#ff6b6b' if diagnostic.get('severity') == 'error' else '#ffcc66'
+            minimap.create_rectangle(width - 4, y, width - 1, min(height, y + 3), fill=marker_color, outline='')
+
+        try:
+            top_line = int(text.index('@0,0').split('.')[0])
+            bottom_line = int(text.index(f'@0,{max(1, text.winfo_height())}').split('.')[0])
+        except (tk.TclError, ValueError):
+            top_line = 1
+            bottom_line = min(total_lines, max(1, total_lines // 5))
+        view_y0 = int((top_line - 1) / total_lines * height)
+        view_y1 = max(view_y0 + 6, int(bottom_line / total_lines * height))
+        minimap.create_rectangle(0, view_y0, width, view_y1, outline='#9ecbff', width=1)
+
     def refresh_minimap(self, doc):
         if not doc:
             return
@@ -5423,47 +5622,31 @@ class NotepadX:
             return
 
         minimap.delete('all')
-        try:
-            content = text.get('1.0', 'end-1c')
-            total_lines = max(1, int(text.index('end-1c').split('.')[0]))
-        except tk.TclError:
-            return
 
         width = max(1, minimap.winfo_width())
         height = max(1, minimap.winfo_height())
         if height <= 2:
             height = max(120, minimap.winfo_reqheight())
-        line_lengths = [0]
-        line_lengths.extend(len(line) for line in content.splitlines())
-        if len(line_lengths) < total_lines + 1:
-            line_lengths.extend([0] * ((total_lines + 1) - len(line_lengths)))
-        max_length = max(1, max(line_lengths))
-        sample_step = max(1, total_lines // self.minimap_max_segments)
-
-        for line_number in range(1, total_lines + 1, sample_step):
-            end_line = min(total_lines, line_number + sample_step - 1)
-            segment_length = max(line_lengths[line_number:end_line + 1] or [0])
-            y0 = int((line_number - 1) / total_lines * height)
-            y1 = max(y0 + 1, int(end_line / total_lines * height))
-            bar_width = max(2, int((segment_length / max_length) * max(4, width - 6)))
-            minimap.create_rectangle(2, y0, min(width - 2, 2 + bar_width), y1, fill='#4f708f', outline='')
-
-        diagnostics = doc.get('diagnostics', [])
-        for diagnostic in diagnostics:
-            line_number = max(1, int(diagnostic.get('line', 1)))
-            y = int((line_number - 1) / total_lines * height)
-            marker_color = '#ff6b6b' if diagnostic.get('severity') == 'error' else '#ffcc66'
-            minimap.create_rectangle(width - 4, y, width - 1, min(height, y + 3), fill=marker_color, outline='')
-
-        try:
-            top_line = int(text.index('@0,0').split('.')[0])
-            bottom_line = int(text.index(f'@0,{max(1, text.winfo_height())}').split('.')[0])
-        except (tk.TclError, ValueError):
-            top_line = 1
-            bottom_line = min(total_lines, max(1, total_lines // 5))
-        view_y0 = int((top_line - 1) / total_lines * height)
-        view_y1 = max(view_y0 + 6, int(bottom_line / total_lines * height))
-        minimap.create_rectangle(0, view_y0, width, view_y1, outline='#9ecbff', width=1)
+        model = doc.get('minimap_model')
+        if not model or doc.get('minimap_model_dirty', True):
+            try:
+                content = text.get('1.0', 'end-1c')
+                total_lines = max(1, int(text.index('end-1c').split('.')[0]))
+            except tk.TclError:
+                return
+            model = self.build_minimap_model_from_content(content, total_lines=total_lines)
+            doc['minimap_model'] = model
+            doc['minimap_model_dirty'] = False
+        self.draw_minimap_segments(minimap, width, height, model)
+        if model.get('complete', True):
+            self.draw_minimap_overlays(
+                doc,
+                minimap,
+                text,
+                width,
+                height,
+                max(1, int(model.get('total_lines', 1) or 1))
+            )
 
     def on_minimap_click(self, event, doc):
         if not self.minimap_enabled.get() or not doc:
@@ -8721,6 +8904,9 @@ class NotepadX:
             'diagnostic_job': None,
             'diagnostics': [],
             'minimap_job': None,
+            'minimap_model': None,
+            'minimap_model_dirty': True,
+            'minimap_progressive_state': None,
             'symbol_cache': None,
             'symbol_cache_signature': None,
             'mirror_guard': False,
@@ -8953,6 +9139,7 @@ class NotepadX:
             'background_open_new_tab': False,
             'pending_insert_content': None,
             'pending_insert_offset': 0,
+            'pending_insert_batch_count': 0,
             'fold_ranges': [],
             'fold_ranges_dirty': True,
             'folded_tags': set(),
@@ -8960,6 +9147,9 @@ class NotepadX:
             'diagnostic_job': None,
             'diagnostics': [],
             'minimap_job': None,
+            'minimap_model': None,
+            'minimap_model_dirty': True,
+            'minimap_progressive_state': None,
             'autosave_job': None,
             'symbol_cache': None,
             'symbol_cache_signature': None,
@@ -9550,7 +9740,7 @@ class NotepadX:
         return regions
 
     def get_fold_regions(self, doc):
-        if not doc or doc.get('preview_mode') or doc.get('virtual_mode'):
+        if not doc or doc.get('preview_mode') or doc.get('virtual_mode') or doc.get('large_file_mode'):
             return []
         text_widget = doc.get('text')
         if not text_widget:
@@ -9581,6 +9771,10 @@ class NotepadX:
 
     def invalidate_fold_regions(self, doc):
         if not doc:
+            return
+        if doc.get('large_file_mode'):
+            doc['fold_ranges'] = []
+            doc['fold_ranges_dirty'] = False
             return
         doc['fold_ranges_dirty'] = True
         if doc.get('preview_mode') or doc.get('virtual_mode'):
@@ -10380,6 +10574,10 @@ class NotepadX:
         text_widget = doc.get('text')
         if not text_widget:
             return
+        if doc.get('large_file_mode'):
+            self.clear_rainbow_theme_tags(text_widget)
+            self.raise_editor_overlay_tags(text_widget)
+            return
         if self.get_syntax_theme_text_effect() == 'rainbow' and not doc.get('virtual_mode') and not doc.get('preview_mode'):
             self.apply_rainbow_theme_to_widget(text_widget)
             return
@@ -10388,6 +10586,9 @@ class NotepadX:
 
     def schedule_text_theme_effect(self, doc):
         if not doc:
+            return
+        if doc.get('large_file_mode'):
+            self.cancel_text_theme_effect_job(doc)
             return
         if self.get_syntax_theme_text_effect() != 'rainbow':
             self.cancel_text_theme_effect_job(doc)
@@ -10778,6 +10979,8 @@ class NotepadX:
 
         self.update_vertical_scrollbar(doc['frame'], None, None, None)
         self.update_line_number_gutter(doc)
+        self.invalidate_minimap_cache(doc)
+        self.schedule_minimap_refresh(doc)
 
     def ensure_virtual_line_visible(self, doc, target_line=None):
         if not doc.get('virtual_mode'):
@@ -11479,6 +11682,7 @@ class NotepadX:
         compare_doc['symbol_cache_signature'] = None
         compare_doc['symbol_cache'] = None
         self.invalidate_fold_regions(compare_doc)
+        self.invalidate_minimap_cache(compare_doc)
         self.schedule_diagnostics(compare_doc)
         self.update_line_number_gutter(compare_doc)
         self.schedule_minimap_refresh(compare_doc)
@@ -13449,6 +13653,8 @@ class NotepadX:
         keep_loading_state = False
         self.begin_doc_load(doc)
         try:
+            self.invalidate_minimap_cache(doc)
+            doc['diagnostics'] = []
             doc['encrypted_file'] = False
             doc['encryption_header'] = None
             doc['encryption_key'] = None
@@ -13458,6 +13664,7 @@ class NotepadX:
             doc['background_load_file_path'] = None
             doc.pop('pending_insert_content', None)
             doc['pending_insert_offset'] = 0
+            doc['pending_insert_batch_count'] = 0
             doc['line_starts'] = None
             doc['total_file_lines'] = 1
             doc['window_start_line'] = 1
@@ -13661,6 +13868,8 @@ class NotepadX:
         selected_recovery_key = None
         current_doc = self.get_current_doc()
         for doc in self.documents.values():
+            if doc.get('large_file_mode'):
+                continue
             content = doc['text'].get('1.0', 'end-1c')
             modified = bool(doc['text'].edit_modified())
             file_path = doc.get('file_path')
@@ -13701,6 +13910,8 @@ class NotepadX:
         text = doc.get('text')
         if not text:
             return
+        self.invalidate_minimap_cache(doc)
+        doc['diagnostics'] = []
         doc['suspend_modified_events'] = True
         try:
             text.delete('1.0', tk.END)
@@ -13710,6 +13921,10 @@ class NotepadX:
             doc['suspend_modified_events'] = False
         self.refresh_tab_title(doc['frame'])
         self.update_doc_file_signature(doc)
+        self.invalidate_fold_regions(doc)
+        self.schedule_diagnostics(doc)
+        self.update_line_number_gutter(doc)
+        self.schedule_minimap_refresh(doc)
 
     def persist_recovery_state(self):
         self.recovery_job = None
@@ -14186,7 +14401,15 @@ class NotepadX:
         self.remember_doc_view_state(doc)
         doc['symbol_cache_signature'] = None
         doc['symbol_cache'] = None
-        self.invalidate_fold_regions(doc)
+        is_large_file = bool(doc.get('large_file_mode'))
+        if is_large_file:
+            try:
+                doc['total_file_lines'] = max(1, int(doc['text'].index('end-1c').split('.')[0]))
+            except (tk.TclError, TypeError, ValueError):
+                pass
+        else:
+            self.invalidate_fold_regions(doc)
+            self.invalidate_minimap_cache(doc)
         if not doc.get('file_path'):
             self.configure_syntax_highlighting(tab_id)
         if doc.get('syntax_mode') and doc.get('syntax_mode') != 'python':
@@ -15024,6 +15247,8 @@ class NotepadX:
         compare_doc['window_start_line'] = 1
         compare_doc['window_end_line'] = 1
         compare_doc['total_file_lines'] = 1
+        self.invalidate_minimap_cache(compare_doc)
+        compare_doc['diagnostics'] = []
 
         compare_text = compare_doc['text']
         try:
@@ -15132,6 +15357,8 @@ class NotepadX:
         compare_doc['window_start_line'] = doc.get('window_start_line', 1)
         compare_doc['window_end_line'] = doc.get('window_end_line', 1)
         compare_doc['total_file_lines'] = doc.get('total_file_lines', 1)
+        self.invalidate_minimap_cache(compare_doc)
+        compare_doc['diagnostics'] = []
 
         self.refresh_compare_header()
 
