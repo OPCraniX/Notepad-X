@@ -830,10 +830,13 @@ class NotepadX:
         self.large_file_threshold_bytes = 5 * 1024 * 1024
         self.max_editable_large_file_bytes = 64 * 1024 * 1024
         self.file_load_chunk_size = 256 * 1024
+        self.virtual_index_chunk_size = 4 * 1024 * 1024
         self.huge_file_preview_threshold_bytes = 100 * 1024 * 1024
         self.huge_file_preview_bytes = 2 * 1024 * 1024
         self.virtual_file_window_lines = 5000
         self.virtual_file_margin_lines = 800
+        self.virtual_file_window_max_bytes = 8 * 1024 * 1024
+        self.huge_virtual_file_window_max_bytes = 4 * 1024 * 1024
         config_dir = self.get_config_dir(self.app_dir)
         os.makedirs(config_dir, exist_ok=True)
         self.locale_dir = self.get_locale_dir(config_dir)
@@ -2701,12 +2704,18 @@ class NotepadX:
         file_size = 0
         with open(file_path, 'rb') as f:
             while True:
-                chunk = f.read(self.file_load_chunk_size)
+                chunk = f.read(self.virtual_index_chunk_size)
                 if not chunk:
                     break
                 base_offset = file_size
                 file_size += len(chunk)
-                line_starts.extend(base_offset + index + 1 for index, byte in enumerate(chunk) if byte == 10)
+                search_from = 0
+                while True:
+                    newline_index = chunk.find(b'\n', search_from)
+                    if newline_index == -1:
+                        break
+                    line_starts.append(base_offset + newline_index + 1)
+                    search_from = newline_index + 1
         return line_starts, file_size
 
     def start_background_text_load(self, doc, file_path):
@@ -2760,12 +2769,14 @@ class NotepadX:
         def worker():
             try:
                 line_starts, file_size = self.build_line_index_background(file_path)
+                minimap_model = self.build_minimap_model_from_line_starts(line_starts, file_size)
                 self.queue_background_file_result({
                     'kind': 'virtual',
                     'tab_id': frame_id,
                     'file_path': file_path,
                     'line_starts': line_starts,
                     'file_size_bytes': file_size,
+                    'minimap_model': minimap_model,
                 })
             except Exception as exc:
                 self.queue_background_file_result({
@@ -2890,6 +2901,9 @@ class NotepadX:
             doc['total_file_lines'] = 1
             doc['window_start_line'] = 1
             doc['window_end_line'] = 1
+            doc['last_virtual_line'] = 1
+            doc['last_virtual_col'] = 0
+            doc['pending_virtual_target_line'] = None
             doc['pending_insert_batch_count'] = 0
             try:
                 doc['text'].configure(state='normal')
@@ -2920,13 +2934,21 @@ class NotepadX:
             doc['line_starts'] = result.get('line_starts') or [0]
             doc['file_size_bytes'] = int(result.get('file_size_bytes') or 0)
             doc['total_file_lines'] = max(1, len(doc['line_starts']))
+            doc['minimap_model'] = result.get('minimap_model')
+            doc['minimap_model_dirty'] = not bool(doc.get('minimap_model'))
+            doc['minimap_progressive_state'] = None
             doc['background_loading'] = False
             doc['background_load_kind'] = None
             doc['background_load_file_path'] = None
             doc['window_start_line'] = 1
             doc['window_end_line'] = 1
             self.end_doc_load(doc)
-            self.load_virtual_window(doc, 1)
+            pending_target = doc.pop('pending_virtual_target_line', None)
+            if pending_target == 'end':
+                target_line = doc['total_file_lines']
+            else:
+                target_line = int(pending_target or doc.get('last_virtual_line', 1) or 1)
+            self.load_virtual_window(doc, target_line)
             self.refresh_tab_title(doc['frame'])
             if str(doc['frame']) == self.notebook.select():
                 self.update_status()
@@ -4274,9 +4296,9 @@ class NotepadX:
         col = int(col) + 1
 
         if doc and doc.get('virtual_mode'):
-            row = doc['window_start_line'] + row - 1
-            total_lines = doc['total_file_lines']
-            total_chars = doc['file_size_bytes']
+            total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+            row = max(1, min(total_lines, doc.get('window_start_line', 1) + row - 1))
+            total_chars = int(doc.get('file_size_bytes', 0) or 0)
             char_info = self.tr(
                 'status.byte_count',
                 '{total_bytes} {bytes_label}',
@@ -4353,9 +4375,9 @@ class NotepadX:
         col = int(col) + 1
 
         if doc and doc.get('virtual_mode'):
-            row = doc['window_start_line'] + row - 1
-            total_lines = doc['total_file_lines']
-            total_chars = doc.get('file_size_bytes', 0)
+            total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+            row = max(1, min(total_lines, doc.get('window_start_line', 1) + row - 1))
+            total_chars = int(doc.get('file_size_bytes', 0) or 0)
             char_info = self.tr(
                 'status.byte_count',
                 '{total_bytes} {bytes_label}',
@@ -6175,6 +6197,24 @@ class NotepadX:
             segment_max_lengths[segment_index] = max(segment_max_lengths[segment_index], line_lengths[line_number - 1])
         return self.create_minimap_model(total_lines, sample_step, segment_max_lengths, complete=True)
 
+    def build_minimap_model_from_line_starts(self, line_starts, file_size):
+        normalized_starts = list(line_starts or [0])
+        total_lines = max(1, len(normalized_starts))
+        sample_step = max(1, total_lines // self.minimap_max_segments)
+        segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
+        segment_max_lengths = [0] * segment_count
+        safe_file_size = max(0, int(file_size or 0))
+        for line_index in range(total_lines):
+            start_byte = normalized_starts[line_index]
+            if line_index + 1 < len(normalized_starts):
+                end_byte = normalized_starts[line_index + 1]
+            else:
+                end_byte = safe_file_size
+            line_length = max(0, int(end_byte - start_byte))
+            segment_index = min(segment_count - 1, line_index // sample_step)
+            segment_max_lengths[segment_index] = max(segment_max_lengths[segment_index], line_length)
+        return self.create_minimap_model(total_lines, sample_step, segment_max_lengths, complete=True)
+
     def start_progressive_minimap_build(self, doc, total_lines_hint=None):
         if not doc:
             return
@@ -6258,6 +6298,10 @@ class NotepadX:
         except (tk.TclError, ValueError):
             top_line = 1
             bottom_line = min(total_lines, max(1, total_lines // 5))
+        if doc.get('virtual_mode'):
+            window_start_line = max(1, int(doc.get('window_start_line', 1) or 1))
+            top_line = max(1, min(total_lines, window_start_line + top_line - 1))
+            bottom_line = max(top_line, min(total_lines, window_start_line + bottom_line - 1))
         view_y0 = int((top_line - 1) / total_lines * height)
         view_y1 = max(view_y0 + 6, int(bottom_line / total_lines * height))
         minimap.create_rectangle(0, view_y0, width, view_y1, outline='#9ecbff', width=1)
@@ -6286,12 +6330,18 @@ class NotepadX:
             height = max(120, minimap.winfo_reqheight())
         model = doc.get('minimap_model')
         if not model or doc.get('minimap_model_dirty', True):
-            try:
-                content = text.get('1.0', 'end-1c')
-                total_lines = max(1, int(text.index('end-1c').split('.')[0]))
-            except tk.TclError:
-                return
-            model = self.build_minimap_model_from_content(content, total_lines=total_lines)
+            if doc.get('virtual_mode') and self.is_virtual_index_ready(doc):
+                model = self.build_minimap_model_from_line_starts(
+                    doc.get('line_starts'),
+                    doc.get('file_size_bytes', 0)
+                )
+            else:
+                try:
+                    content = text.get('1.0', 'end-1c')
+                    total_lines = max(1, int(text.index('end-1c').split('.')[0]))
+                except tk.TclError:
+                    return
+                model = self.build_minimap_model_from_content(content, total_lines=total_lines)
             doc['minimap_model'] = model
             doc['minimap_model_dirty'] = False
         self.draw_minimap_segments(minimap, width, height, model)
@@ -6313,12 +6363,18 @@ class NotepadX:
         if not text or not minimap:
             return "break"
         try:
-            total_lines = max(1, int(text.index('end-1c').split('.')[0]))
+            if doc.get('virtual_mode') and self.is_virtual_index_ready(doc):
+                total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+            else:
+                total_lines = max(1, int(text.index('end-1c').split('.')[0]))
             height = max(1, minimap.winfo_height())
             target_ratio = min(1.0, max(0.0, float(event.y) / float(height)))
             target_line = max(1, min(total_lines, int(target_ratio * total_lines) + 1))
-            text.mark_set(tk.INSERT, f'{target_line}.0')
-            text.see(f'{target_line}.0')
+            if doc.get('virtual_mode') and self.is_virtual_index_ready(doc):
+                self.load_virtual_window(doc, target_line)
+            else:
+                text.mark_set(tk.INSERT, f'{target_line}.0')
+                text.see(f'{target_line}.0')
             self.set_last_active_editor_widget(text)
         except (tk.TclError, ValueError, ZeroDivisionError):
             return "break"
@@ -7046,6 +7102,15 @@ class NotepadX:
         if not targets:
             return "break"
         for widget in targets:
+            doc = self.get_navigation_doc_for_widget(widget)
+            if doc and doc.get('virtual_mode'):
+                if self.is_virtual_index_ready(doc):
+                    try:
+                        self.load_virtual_window(doc, 1)
+                    except tk.TclError:
+                        continue
+                else:
+                    doc['pending_virtual_target_line'] = 1
             try:
                 widget.mark_set(tk.INSERT, '1.0')
                 widget.tag_remove('sel', '1.0', tk.END)
@@ -7053,7 +7118,6 @@ class NotepadX:
                 self.set_last_active_editor_widget(widget)
             except tk.TclError:
                 continue
-            doc = self.get_navigation_doc_for_widget(widget)
             if doc:
                 self.remember_doc_view_state(doc)
                 self.update_line_number_gutter(doc)
@@ -7066,16 +7130,29 @@ class NotepadX:
         if not targets:
             return "break"
         for widget in targets:
+            doc = self.get_navigation_doc_for_widget(widget)
             try:
-                last_line = widget.index('end-1c').split('.')[0]
-                target_index = f'{last_line}.0'
+                if doc and doc.get('virtual_mode'):
+                    if self.is_virtual_index_ready(doc):
+                        last_line = max(1, int(doc.get('total_file_lines', 1) or 1))
+                        self.load_virtual_window(doc, last_line)
+                        local_line = max(1, min(
+                            max(1, doc.get('window_end_line', last_line) - doc.get('window_start_line', 1) + 1),
+                            last_line - doc.get('window_start_line', 1) + 1
+                        ))
+                        target_index = f'{local_line}.0'
+                    else:
+                        doc['pending_virtual_target_line'] = 'end'
+                        target_index = '1.0'
+                else:
+                    last_line = widget.index('end-1c').split('.')[0]
+                    target_index = f'{last_line}.0'
                 widget.mark_set(tk.INSERT, target_index)
                 widget.tag_remove('sel', '1.0', tk.END)
                 widget.see(target_index)
                 self.set_last_active_editor_widget(widget)
             except tk.TclError:
                 continue
-            doc = self.get_navigation_doc_for_widget(widget)
             if doc:
                 self.remember_doc_view_state(doc)
                 self.update_line_number_gutter(doc)
@@ -9546,6 +9623,8 @@ class NotepadX:
             'large_file_mode': False,
             'preview_mode': False,
             'virtual_mode': False,
+            'line_starts': None,
+            'file_size_bytes': 0,
             'syntax_job': None,
             'syntax_mode': None,
             'syntax_override': None,
@@ -9553,10 +9632,15 @@ class NotepadX:
             'window_start_line': 1,
             'window_end_line': 1,
             'total_file_lines': 1,
+            'last_virtual_line': 1,
+            'last_virtual_col': 0,
+            'pending_virtual_target_line': None,
             'suspend_modified_events': False,
             'fold_ranges': [],
             'fold_ranges_dirty': True,
             'folded_tags': set(),
+            'collapsed_fold_regions': {},
+            'collapsed_fold_regions_dirty': False,
             'gutter_fold_hitboxes': [],
             'diagnostic_job': None,
             'diagnostics': [],
@@ -9794,12 +9878,17 @@ class NotepadX:
             'background_load_kind': None,
             'background_load_file_path': None,
             'background_open_new_tab': False,
+            'last_virtual_line': 1,
+            'last_virtual_col': 0,
+            'pending_virtual_target_line': None,
             'pending_insert_content': None,
             'pending_insert_offset': 0,
             'pending_insert_batch_count': 0,
             'fold_ranges': [],
             'fold_ranges_dirty': True,
             'folded_tags': set(),
+            'collapsed_fold_regions': {},
+            'collapsed_fold_regions_dirty': False,
             'gutter_fold_hitboxes': [],
             'diagnostic_job': None,
             'diagnostics': [],
@@ -9839,8 +9928,21 @@ class NotepadX:
             return
         try:
             doc['last_insert_index'] = text.index(tk.INSERT)
+            if doc.get('virtual_mode'):
+                row_text, col_text = doc['last_insert_index'].split('.')
+                local_row = int(row_text)
+                local_col = max(0, int(col_text))
+                total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+                doc['last_virtual_line'] = max(
+                    1,
+                    min(total_lines, int(doc.get('window_start_line', 1) or 1) + local_row - 1)
+                )
+                doc['last_virtual_col'] = local_col
         except tk.TclError:
             pass
+        except (TypeError, ValueError):
+            doc['last_virtual_line'] = max(1, int(doc.get('window_start_line', 1) or 1))
+            doc['last_virtual_col'] = 0
         try:
             doc['last_yview'] = text.yview()[0]
         except (tk.TclError, IndexError):
@@ -9856,21 +9958,35 @@ class NotepadX:
         text = doc.get('text')
         if not text or not text.winfo_exists():
             return
-        insert_index = doc.get('last_insert_index') or '1.0'
-        try:
-            text.mark_set(tk.INSERT, insert_index)
-        except tk.TclError:
-            text.mark_set(tk.INSERT, '1.0')
-
         if doc.get('virtual_mode'):
-            try:
-                global_line = doc['window_start_line'] + int(text.index(tk.INSERT).split('.')[0]) - 1
-            except (tk.TclError, ValueError):
-                global_line = doc.get('window_start_line', 1)
+            if not self.is_virtual_index_ready(doc):
+                pending_line = int(doc.get('last_virtual_line', 1) or 1)
+                doc['pending_virtual_target_line'] = max(1, pending_line)
+                return
+            global_line = max(1, min(
+                int(doc.get('total_file_lines', 1) or 1),
+                int(doc.get('last_virtual_line', doc.get('window_start_line', 1)) or doc.get('window_start_line', 1))
+            ))
+            global_col = max(0, int(doc.get('last_virtual_col', 0) or 0))
             self.ensure_virtual_line_visible(doc, global_line)
             text = doc.get('text')
             if not text or not text.winfo_exists():
                 return
+            local_line = max(1, min(
+                max(1, int(doc.get('window_end_line', 1) or 1) - int(doc.get('window_start_line', 1) or 1) + 1),
+                global_line - int(doc.get('window_start_line', 1) or 1) + 1
+            ))
+            try:
+                line_length = len(text.get(f"{local_line}.0", f"{local_line}.end"))
+                text.mark_set(tk.INSERT, f"{local_line}.{min(global_col, line_length)}")
+            except tk.TclError:
+                text.mark_set(tk.INSERT, '1.0')
+        else:
+            insert_index = doc.get('last_insert_index') or '1.0'
+            try:
+                text.mark_set(tk.INSERT, insert_index)
+            except tk.TclError:
+                text.mark_set(tk.INSERT, '1.0')
 
         try:
             text.xview_moveto(float(doc.get('last_xview', 0.0)))
@@ -10437,6 +10553,13 @@ class NotepadX:
         if doc.get('preview_mode') or doc.get('virtual_mode'):
             doc['fold_ranges'] = []
 
+    def invalidate_collapsed_fold_regions(self, doc, clear_cache=False):
+        if not doc:
+            return
+        if clear_cache:
+            doc['collapsed_fold_regions'] = {}
+        doc['collapsed_fold_regions_dirty'] = True
+
     def get_cached_fold_regions(self, doc, force=False):
         if not doc:
             return []
@@ -10452,13 +10575,16 @@ class NotepadX:
     def make_fold_tag_name(self, start_line, end_line):
         return f"fold_{start_line}_{end_line}"
 
-    def get_collapsed_fold_regions(self, doc):
-        collapsed = {}
+    def get_collapsed_fold_regions(self, doc, force=False):
         if not doc:
-            return collapsed
+            return {}
+        collapsed = doc.setdefault('collapsed_fold_regions', {})
         text_widget = doc.get('text')
         if not text_widget:
             return collapsed
+        if not force and not doc.get('collapsed_fold_regions_dirty', False):
+            return collapsed
+        collapsed = {}
         for tag_name in list(doc.get('folded_tags') or []):
             try:
                 ranges = text_widget.tag_ranges(tag_name)
@@ -10477,7 +10603,33 @@ class NotepadX:
                 'end': max(start_line + 1, end_line),
                 'tag_name': tag_name,
             }
+        doc['collapsed_fold_regions'] = collapsed
+        doc['collapsed_fold_regions_dirty'] = False
         return collapsed
+
+    def get_top_level_fold_regions(self, regions):
+        normalized = sorted(
+            (
+                {
+                    'start': int(region.get('start', 1) or 1),
+                    'end': int(region.get('end', int(region.get('start', 1) or 1)) or int(region.get('start', 1) or 1)),
+                }
+                for region in (regions or [])
+            ),
+            key=lambda item: (item['start'], -item['end'])
+        )
+        top_level = []
+        current_end = 0
+        for region in normalized:
+            start_line = region['start']
+            end_line = region['end']
+            if end_line <= start_line:
+                continue
+            if start_line <= current_end:
+                continue
+            top_level.append(region)
+            current_end = end_line
+        return top_level
 
     def get_preferred_fold_region_at_line(self, doc, line_number, regions=None, collapsed_regions=None):
         if not doc:
@@ -10524,11 +10676,12 @@ class NotepadX:
             return
         for tag_name in list(doc.get('folded_tags') or []):
             try:
-                text_widget.tag_remove(tag_name, '1.0', tk.END)
                 text_widget.tag_delete(tag_name)
             except tk.TclError:
                 pass
         doc['folded_tags'] = set()
+        doc['collapsed_fold_regions'] = {}
+        doc['collapsed_fold_regions_dirty'] = False
 
     def apply_fold_region(self, doc, region):
         if not doc or not region:
@@ -10545,6 +10698,13 @@ class NotepadX:
             text_widget.tag_config(tag_name, elide=True)
             text_widget.tag_add(tag_name, f'{start_line + 1}.0', f'{end_line}.0 lineend +1c')
             doc.setdefault('folded_tags', set()).add(tag_name)
+            collapsed = doc.setdefault('collapsed_fold_regions', {})
+            collapsed[start_line] = {
+                'start': start_line,
+                'end': end_line,
+                'tag_name': tag_name,
+            }
+            doc['collapsed_fold_regions_dirty'] = False
         except tk.TclError:
             return
 
@@ -10560,11 +10720,12 @@ class NotepadX:
             tag_name = collapsed_region.get('tag_name')
             if tag_name:
                 try:
-                    text_widget.tag_remove(tag_name, '1.0', tk.END)
                     text_widget.tag_delete(tag_name)
                 except tk.TclError:
                     pass
                 doc.setdefault('folded_tags', set()).discard(tag_name)
+                doc.setdefault('collapsed_fold_regions', {}).pop(start_line, None)
+                doc['collapsed_fold_regions_dirty'] = False
         else:
             self.apply_fold_region(doc, region)
         self.update_line_number_gutter(doc)
@@ -10586,7 +10747,7 @@ class NotepadX:
         if not target_doc:
             return "break"
         self.clear_fold_tags(target_doc)
-        regions = self.get_cached_fold_regions(target_doc, force=True)
+        regions = self.get_top_level_fold_regions(self.get_cached_fold_regions(target_doc))
         for region in regions:
             self.apply_fold_region(target_doc, region)
         self.update_line_number_gutter(target_doc)
@@ -11591,12 +11752,75 @@ class NotepadX:
                 self.root.update_idletasks()
         return line_starts, position
 
+    def is_virtual_index_ready(self, doc):
+        if not doc or not doc.get('virtual_mode'):
+            return False
+        line_starts = doc.get('line_starts')
+        return isinstance(line_starts, list) and len(line_starts) > 0
+
+    def get_virtual_line_end_byte(self, doc, line_number):
+        line_starts = doc.get('line_starts') or [0]
+        total_lines = max(1, int(doc.get('total_file_lines', len(line_starts)) or len(line_starts)))
+        safe_line_number = max(1, min(total_lines, int(line_number or 1)))
+        if safe_line_number < total_lines and safe_line_number < len(line_starts):
+            return line_starts[safe_line_number]
+        return max(0, int(doc.get('file_size_bytes', 0) or 0))
+
+    def get_virtual_line_span_bytes(self, doc, start_line, end_line):
+        if not self.is_virtual_index_ready(doc):
+            return 0
+        line_starts = doc.get('line_starts') or [0]
+        total_lines = max(1, int(doc.get('total_file_lines', len(line_starts)) or len(line_starts)))
+        safe_start_line = max(1, min(total_lines, int(start_line or 1)))
+        safe_end_line = max(safe_start_line, min(total_lines, int(end_line or safe_start_line)))
+        start_byte = line_starts[safe_start_line - 1]
+        end_byte = self.get_virtual_line_end_byte(doc, safe_end_line)
+        return max(0, end_byte - start_byte)
+
+    def get_virtual_window_bounds(self, doc, target_line):
+        line_starts = doc.get('line_starts') or [0]
+        total_lines = max(1, int(doc.get('total_file_lines', len(line_starts)) or len(line_starts)))
+        max_lines = max(1, int(self.virtual_file_window_lines or 1))
+        max_bytes = max(1, int(self.virtual_file_window_max_bytes or 1))
+        file_size_bytes = max(0, int(doc.get('file_size_bytes', 0) or 0))
+        if file_size_bytes >= self.huge_file_preview_threshold_bytes:
+            max_bytes = min(max_bytes, max(1, int(self.huge_virtual_file_window_max_bytes or 1)))
+        safe_target_line = max(1, min(total_lines, int(target_line or 1)))
+        start_line = max(1, safe_target_line - (max_lines // 2))
+        end_line = min(total_lines, start_line + max_lines - 1)
+        start_line = max(1, end_line - max_lines + 1)
+
+        while start_line < end_line and self.get_virtual_line_span_bytes(doc, start_line, end_line) > max_bytes:
+            if (safe_target_line - start_line) >= (end_line - safe_target_line):
+                start_line += 1
+            else:
+                end_line -= 1
+
+        expanded = True
+        while expanded and (end_line - start_line + 1) < max_lines:
+            expanded = False
+            if start_line > 1 and self.get_virtual_line_span_bytes(doc, start_line - 1, end_line) <= max_bytes:
+                start_line -= 1
+                expanded = True
+            if end_line < total_lines and self.get_virtual_line_span_bytes(doc, start_line, end_line + 1) <= max_bytes:
+                end_line += 1
+                expanded = True
+
+        return start_line, end_line
+
     def read_virtual_line_window(self, doc, start_line, end_line):
-        start_byte = doc['line_starts'][start_line - 1]
-        if end_line < doc['total_file_lines']:
-            end_byte = doc['line_starts'][end_line]
+        if not self.is_virtual_index_ready(doc):
+            return ""
+        line_starts = doc.get('line_starts') or [0]
+        total_lines = max(1, int(doc.get('total_file_lines', len(line_starts)) or len(line_starts)))
+        safe_start_line = max(1, min(total_lines, int(start_line or 1)))
+        safe_end_line = max(safe_start_line, min(total_lines, int(end_line or safe_start_line)))
+
+        start_byte = line_starts[safe_start_line - 1]
+        if safe_end_line < total_lines and safe_end_line < len(line_starts):
+            end_byte = line_starts[safe_end_line]
         else:
-            end_byte = doc['file_size_bytes']
+            end_byte = int(doc.get('file_size_bytes', 0) or 0)
 
         with open(doc['file_path'], 'rb') as f:
             f.seek(start_byte)
@@ -11604,18 +11828,36 @@ class NotepadX:
         return data.decode('utf-8', errors='replace')
 
     def load_virtual_window(self, doc, target_line=1):
-        total_lines = max(1, doc['total_file_lines'])
-        target_line = max(1, min(total_lines, target_line))
-        start_line = max(1, target_line - (self.virtual_file_window_lines // 2))
-        end_line = min(total_lines, start_line + self.virtual_file_window_lines - 1)
-        start_line = max(1, end_line - self.virtual_file_window_lines + 1)
-
-        content = self.read_virtual_line_window(doc, start_line, end_line)
+        if not self.is_virtual_index_ready(doc):
+            return False
+        total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
+        target_line = max(1, min(total_lines, int(target_line or 1)))
+        start_line, end_line = self.get_virtual_window_bounds(doc, target_line)
         text = doc['text']
         try:
             current_col = int(text.index(tk.INSERT).split('.')[1])
         except tk.TclError:
             current_col = 0
+
+        if (
+            start_line == int(doc.get('window_start_line', 0) or 0) and
+            end_line == int(doc.get('window_end_line', 0) or 0)
+        ):
+            local_line = max(1, target_line - start_line + 1)
+            try:
+                line_length = len(text.get(f"{local_line}.0", f"{local_line}.end"))
+                text.mark_set(tk.INSERT, f"{local_line}.{min(current_col, line_length)}")
+                text.see(f"{local_line}.0")
+            except tk.TclError:
+                return False
+            doc['last_virtual_line'] = target_line
+            doc['last_virtual_col'] = max(0, min(current_col, line_length))
+            self.update_vertical_scrollbar(doc['frame'], None, None, None)
+            self.update_line_number_gutter(doc)
+            self.schedule_minimap_refresh(doc)
+            return True
+
+        content = self.read_virtual_line_window(doc, start_line, end_line)
 
         doc['suspend_modified_events'] = True
         text.delete('1.0', tk.END)
@@ -11627,6 +11869,7 @@ class NotepadX:
         doc['window_end_line'] = end_line
 
         local_line = max(1, target_line - start_line + 1)
+        line_length = 0
         try:
             line_length = len(text.get(f"{local_line}.0", f"{local_line}.end"))
             text.mark_set(tk.INSERT, f"{local_line}.{min(current_col, line_length)}")
@@ -11634,14 +11877,16 @@ class NotepadX:
         except tk.TclError:
             text.mark_set(tk.INSERT, '1.0')
 
+        doc['last_virtual_line'] = target_line
+        doc['last_virtual_col'] = max(0, min(current_col, line_length))
         self.update_vertical_scrollbar(doc['frame'], None, None, None)
         self.update_line_number_gutter(doc)
-        self.invalidate_minimap_cache(doc)
         self.schedule_minimap_refresh(doc)
+        return True
 
     def ensure_virtual_line_visible(self, doc, target_line=None):
-        if not doc.get('virtual_mode'):
-            return
+        if not doc.get('virtual_mode') or not self.is_virtual_index_ready(doc):
+            return False
 
         if target_line is None:
             try:
@@ -11653,9 +11898,11 @@ class NotepadX:
         target_line = max(1, min(doc['total_file_lines'], target_line))
         local_line = target_line - doc['window_start_line'] + 1
         visible_lines = max(1, doc['window_end_line'] - doc['window_start_line'] + 1)
+        margin_lines = min(self.virtual_file_margin_lines, max(5, visible_lines // 4))
 
-        if local_line <= self.virtual_file_margin_lines or local_line >= visible_lines - self.virtual_file_margin_lines:
-            self.load_virtual_window(doc, target_line)
+        if local_line <= margin_lines or local_line >= visible_lines - margin_lines:
+            return self.load_virtual_window(doc, target_line)
+        return True
 
     def handle_text_activity(self, event, tab_id):
         doc = self.documents.get(str(tab_id))
@@ -12313,6 +12560,7 @@ class NotepadX:
         if compare_content == source_content:
             compare_doc['last_insert_index'] = compare_insert
             compare_text.edit_modified(False)
+            self.invalidate_collapsed_fold_regions(compare_doc)
             self.update_line_number_gutter(compare_doc)
             self.schedule_minimap_refresh(compare_doc)
             self.update_status()
@@ -12333,6 +12581,7 @@ class NotepadX:
         compare_doc['pushing_to_source'] = False
         source_doc['last_insert_index'] = compare_insert
         compare_doc['last_insert_index'] = compare_insert
+        self.invalidate_collapsed_fold_regions(compare_doc)
         if compare_doc.get('syntax_mode') and compare_doc.get('syntax_mode') != 'python':
             self.schedule_syntax_highlight(compare_doc)
         self.schedule_text_theme_effect(compare_doc)
@@ -12406,7 +12655,8 @@ class NotepadX:
         elif args[0] == 'scroll':
             count = int(args[1])
             unit = args[2]
-            step = 1 if unit == 'units' else max(1, self.virtual_file_window_lines // 2)
+            current_window_lines = max(1, int(doc.get('window_end_line', 1) or 1) - int(doc.get('window_start_line', 1) or 1) + 1)
+            step = 1 if unit == 'units' else max(1, current_window_lines // 2)
             target_line = doc['window_start_line'] + (count * step)
         else:
             return
@@ -14311,6 +14561,7 @@ class NotepadX:
         self.begin_doc_load(doc)
         try:
             self.invalidate_minimap_cache(doc)
+            self.clear_fold_tags(doc)
             doc['diagnostics'] = []
             doc['encrypted_file'] = False
             doc['encryption_header'] = None
@@ -14326,6 +14577,9 @@ class NotepadX:
             doc['total_file_lines'] = 1
             doc['window_start_line'] = 1
             doc['window_end_line'] = 1
+            doc['last_virtual_line'] = 1
+            doc['last_virtual_col'] = 0
+            doc['pending_virtual_target_line'] = None
 
             text = doc['text']
             text.configure(state='normal')
@@ -15066,6 +15320,7 @@ class NotepadX:
                 pass
         else:
             self.invalidate_fold_regions(doc)
+            self.invalidate_collapsed_fold_regions(doc)
             self.invalidate_minimap_cache(doc)
         if not doc.get('file_path'):
             self.configure_syntax_highlighting(tab_id)
