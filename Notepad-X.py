@@ -3110,8 +3110,7 @@ class NotepadX:
             doc['display_name'] = None
 
     def remote_tools_available(self, notify=False):
-        scp_path = shutil.which('scp')
-        if scp_path:
+        if self.get_scp_executable():
             return True
         if notify:
             messagebox.showerror(
@@ -3121,15 +3120,28 @@ class NotepadX:
             )
         return False
 
+    def get_scp_executable(self):
+        scp_path = shutil.which('scp')
+        if not scp_path:
+            return None
+        normalized_path = os.path.abspath(str(scp_path).strip())
+        if not normalized_path or any(char in normalized_path for char in '\r\n\0'):
+            return None
+        return normalized_path
+
     def parse_remote_spec(self, spec_text):
         spec = str(spec_text or '').strip()
-        match = re.match(r'^(?P<host>[^:]+):(?P<path>/.*)$', spec)
+        if any(char in spec for char in '\r\n\0'):
+            raise ValueError('Remote file paths cannot contain control characters')
+        match = re.match(r'^(?P<host>[^:\s/][^:\s]*):(?P<path>/.*)$', spec)
         if not match:
             raise ValueError('Remote files must use the format user@host:/absolute/path/to/file')
         host = match.group('host').strip()
         path = match.group('path').strip()
         if not host or not path or path == '/':
             raise ValueError('Remote files must include both a host and an absolute file path')
+        if host.startswith('-'):
+            raise ValueError('Remote host names cannot start with a dash')
         return {'spec': f'{host}:{path}', 'host': host, 'path': path}
 
     def build_remote_shadow_path(self, remote_spec):
@@ -3142,11 +3154,13 @@ class NotepadX:
         return os.path.join(shadow_dir, f'{path_hash}-{remote_name}')
 
     def fetch_remote_file_to_shadow(self, remote_spec, shadow_path):
-        if not self.remote_tools_available(notify=True):
+        scp_path = self.get_scp_executable()
+        if not scp_path:
+            self.remote_tools_available(notify=True)
             raise OSError('scp is unavailable')
         os.makedirs(os.path.dirname(shadow_path), exist_ok=True)
         completed = subprocess.run(
-            ['scp', '-q', remote_spec, shadow_path],
+            [scp_path, '-q', remote_spec, shadow_path],
             capture_output=True,
             text=True,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -3259,9 +3273,12 @@ class NotepadX:
         shadow_path = doc.get('remote_shadow_path') or doc.get('file_path')
         if not remote_spec or not shadow_path:
             raise OSError('Remote document metadata is incomplete')
+        scp_path = self.get_scp_executable()
+        if not scp_path:
+            raise OSError('scp is unavailable')
         self.write_file_atomically(shadow_path, text_content)
         completed = subprocess.run(
-            ['scp', '-q', shadow_path, remote_spec],
+            [scp_path, '-q', shadow_path, remote_spec],
             capture_output=True,
             text=True,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -4290,6 +4307,55 @@ class NotepadX:
         percent = round((self.current_font_size / self.base_font_size) * 100)
         return f"+{percent-100}%" if percent > 100 else f"{percent-100}%"
 
+    def get_text_widget_char_count(self, text_widget, start_index='1.0', end_index='end-1c'):
+        if not text_widget:
+            return 0
+        try:
+            counts = text_widget.count(start_index, end_index, 'chars')
+            if counts:
+                return max(0, int(counts[0]))
+        except (tk.TclError, TypeError, ValueError, IndexError):
+            pass
+        try:
+            return len(text_widget.get(start_index, end_index))
+        except tk.TclError:
+            return 0
+
+    def get_text_widget_selected_char_count(self, text_widget):
+        if not text_widget:
+            return 0
+        try:
+            sel_start = text_widget.index('sel.first')
+            sel_end = text_widget.index('sel.last')
+        except tk.TclError:
+            return 0
+        return self.get_text_widget_char_count(text_widget, sel_start, sel_end)
+
+    def build_status_char_info_for_widget(self, text_widget):
+        try:
+            total_lines = max(1, int(text_widget.index('end-1c').split('.')[0]))
+        except (tk.TclError, ValueError):
+            total_lines = 1
+        total_chars = self.get_text_widget_char_count(text_widget)
+        selected_count = self.get_text_widget_selected_char_count(text_widget)
+        if selected_count > 0:
+            char_info = self.tr(
+                'status.selected_char_count',
+                '{selected_count} {of_label} {total_chars} {characters_label}',
+                selected_count=f"{selected_count:,}",
+                of_label=self.tr('status.of', 'of'),
+                total_chars=f"{total_chars:,}",
+                characters_label=self.tr('status.characters', 'characters')
+            )
+        else:
+            char_info = self.tr(
+                'status.char_count',
+                '{total_chars} {characters_label}',
+                total_chars=f"{total_chars:,}",
+                characters_label=self.tr('status.characters', 'characters')
+            )
+        return total_lines, total_chars, char_info
+
     def build_editor_status_text(self, doc, text_widget):
         row, col = text_widget.index(tk.INSERT).split('.')
         row = int(row)
@@ -4319,31 +4385,7 @@ class NotepadX:
                 bytes_label=self.tr('status.bytes', 'bytes')
             )
         else:
-            full_content = text_widget.get('1.0', 'end-1c')
-            total_lines = int(text_widget.index('end-1c').split('.')[0])
-            total_chars = len(full_content)
-            try:
-                sel_start = text_widget.index('sel.first')
-                sel_end = text_widget.index('sel.last')
-                selected_count = len(text_widget.get(sel_start, sel_end))
-            except tk.TclError:
-                selected_count = 0
-            if selected_count > 0:
-                char_info = self.tr(
-                    'status.selected_char_count',
-                    '{selected_count} {of_label} {total_chars} {characters_label}',
-                    selected_count=f"{selected_count:,}",
-                    of_label=self.tr('status.of', 'of'),
-                    total_chars=f"{total_chars:,}",
-                    characters_label=self.tr('status.characters', 'characters')
-                )
-            else:
-                char_info = self.tr(
-                    'status.char_count',
-                    '{total_chars} {characters_label}',
-                    total_chars=f"{total_chars:,}",
-                    characters_label=self.tr('status.characters', 'characters')
-                )
+            total_lines, total_chars, char_info = self.build_status_char_info_for_widget(text_widget)
 
         zoom_text = self.get_zoom_text()
         mode_suffix = ""
@@ -4398,31 +4440,7 @@ class NotepadX:
                 bytes_label=self.tr('status.bytes', 'bytes')
             )
         else:
-            full_content = text_widget.get('1.0', 'end-1c')
-            total_lines = int(text_widget.index('end-1c').split('.')[0])
-            total_chars = len(full_content)
-            try:
-                sel_start = text_widget.index('sel.first')
-                sel_end = text_widget.index('sel.last')
-                selected_count = len(text_widget.get(sel_start, sel_end))
-            except tk.TclError:
-                selected_count = 0
-            if selected_count > 0:
-                char_info = self.tr(
-                    'status.selected_char_count',
-                    '{selected_count} {of_label} {total_chars} {characters_label}',
-                    selected_count=f"{selected_count:,}",
-                    of_label=self.tr('status.of', 'of'),
-                    total_chars=f"{total_chars:,}",
-                    characters_label=self.tr('status.characters', 'characters')
-                )
-            else:
-                char_info = self.tr(
-                    'status.char_count',
-                    '{total_chars} {characters_label}',
-                    total_chars=f"{total_chars:,}",
-                    characters_label=self.tr('status.characters', 'characters')
-                )
+            total_lines, total_chars, char_info = self.build_status_char_info_for_widget(text_widget)
         mode_suffix = ""
         if doc and doc.get('virtual_mode'):
             mode_suffix = f" | {self.tr('status.mode.virtual', 'Virtual')}"
@@ -9337,6 +9355,17 @@ class NotepadX:
 
         x, y, width, height = bbox
         popup = self.autocomplete_popup
+        previous_prefix = str(getattr(self, 'autocomplete_prefix', '') or '')
+        selected_index = 0
+        selected_value = None
+        if self.autocomplete_popup_visible() and self.autocomplete_listbox:
+            selection = self.autocomplete_listbox.curselection()
+            if selection:
+                selected_index = int(selection[0])
+                try:
+                    selected_value = self.autocomplete_listbox.get(selected_index)
+                except tk.TclError:
+                    selected_value = None
         if not self.autocomplete_popup_visible():
             popup = self.create_popup_toplevel(self.root)
             popup.configure(bg='#2d2d2d')
@@ -9366,8 +9395,15 @@ class NotepadX:
         for suggestion in suggestions:
             listbox.insert(tk.END, suggestion)
         listbox.selection_clear(0, tk.END)
-        listbox.selection_set(0)
-        listbox.activate(0)
+        if prefix == previous_prefix and selected_value in suggestions:
+            selected_index = suggestions.index(selected_value)
+        elif prefix == previous_prefix and suggestions:
+            selected_index = max(0, min(len(suggestions) - 1, selected_index))
+        else:
+            selected_index = 0
+        listbox.selection_set(selected_index)
+        listbox.activate(selected_index)
+        listbox.see(selected_index)
 
         self.show_popup_toplevel(popup, text.winfo_rootx() + x, text.winfo_rooty() + y + height + 2)
         self.autocomplete_doc_id = str(doc['frame'])
@@ -12348,9 +12384,12 @@ class NotepadX:
             return self.move_autocomplete_selection(-1)
         if event.keysym == 'Down':
             return self.move_autocomplete_selection(1)
-        if event.keysym in {'Tab', 'Return', 'KP_Enter'}:
+        if event.keysym == 'Tab':
             if self.accept_autocomplete_selection():
                 return "break"
+        if event.keysym in {'Return', 'KP_Enter'}:
+            self.hide_autocomplete_popup()
+            return None
         if event.keysym == 'Escape':
             self.hide_autocomplete_popup()
             return "break"
@@ -16792,6 +16831,8 @@ class NotepadX:
         repo_text = str(value or '').strip()
         if not repo_text:
             return None
+        if any(char in repo_text for char in '\r\n\0'):
+            return None
         repo_text = repo_text.replace('\\', '/').rstrip('/')
         github_match = re.match(r'^(?:https?://)?(?:www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?$', repo_text, re.IGNORECASE)
         if github_match:
@@ -16805,6 +16846,10 @@ class NotepadX:
         if repo_name.lower().endswith('.git'):
             repo_name = repo_name[:-4]
         if not owner or not repo_name:
+            return None
+        if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?', owner):
+            return None
+        if not re.fullmatch(r'[A-Za-z0-9._-]{1,100}', repo_name):
             return None
         return f"{owner}/{repo_name}"
 

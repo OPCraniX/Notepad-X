@@ -37,6 +37,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
   syntax keywords
   Python keywords and builtins
   nearby module/file names from the working folder
+- When the editor autocomplete list is open, use `Up` / `Down` to browse, `Tab` to accept, and `Enter` to insert a new line without taking the suggestion
 - Symbol navigation supports:
   current-file symbol lookup with `Ctrl+Shift+O`
   project symbol lookup with `Ctrl+Alt+P`
