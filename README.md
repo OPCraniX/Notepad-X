@@ -184,4 +184,8 @@ It can also run shell commands from the current document directory. `cls` or `cl
 
 ![EXE benchmark comparison](gfx/exe_benchmark.png)
 
-The updated EXE benchmark for Notepad-X `1.0.6.0` was captured on April 8, 2026 over 10 launches on Windows 11 Pro 25H2. In this image, the charted launch bars favor Notepad-X, and the memory comparison shows a dramatically smaller footprint than Microsoft Notepad once the app is up. The tradeoff is also visible in the CPU and detailed metrics panels: Notepad-X front-loads far more startup work, read activity, and process initialization so it can bring recovery, minimap, diagnostics, compare tools, theming, and other editor features online right away.
+The updated EXE benchmark for Notepad-X `1.0.6.0` was captured on April 8, 2026 over 10 launches on Windows 11 Pro 25H2. In this baseline image, the charted launch bars favor Notepad-X, and the memory comparison shows a dramatically smaller footprint than Microsoft Notepad once the app is up. The tradeoff is also visible in the CPU and detailed metrics panels: Notepad-X front-loads more startup work, read activity, and process initialization so it can bring recovery, minimap, diagnostics, compare tools, theming, and other editor features online right away.
+
+![EXE benchmark comparison under load](gfx/exe_benchmark_under_load.png)
+
+This under-load benchmark shows Microsoft Notepad and Notepad-X starting with a saved session history that already includes a 60 MB file. It tells us how each editor behaves when launch is no longer a clean start: Notepad-X still opens faster and keeps a lower memory footprint afterward, but it does that by spending much more CPU time, disk activity, and process work up front to restore that heavier session.
