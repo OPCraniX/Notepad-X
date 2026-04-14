@@ -169,9 +169,32 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.view.compare_tabs": "Compare Tabs",
     "menu.view.close_compare_tabs": "Close Compare Tabs",
     "menu.settings": "Settings",
+    "menu.settings.hotkeys": "Hotkey Settings",
     "menu.help": "Help",
     "menu.help.contents": "Help Contents",
     "menu.help.about": "About Notepad-X",
+    "hotkey.dialog.title": "Hotkey Settings",
+    "hotkey.dialog.instructions": "Select an action, then press the shortcut you want to assign.",
+    "hotkey.dialog.actions": "Actions",
+    "hotkey.dialog.current": "Current Shortcut:",
+    "hotkey.dialog.new": "New Shortcut:",
+    "hotkey.dialog.capture": "Press a shortcut",
+    "hotkey.dialog.assign": "Assign",
+    "hotkey.dialog.clear": "Clear",
+    "hotkey.dialog.reset_action": "Reset Action",
+    "hotkey.dialog.reset_all": "Reset All",
+    "hotkey.dialog.unassigned": "Unassigned",
+    "hotkey.dialog.ready": "Ready.",
+    "hotkey.dialog.select_action": "Select an action to edit.",
+    "hotkey.dialog.invalid": "Use a function key or a shortcut with Ctrl or Alt.",
+    "hotkey.dialog.conflict_title": "Shortcut Already In Use",
+    "hotkey.dialog.conflict_message": "{shortcut} is already assigned to {action_label}. Reassign it?",
+    "hotkey.dialog.reset_all_title": "Reset All Hotkeys",
+    "hotkey.dialog.reset_all_message": "Reset every hotkey to its default value?",
+    "hotkey.dialog.captured": "Captured {shortcut}.",
+    "hotkey.dialog.assigned": "Assigned {shortcut} to {action_label}.",
+    "hotkey.dialog.cleared": "Cleared {action_label}.",
+    "hotkey.dialog.reset": "Reset {action_label} to its default shortcut.",
     "note.filter.all": "All",
     "note.filter.unread": "Unread",
     "note.filter.yellow": "Yellow",
@@ -916,6 +939,7 @@ class NotepadX:
         self.app_dir = self.get_app_dir()
         self.machine_profile_slug = self.get_machine_profile_slug()
         self.repo_url = "https://github.com/OPCraniX/Notepad-X"
+        self.app_user_model_id = "OPCraniX.Notepad-X"
         self.icon_path = self.resolve_gfx_path("Notepad-X.ico")
         self.splash_path = self.resolve_gfx_path("splash.png")
         self.splash_max_width = 430
@@ -1169,6 +1193,9 @@ class NotepadX:
         self.window_layout_job = None
         self.window_layout_restored = False
         self.window_layout_save_delay_ms = 650
+        self.hotkey_overrides = {}
+        self.hotkey_bound_sequences = set()
+        self.hotkey_dialog = None
         self.active_context_menu = None
         self.context_menu_posted_at = 0.0
         self.hovered_editor_widget = None
@@ -1194,6 +1221,7 @@ class NotepadX:
             self.psapi = ctypes.WinDLL('psapi', use_last_error=True)
         self.configure_memory_api()
         self.configure_sound_api()
+        self.configure_process_identity()
         self.known_editor_ids = self.load_known_editor_ids()
         self.editor_id = self.generate_editor_id()
         self.editor_aliases = set(self.known_editor_ids)
@@ -1305,6 +1333,14 @@ class NotepadX:
             ]
         except Exception:
             self.shell32 = None
+
+    def configure_process_identity(self):
+        if not self.is_windows:
+            return
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(self.app_user_model_id)
+        except Exception:
+            pass
 
     def request_app_shutdown(self):
         self._shutdown_requested = True
@@ -4914,6 +4950,7 @@ class NotepadX:
             'locale_code': locale_code,
             'compare_file': compare_file,
             'compare_base_file': compare_base_file,
+            'hotkey_overrides': self.sanitize_hotkey_overrides(session.get('hotkey_overrides', session.get('hotkeys', {}))),
         }
 
     def sanitize_recovery_payload(self, recovery):
@@ -5154,10 +5191,14 @@ class NotepadX:
         if parent is not None and parent.winfo_exists():
             try:
                 parent.update_idletasks()
+                if not parent.winfo_viewable():
+                    raise tk.TclError
                 parent_x = parent.winfo_rootx()
                 parent_y = parent.winfo_rooty()
                 parent_width = max(parent.winfo_width(), parent.winfo_reqwidth())
                 parent_height = max(parent.winfo_height(), parent.winfo_reqheight())
+                if parent_width <= 1 or parent_height <= 1:
+                    raise tk.TclError
             except tk.TclError:
                 parent = None
             else:
@@ -5169,13 +5210,32 @@ class NotepadX:
             x = max(0, (screen_width - width) // 2)
             y = max(0, (screen_height - height) // 2)
 
+        screen_width = max(1, window.winfo_screenwidth())
+        screen_height = max(1, window.winfo_screenheight())
+        x = max(0, min(int(x), max(0, screen_width - width)))
+        y = max(0, min(int(y), max(0, screen_height - height)))
         window.geometry(f"{width}x{height}+{x}+{y}")
 
-    def center_window_after_show(self, window, parent=None):
-        if not window.winfo_exists():
+    def center_window_after_show(self, window, parent=None, attempts=3, delay_ms=60):
+        if attempts <= 0:
             return
-        self.center_window(window, parent)
-        window.lift()
+        try:
+            if not window.winfo_exists():
+                return
+            self.center_window(window, parent)
+            window.lift()
+        except tk.TclError:
+            return
+        if attempts <= 1:
+            return
+        try:
+            window.after(
+                delay_ms,
+                lambda current=window, current_parent=parent, remaining=attempts - 1, current_delay=delay_ms:
+                    self.center_window_after_show(current, current_parent, remaining, current_delay)
+            )
+        except tk.TclError:
+            return
 
     def get_root_window_state(self):
         try:
@@ -9981,96 +10041,600 @@ class NotepadX:
         self.update_find_match_summary(query, allow_short_query=True)
         self.highlight_live_find_matches(query)
 
+    def get_hotkey_definitions(self):
+        t = self.tr
+        return OrderedDict([
+            ('open', {'section': t('menu.file', 'File'), 'label': t('menu.file.open', 'Open'), 'default': 'Ctrl+W', 'handler': lambda event=None: self.open_file(event)}),
+            ('open_project', {'section': t('menu.file', 'File'), 'label': t('menu.file.open_project', 'Open Project'), 'default': 'Ctrl+Shift+W', 'handler': lambda event=None: self.open_project(event)}),
+            ('open_remote', {'section': t('menu.file', 'File'), 'label': 'Open Remote (SSH)', 'default': 'Ctrl+Alt+O', 'handler': lambda event=None: self.open_remote_file_dialog(event)}),
+            ('grab_git', {'section': t('menu.file', 'File'), 'label': t('menu.file.grab_git', 'Grab Git'), 'default': 'Ctrl+Shift+G', 'handler': lambda event=None: self.grab_git_project(event)}),
+            ('new_tab', {'section': t('menu.file', 'File'), 'label': t('menu.file.new_tab', 'New Tab'), 'default': 'Ctrl+T', 'handler': lambda event=None: self.new_tab(event)}),
+            ('close_tab', {'section': t('menu.file', 'File'), 'label': t('menu.file.close_tab', 'Close Tab'), 'default': 'Ctrl+Shift+T', 'handler': lambda event=None: self.close_current_tab(event)}),
+            ('save', {'section': t('menu.file', 'File'), 'label': t('menu.file.save', 'Save'), 'default': 'Ctrl+S', 'handler': lambda event=None: self.save(event)}),
+            ('save_all', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_all', 'Save All'), 'default': 'Ctrl+Shift+S', 'handler': lambda event=None: self.save_all(event)}),
+            ('save_as', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_as', 'Save As'), 'default': 'Ctrl+Shift+Q', 'handler': lambda event=None: self.save_as()}),
+            ('save_copy_as', {'section': t('menu.file', 'File'), 'label': t('save.copy_title', 'Save Copy As'), 'default': 'Ctrl+Alt+S', 'handler': lambda event=None: self.save_copy_as()}),
+            ('save_and_run', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_and_run', 'Save and Run'), 'default': 'Ctrl+Shift+R', 'handler': lambda event=None: self.save_and_run(event)}),
+            ('save_as_encrypted', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_as_encrypted', 'Save As Encrypted'), 'default': 'Ctrl+Shift+E', 'handler': lambda event=None: self.save_encrypted_copy()}),
+            ('print', {'section': t('menu.file', 'File'), 'label': t('menu.file.print', 'Print'), 'default': 'Ctrl+P', 'handler': lambda event=None: self.print_file(event)}),
+            ('export_notes', {'section': t('menu.file', 'File'), 'label': t('menu.file.export_notes', 'Export Notes'), 'default': 'Ctrl+E', 'handler': lambda event=None: self.export_notes_report()}),
+            ('exit', {'section': t('menu.file', 'File'), 'label': t('menu.file.exit', 'Exit'), 'default': 'Ctrl+Shift+X', 'handler': lambda event=None: self.ctrl_shift_x(event)}),
+            ('find', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find', 'Find'), 'default': 'Ctrl+F', 'handler': lambda event=None: self.show_find_panel()}),
+            ('find_next', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find_next', 'Find Next'), 'default': 'F3', 'handler': lambda event=None: self.find_next(event)}),
+            ('find_previous', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find_previous', 'Find Previous'), 'default': 'Shift+F3', 'handler': lambda event=None: self.find_previous(event)}),
+            ('replace', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.replace', 'Replace'), 'default': 'Ctrl+R', 'handler': lambda event=None: self.show_replace_panel()}),
+            ('command_panel', {'section': t('menu.edit', 'Edit'), 'label': 'Command Panel', 'default': 'Ctrl+Shift+K', 'handler': lambda event=None: self.show_command_panel(event)}),
+            ('jump_symbol', {'section': t('menu.edit', 'Edit'), 'label': 'Jump to Symbol', 'default': 'Ctrl+Shift+O', 'handler': lambda event=None: self.show_symbol_navigator(event)}),
+            ('project_symbols', {'section': t('menu.edit', 'Edit'), 'label': 'Project Symbols', 'default': 'Ctrl+Alt+P', 'handler': lambda event=None: self.show_symbol_navigator(project_scope=True)}),
+            ('toggle_fold', {'section': t('menu.edit', 'Edit'), 'label': 'Toggle Fold', 'default': 'F9', 'handler': lambda event=None: self.toggle_fold_at_cursor(event)}),
+            ('collapse_all_folds', {'section': t('menu.edit', 'Edit'), 'label': 'Collapse All Folds', 'default': 'Shift+F9', 'handler': lambda event=None: self.collapse_all_folds(event)}),
+            ('expand_all_folds', {'section': t('menu.edit', 'Edit'), 'label': 'Expand All Folds', 'default': 'Ctrl+F9', 'handler': lambda event=None: self.expand_all_folds(event)}),
+            ('date', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.date', 'Date'), 'default': 'Ctrl+D', 'handler': lambda event=None: self.insert_date(event)}),
+            ('time_date', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.time_date', 'Time/Date'), 'default': 'Ctrl+Shift+D', 'handler': lambda event=None: self.insert_time_date(event)}),
+            ('font', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.font', 'Font'), 'default': 'Ctrl+Shift+F', 'handler': lambda event=None: self.show_font_dialog(event)}),
+            ('fullscreen', {'section': t('menu.view', 'View'), 'label': t('menu.view.full_screen', 'Full Screen'), 'default': 'F11', 'handler': lambda event=None: self.toggle_fullscreen(event)}),
+            ('switch_tab', {'section': t('menu.view', 'View'), 'label': t('menu.view.switch_tab', 'Switch Tab'), 'default': 'Ctrl+Tab', 'handler': lambda event=None: self.switch_tab_right(event)}),
+            ('currently_editing', {'section': t('menu.view', 'View'), 'label': t('menu.view.currently_editing', 'Currently Editing'), 'default': 'Ctrl+Shift+C', 'handler': lambda event=None: self.toggle_currently_editing_panel(event)}),
+            ('cycle_notes', {'section': t('menu.view', 'View'), 'label': t('menu.edit.cycle_notes', 'Cycle Notes'), 'default': 'F4', 'handler': lambda event=None: self.goto_next_note(event)}),
+            ('goto_line', {'section': t('menu.view', 'View'), 'label': t('menu.edit.goto_line', 'Go To Line'), 'default': 'Ctrl+G', 'handler': lambda event=None: self.goto_line_dialog(event)}),
+            ('top_of_document', {'section': t('menu.view', 'View'), 'label': t('menu.edit.top_of_document', 'Top of Document'), 'default': 'Ctrl+PgUp', 'handler': lambda event=None: self.goto_document_start(event)}),
+            ('bottom_of_document', {'section': t('menu.view', 'View'), 'label': t('menu.edit.bottom_of_document', 'Bottom of Document'), 'default': 'Ctrl+PgDn', 'handler': lambda event=None: self.goto_document_end(event)}),
+            ('create_theme', {'section': t('menu.view', 'View'), 'label': t('menu.view.create_theme', 'Create Theme'), 'default': 'Ctrl+Alt+T', 'handler': lambda event=None: self.show_create_theme_dialog()}),
+            ('compare_tabs', {'section': t('menu.view', 'View'), 'label': t('menu.view.compare_tabs', 'Compare Tabs'), 'default': 'Ctrl+Q', 'handler': lambda event=None: self.show_split_compare()}),
+            ('preview_markdown', {'section': t('menu.view', 'View'), 'label': t('menu.view.preview_markdown', 'Preview Markdown'), 'default': 'Ctrl+Shift+P', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.markdown_preview_enabled, self.toggle_markdown_preview)}),
+            ('zoom_in', {'section': t('menu.view', 'View'), 'label': 'Zoom In', 'default': 'Ctrl+Plus', 'handler': lambda event=None: self.zoom_in(event)}),
+            ('zoom_out', {'section': t('menu.view', 'View'), 'label': 'Zoom Out', 'default': 'Ctrl+Minus', 'handler': lambda event=None: self.zoom_out(event)}),
+            ('edit_with_notepadx', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.edit_with_notepadx', 'Edit with Notepad-X'), 'default': 'Ctrl+Alt+X', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.edit_with_shell_enabled, self.toggle_edit_with_shell)}),
+            ('sound', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.sound', 'Sound'), 'default': 'Ctrl+Alt+Shift+M', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.sound_enabled, self.toggle_sound)}),
+            ('status_bar', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.status_bar', 'Status Bar'), 'default': 'Ctrl+B', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.status_bar_enabled, self.toggle_status_bar)}),
+            ('numbered_lines', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.numbered_lines', 'Numbered Lines'), 'default': 'Ctrl+Alt+L', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.numbered_lines_enabled, self.toggle_numbered_lines)}),
+            ('autocomplete', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.autocomplete', 'Autocomplete'), 'default': 'Ctrl+Alt+A', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.autocomplete_enabled, self.toggle_autocomplete)}),
+            ('spell_check', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.spell_check', 'Spell Check'), 'default': 'F7', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.spell_check_enabled, self.toggle_spell_check)}),
+            ('auto_pair', {'section': t('menu.settings', 'Settings'), 'label': 'Auto Pair Brackets/Quotes', 'default': 'Ctrl+Alt+Shift+P', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.auto_pair_enabled, self.save_session)}),
+            ('compare_multi_edit', {'section': t('menu.settings', 'Settings'), 'label': 'Compare Multi-Edit', 'default': 'Ctrl+Alt+M', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.compare_multi_edit_enabled, self.save_session)}),
+            ('minimap', {'section': t('menu.settings', 'Settings'), 'label': 'Minimap', 'default': 'Ctrl+Alt+I', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.minimap_enabled, self.toggle_minimap)}),
+            ('breadcrumbs', {'section': t('menu.settings', 'Settings'), 'label': 'Breadcrumbs', 'default': 'Ctrl+Alt+B', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.breadcrumbs_enabled, self.toggle_breadcrumbs)}),
+            ('diagnostics', {'section': t('menu.settings', 'Settings'), 'label': 'Diagnostics', 'default': 'Ctrl+Alt+D', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.diagnostics_enabled, self.toggle_diagnostics)}),
+            ('autosave', {'section': t('menu.settings', 'Settings'), 'label': 'Auto Save', 'default': 'Ctrl+Alt+Shift+A', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.autosave_enabled, self.save_session)}),
+            ('word_wrap', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.word_wrap', 'Word Wrap'), 'default': 'Ctrl+Alt+W', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.word_wrap_enabled, self.toggle_word_wrap)}),
+            ('sync_page_navigation', {'section': t('menu.settings', 'Settings'), 'label': t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), 'default': 'Ctrl+Alt+Y', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.sync_page_navigation_enabled, self.save_session)}),
+            ('hotkey_settings', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.hotkeys', 'Hotkey Settings'), 'default': 'Ctrl+Alt+K', 'handler': lambda event=None: self.show_hotkey_config_dialog()}),
+            ('help_contents', {'section': t('menu.help', 'Help'), 'label': t('menu.help.contents', 'Help Contents'), 'default': 'F1', 'handler': lambda event=None: self.show_help_contents()}),
+            ('about', {'section': t('menu.help', 'Help'), 'label': t('menu.help.about', 'About Notepad-X'), 'default': 'Shift+F1', 'handler': lambda event=None: self.show_about_dialog()}),
+        ])
+
+    def toggle_boolean_hotkey(self, variable, callback):
+        variable.set(not bool(variable.get()))
+        result = callback()
+        return "break" if result is None else result
+
+    def parse_hotkey_shortcut(self, shortcut):
+        if shortcut is None:
+            return None
+        raw = str(shortcut).strip()
+        if not raw:
+            return None
+        raw = raw.replace('++', '+Plus').replace('+-', '+Minus')
+        parts = [part.strip() for part in raw.split('+') if part.strip()]
+        if not parts:
+            return None
+
+        modifier_map = {'ctrl': 'Ctrl', 'control': 'Ctrl', 'alt': 'Alt', 'shift': 'Shift'}
+        key_aliases = {
+            'pgup': 'PgUp', 'pageup': 'PgUp', 'prior': 'PgUp',
+            'pgdn': 'PgDn', 'pagedown': 'PgDn', 'next': 'PgDn',
+            'escape': 'Esc', 'esc': 'Esc',
+            'enter': 'Enter', 'return': 'Enter',
+            'space': 'Space', 'tab': 'Tab',
+            'home': 'Home', 'end': 'End',
+            'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right',
+            'delete': 'Delete', 'del': 'Delete',
+            'backspace': 'Backspace',
+            'insert': 'Insert', 'ins': 'Insert',
+            'plus': 'Plus', '=': 'Plus', 'equal': 'Plus', 'kp_add': 'Plus',
+            'minus': 'Minus', '-': 'Minus', 'subtract': 'Minus', 'kp_subtract': 'Minus',
+        }
+
+        modifiers = []
+        for token in parts[:-1]:
+            normalized = modifier_map.get(token.lower())
+            if normalized is None or normalized in modifiers:
+                return None
+            modifiers.append(normalized)
+
+        key_token = parts[-1]
+        key_lower = key_token.lower()
+        if re.fullmatch(r'f(?:[1-9]|1[0-2])', key_lower):
+            key = key_lower.upper()
+        elif len(key_token) == 1 and key_token.isalnum():
+            key = key_token.upper()
+        else:
+            key = key_aliases.get(key_lower)
+        if key is None:
+            return None
+
+        ordered_modifiers = [name for name in ('Ctrl', 'Alt', 'Shift') if name in modifiers]
+        return ordered_modifiers, key
+
+    def normalize_hotkey_shortcut(self, shortcut):
+        parsed = self.parse_hotkey_shortcut(shortcut)
+        if parsed is None:
+            return None
+        modifiers, key = parsed
+        return '+'.join(list(modifiers) + [key])
+
+    def format_hotkey_display(self, shortcut):
+        parsed = self.parse_hotkey_shortcut(shortcut)
+        if parsed is None:
+            return ''
+        modifiers, key = parsed
+        display_key = {'Plus': '+', 'Minus': '-', 'PgUp': 'PgUp', 'PgDn': 'PgDn'}.get(key, key)
+        return '+'.join(list(modifiers) + [display_key])
+
+    def hotkey_to_tk_sequences(self, shortcut):
+        parsed = self.parse_hotkey_shortcut(shortcut)
+        if parsed is None:
+            return []
+        modifiers, key = parsed
+        modifier_prefix = ''.join({'Ctrl': 'Control-', 'Alt': 'Alt-', 'Shift': 'Shift-'}[name] for name in modifiers)
+        if len(key) == 1 and key.isalpha():
+            keysyms = [key.lower(), key.upper()]
+        elif len(key) == 1 and key.isdigit():
+            keysyms = [key]
+        elif key == 'PgUp':
+            keysyms = ['Prior']
+        elif key == 'PgDn':
+            keysyms = ['Next']
+        elif key == 'Esc':
+            keysyms = ['Escape']
+        elif key == 'Enter':
+            keysyms = ['Return']
+        elif key == 'Space':
+            keysyms = ['space']
+        elif key == 'Backspace':
+            keysyms = ['BackSpace']
+        elif key == 'Plus':
+            keysyms = ['plus', 'equal', 'KP_Add']
+        elif key == 'Minus':
+            keysyms = ['minus', 'KP_Subtract']
+        else:
+            keysyms = [key]
+
+        sequences = []
+        seen = set()
+        for keysym in keysyms:
+            sequence = f"<{modifier_prefix}{keysym}>"
+            if sequence not in seen:
+                seen.add(sequence)
+                sequences.append(sequence)
+        return sequences
+
+    def sanitize_hotkey_overrides(self, payload):
+        definitions = self.get_hotkey_definitions()
+        if not isinstance(payload, dict):
+            return {}
+        cleaned = {}
+        seen_shortcuts = set()
+        for action_id in definitions:
+            if action_id not in payload:
+                continue
+            value = payload.get(action_id)
+            if value is None or str(value).strip() == '':
+                cleaned[action_id] = None
+                continue
+            normalized = self.normalize_hotkey_shortcut(value)
+            if normalized is None or normalized == definitions[action_id].get('default'):
+                continue
+            if normalized in seen_shortcuts:
+                continue
+            seen_shortcuts.add(normalized)
+            cleaned[action_id] = normalized
+        return cleaned
+
+    def get_hotkey_shortcut(self, action_id):
+        definition = self.get_hotkey_definitions().get(action_id)
+        if definition is None:
+            return None
+        if action_id in self.hotkey_overrides:
+            return self.hotkey_overrides[action_id]
+        return definition.get('default')
+
+    def get_hotkey_display(self, action_id, fallback=''):
+        shortcut = self.get_hotkey_shortcut(action_id)
+        if shortcut is None:
+            return ''
+        return self.format_hotkey_display(shortcut) or fallback
+
+    def set_hotkey_override(self, action_id, shortcut):
+        definitions = self.get_hotkey_definitions()
+        if action_id not in definitions:
+            return
+        if shortcut is None or str(shortcut).strip() == '':
+            self.hotkey_overrides[action_id] = None
+            return
+        normalized = self.normalize_hotkey_shortcut(shortcut)
+        if normalized is None:
+            return
+        if normalized == definitions[action_id].get('default'):
+            self.hotkey_overrides.pop(action_id, None)
+            return
+        self.hotkey_overrides[action_id] = normalized
+
+    def find_hotkey_conflict(self, action_id, shortcut):
+        normalized = self.normalize_hotkey_shortcut(shortcut)
+        if normalized is None:
+            return None
+        for other_action_id in self.get_hotkey_definitions():
+            if other_action_id == action_id:
+                continue
+            if self.normalize_hotkey_shortcut(self.get_hotkey_shortcut(other_action_id)) == normalized:
+                return other_action_id
+        return None
+
+    def invoke_hotkey_action(self, action_id, event=None):
+        definition = self.get_hotkey_definitions().get(action_id)
+        if definition is None:
+            return None
+        result = definition['handler'](event)
+        return "break" if result is None else result
+
+    def apply_hotkey_bindings(self):
+        for sequence in getattr(self, 'hotkey_bound_sequences', set()):
+            try:
+                self.root.unbind_all(sequence)
+            except tk.TclError:
+                pass
+        self.hotkey_bound_sequences = set()
+
+        seen_sequences = set()
+        for action_id in self.get_hotkey_definitions():
+            shortcut = self.get_hotkey_shortcut(action_id)
+            if shortcut is None:
+                continue
+            for sequence in self.hotkey_to_tk_sequences(shortcut):
+                if sequence in seen_sequences:
+                    continue
+                seen_sequences.add(sequence)
+                try:
+                    self.root.bind_all(sequence, lambda event, current=action_id: self.invoke_hotkey_action(current, event))
+                    self.hotkey_bound_sequences.add(sequence)
+                except tk.TclError:
+                    continue
+
+    def refresh_hotkey_configuration(self, rebuild_menu=True, save_session=False):
+        self.apply_hotkey_bindings()
+        if rebuild_menu and hasattr(self, 'root') and self.root.winfo_exists():
+            self.create_menu()
+            if self.fullscreen:
+                try:
+                    self.root.config(menu='')
+                except tk.TclError:
+                    pass
+        if save_session:
+            self.save_session()
+
+    def capture_hotkey_from_event(self, event):
+        keysym = str(getattr(event, 'keysym', '') or '')
+        if not keysym or keysym in {'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R'}:
+            return None
+
+        state = int(getattr(event, 'state', 0) or 0)
+        modifiers = []
+        if state & 0x4:
+            modifiers.append('Ctrl')
+        if state & 0x20000 or state & 0x8:
+            modifiers.append('Alt')
+        if state & 0x1:
+            modifiers.append('Shift')
+
+        key_aliases = {
+            'Prior': 'PgUp',
+            'Next': 'PgDn',
+            'Escape': 'Esc',
+            'Return': 'Enter',
+            'space': 'Space',
+            'Tab': 'Tab',
+            'Home': 'Home',
+            'End': 'End',
+            'Up': 'Up',
+            'Down': 'Down',
+            'Left': 'Left',
+            'Right': 'Right',
+            'Delete': 'Delete',
+            'BackSpace': 'Backspace',
+            'Insert': 'Insert',
+            'equal': 'Plus',
+            'plus': 'Plus',
+            'KP_Add': 'Plus',
+            'minus': 'Minus',
+            'KP_Subtract': 'Minus',
+        }
+        if re.fullmatch(r'F(?:[1-9]|1[0-2])', keysym):
+            key = keysym
+        elif len(keysym) == 1 and keysym.isalnum():
+            key = keysym.upper()
+        else:
+            key = key_aliases.get(keysym)
+        if key is None:
+            return None
+        if not modifiers and not re.fullmatch(r'F(?:[1-9]|1[0-2])', key):
+            return None
+        if 'Ctrl' not in modifiers and 'Alt' not in modifiers and not re.fullmatch(r'F(?:[1-9]|1[0-2])', key):
+            return None
+        return '+'.join(modifiers + [key])
+
+    def show_hotkey_config_dialog(self):
+        existing = getattr(self, 'hotkey_dialog', None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_force()
+                    return "break"
+            except tk.TclError:
+                pass
+
+        t = self.tr
+        dialog = self.create_toplevel(self.root)
+        self.hotkey_dialog = dialog
+        dialog.title(t('hotkey.dialog.title', 'Hotkey Settings'))
+        dialog.transient(self.root)
+        dialog.configure(bg=self.bg_color)
+        dialog.geometry("860x560")
+        dialog.minsize(720, 480)
+
+        def close_dialog(event=None):
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+            return "break"
+
+        def clear_dialog_reference(event=None):
+            if getattr(event, 'widget', None) is dialog:
+                self.hotkey_dialog = None
+
+        dialog.bind('<Destroy>', clear_dialog_reference, add='+')
+        dialog.bind('<Escape>', close_dialog)
+
+        outer = tk.Frame(dialog, bg=self.bg_color, padx=14, pady=14)
+        outer.pack(fill='both', expand=True)
+        outer.grid_rowconfigure(1, weight=1)
+        outer.grid_columnconfigure(0, weight=3)
+        outer.grid_columnconfigure(1, weight=2)
+
+        tk.Label(
+            outer,
+            text=t('hotkey.dialog.instructions', 'Select an action, then press the shortcut you want to assign.'),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            anchor='w',
+            justify='left'
+        ).grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 12))
+
+        list_frame = tk.Frame(outer, bg=self.bg_color)
+        list_frame.grid(row=1, column=0, sticky='nsew', padx=(0, 12))
+        list_frame.grid_rowconfigure(1, weight=1)
+        list_frame.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            list_frame,
+            text=t('hotkey.dialog.actions', 'Actions'),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            anchor='w'
+        ).grid(row=0, column=0, sticky='ew', pady=(0, 6))
+
+        actions_listbox = tk.Listbox(
+            list_frame,
+            bg=self.text_bg,
+            fg=self.text_fg,
+            selectbackground=self.select_bg,
+            selectforeground='white',
+            activestyle='none',
+            font=('Consolas', 10),
+            exportselection=False
+        )
+        actions_listbox.grid(row=1, column=0, sticky='nsew')
+        actions_scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=actions_listbox.yview)
+        actions_scrollbar.grid(row=1, column=1, sticky='ns')
+        actions_listbox.configure(yscrollcommand=actions_scrollbar.set)
+
+        editor_frame = tk.Frame(outer, bg=self.bg_color)
+        editor_frame.grid(row=1, column=1, sticky='nsew')
+        editor_frame.grid_columnconfigure(0, weight=1)
+
+        action_name_var = tk.StringVar(value=t('hotkey.dialog.select_action', 'Select an action to edit.'))
+        current_var = tk.StringVar(value=t('hotkey.dialog.unassigned', 'Unassigned'))
+        capture_var = tk.StringVar(value='')
+        status_var = tk.StringVar(value=t('hotkey.dialog.ready', 'Ready.'))
+        pending_shortcut = {'value': None}
+        definitions = self.get_hotkey_definitions()
+        action_ids = list(definitions.keys())
+
+        tk.Label(
+            editor_frame,
+            textvariable=action_name_var,
+            bg=self.bg_color,
+            fg='white',
+            anchor='w',
+            justify='left',
+            font=('Segoe UI', 12, 'bold')
+        ).grid(row=0, column=0, sticky='ew', pady=(0, 14))
+
+        details_frame = tk.Frame(editor_frame, bg=self.panel_bg, padx=12, pady=12)
+        details_frame.grid(row=1, column=0, sticky='ew')
+        details_frame.grid_columnconfigure(1, weight=1)
+
+        tk.Label(details_frame, text=t('hotkey.dialog.current', 'Current Shortcut:'), bg=self.panel_bg, fg=self.fg_color, anchor='w').grid(row=0, column=0, sticky='w')
+        tk.Label(details_frame, textvariable=current_var, bg=self.panel_bg, fg='white', anchor='w').grid(row=0, column=1, sticky='ew', padx=(10, 0))
+        tk.Label(details_frame, text=t('hotkey.dialog.new', 'New Shortcut:'), bg=self.panel_bg, fg=self.fg_color, anchor='w').grid(row=1, column=0, sticky='w', pady=(10, 0))
+
+        capture_entry = tk.Entry(
+            details_frame,
+            textvariable=capture_var,
+            bg=self.text_bg,
+            fg='white',
+            insertbackground='white',
+            relief='flat',
+            highlightthickness=1,
+            highlightbackground='#3a3a3a',
+            highlightcolor=self.cursor_color
+        )
+        capture_entry.grid(row=1, column=1, sticky='ew', padx=(10, 0), pady=(10, 0))
+
+        button_row = tk.Frame(editor_frame, bg=self.bg_color)
+        button_row.grid(row=2, column=0, sticky='ew', pady=(12, 0))
+        button_row.grid_columnconfigure(4, weight=1)
+
+        def get_selected_action_id():
+            selection = actions_listbox.curselection()
+            if not selection:
+                return None
+            index = int(selection[0])
+            return action_ids[index] if 0 <= index < len(action_ids) else None
+
+        def format_action_row(action_id):
+            definition = definitions[action_id]
+            shortcut_text = self.get_hotkey_display(action_id) or t('hotkey.dialog.unassigned', 'Unassigned')
+            return f"{definition['section']} | {definition['label']} | {shortcut_text}"
+
+        def on_action_select(event=None):
+            action_id = get_selected_action_id()
+            if action_id is None:
+                action_name_var.set(t('hotkey.dialog.select_action', 'Select an action to edit.'))
+                current_var.set(t('hotkey.dialog.unassigned', 'Unassigned'))
+                capture_var.set('')
+                pending_shortcut['value'] = None
+                return
+            definition = definitions[action_id]
+            action_name_var.set(f"{definition['section']}  -  {definition['label']}")
+            current_display = self.get_hotkey_display(action_id) or t('hotkey.dialog.unassigned', 'Unassigned')
+            current_var.set(current_display)
+            capture_var.set(current_display if current_display != t('hotkey.dialog.unassigned', 'Unassigned') else '')
+            pending_shortcut['value'] = self.get_hotkey_shortcut(action_id)
+
+        def refresh_action_list(selected_action_id=None):
+            actions_listbox.delete(0, tk.END)
+            for action_id in action_ids:
+                actions_listbox.insert(tk.END, format_action_row(action_id))
+            if selected_action_id in action_ids:
+                index = action_ids.index(selected_action_id)
+            elif action_ids:
+                index = 0
+            else:
+                index = None
+            if index is not None:
+                actions_listbox.selection_clear(0, tk.END)
+                actions_listbox.selection_set(index)
+                actions_listbox.activate(index)
+                actions_listbox.see(index)
+            on_action_select()
+
+        def assign_shortcut():
+            action_id = get_selected_action_id()
+            if action_id is None:
+                status_var.set(t('hotkey.dialog.select_action', 'Select an action to edit.'))
+                return
+            normalized = self.normalize_hotkey_shortcut(pending_shortcut.get('value'))
+            if normalized is None:
+                status_var.set(t('hotkey.dialog.invalid', 'Use a function key or a shortcut with Ctrl or Alt.'))
+                return
+            conflict_action_id = self.find_hotkey_conflict(action_id, normalized)
+            if conflict_action_id is not None:
+                if not messagebox.askyesno(
+                    t('hotkey.dialog.conflict_title', 'Shortcut Already In Use'),
+                    t(
+                        'hotkey.dialog.conflict_message',
+                        '{shortcut} is already assigned to {action_label}. Reassign it?',
+                        shortcut=self.format_hotkey_display(normalized),
+                        action_label=definitions[conflict_action_id]['label']
+                    ),
+                    parent=dialog
+                ):
+                    status_var.set(t('hotkey.dialog.ready', 'Ready.'))
+                    return
+                self.hotkey_overrides[conflict_action_id] = None
+            self.set_hotkey_override(action_id, normalized)
+            self.refresh_hotkey_configuration(save_session=True)
+            refresh_action_list(selected_action_id=action_id)
+            status_var.set(
+                t(
+                    'hotkey.dialog.assigned',
+                    'Assigned {shortcut} to {action_label}.',
+                    shortcut=self.get_hotkey_display(action_id),
+                    action_label=definitions[action_id]['label']
+                )
+            )
+
+        def clear_shortcut():
+            action_id = get_selected_action_id()
+            if action_id is None:
+                status_var.set(t('hotkey.dialog.select_action', 'Select an action to edit.'))
+                return
+            self.hotkey_overrides[action_id] = None
+            self.refresh_hotkey_configuration(save_session=True)
+            refresh_action_list(selected_action_id=action_id)
+            status_var.set(t('hotkey.dialog.cleared', 'Cleared {action_label}.', action_label=definitions[action_id]['label']))
+
+        def reset_selected():
+            action_id = get_selected_action_id()
+            if action_id is None:
+                status_var.set(t('hotkey.dialog.select_action', 'Select an action to edit.'))
+                return
+            self.hotkey_overrides.pop(action_id, None)
+            self.refresh_hotkey_configuration(save_session=True)
+            refresh_action_list(selected_action_id=action_id)
+            status_var.set(t('hotkey.dialog.reset', 'Reset {action_label} to its default shortcut.', action_label=definitions[action_id]['label']))
+
+        def reset_all():
+            if not messagebox.askyesno(
+                t('hotkey.dialog.reset_all_title', 'Reset All Hotkeys'),
+                t('hotkey.dialog.reset_all_message', 'Reset every hotkey to its default value?'),
+                parent=dialog
+            ):
+                return
+            self.hotkey_overrides = {}
+            self.refresh_hotkey_configuration(save_session=True)
+            refresh_action_list(selected_action_id=get_selected_action_id())
+            status_var.set(t('hotkey.dialog.ready', 'Ready.'))
+
+        def capture_shortcut(event):
+            shortcut = self.capture_hotkey_from_event(event)
+            if shortcut is None:
+                status_var.set(t('hotkey.dialog.invalid', 'Use a function key or a shortcut with Ctrl or Alt.'))
+                return "break"
+            pending_shortcut['value'] = shortcut
+            capture_var.set(self.format_hotkey_display(shortcut))
+            status_var.set(t('hotkey.dialog.captured', 'Captured {shortcut}.', shortcut=self.format_hotkey_display(shortcut)))
+            return "break"
+
+        tk.Button(button_row, text=t('hotkey.dialog.assign', 'Assign'), width=12, command=assign_shortcut).grid(row=0, column=0, padx=(0, 8))
+        tk.Button(button_row, text=t('hotkey.dialog.clear', 'Clear'), width=12, command=clear_shortcut).grid(row=0, column=1, padx=(0, 8))
+        tk.Button(button_row, text=t('hotkey.dialog.reset_action', 'Reset Action'), width=14, command=reset_selected).grid(row=0, column=2, padx=(0, 8))
+        tk.Button(button_row, text=t('hotkey.dialog.reset_all', 'Reset All'), width=12, command=reset_all).grid(row=0, column=3, padx=(0, 8))
+        tk.Button(button_row, text=t('common.close', 'Close'), width=12, command=close_dialog).grid(row=0, column=5, sticky='e')
+
+        tk.Label(editor_frame, textvariable=status_var, bg=self.bg_color, fg=self.fg_color, anchor='w', justify='left').grid(row=3, column=0, sticky='ew', pady=(14, 0))
+
+        actions_listbox.bind('<<ListboxSelect>>', on_action_select)
+        capture_entry.bind('<KeyPress>', capture_shortcut)
+        refresh_action_list()
+        self.center_window_after_show(dialog, parent=self.root)
+        self.root.after_idle(capture_entry.focus_set)
+        return "break"
+
     # ─── Key Bindings ────────────────────────────────────────────
     def bind_keys(self):
-        # File
-        self.root.bind('<Control-t>', self.new_tab)
-        self.root.bind('<Control-T>', self.new_tab)
-        self.root.bind('<Control-w>', self.open_file)
-        self.root.bind('<Control-W>', self.open_file)
-        self.root.bind('<Control-p>', self.print_file)
-        self.root.bind('<Control-P>', self.print_file)
-        self.root.bind('<Control-Shift-W>', self.open_project)
-        self.root.bind('<Control-Shift-w>', self.open_project)
-        self.root.bind('<Control-Shift-G>', self.grab_git_project)
-        self.root.bind('<Control-Shift-g>', self.grab_git_project)
-        self.root.bind('<Control-s>', self.save)
-        self.root.bind('<Control-S>', self.save)
-        self.root.bind('<Control-Shift-s>', self.save_all)
-        self.root.bind('<Control-Shift-S>', self.save_all)
-        self.root.bind('<Control-Shift-q>', lambda e: self.save_as())
-        self.root.bind('<Control-Shift-Q>', lambda e: self.save_as())
-        self.root.bind('<Control-Shift-e>', lambda e: self.save_encrypted_copy())
-        self.root.bind('<Control-Shift-E>', lambda e: self.save_encrypted_copy())
-        self.root.bind('<Control-Shift-r>', self.save_and_run)
-        self.root.bind('<Control-Shift-R>', self.save_and_run)
-        self.root.bind('<Control-Shift-p>', self.toggle_markdown_preview)
-        self.root.bind('<Control-Shift-P>', self.toggle_markdown_preview)
-        self.root.bind('<Control-Alt-o>', self.open_remote_file_dialog)
-        self.root.bind('<Control-Alt-O>', self.open_remote_file_dialog)
-        self.root.bind('<F7>', self.toggle_spell_check)
-        self.root.bind_all('<KeyPress>', self.handle_global_ctrl_shift_shortcuts, add='+')
-        self.root.bind_all('<Control-Shift-x>', self.ctrl_shift_x)
-        self.root.bind_all('<Control-Shift-X>', self.ctrl_shift_x)
-
-        # Edit
-        self.root.bind('<Control-z>', self.undo)
-        self.root.bind('<Control-Z>', self.undo)
-        self.root.bind('<Control-Shift-Z>', self.redo)
-        self.root.bind('<Control-Shift-z>', self.redo)
-        self.root.bind('<Control-a>', self.select_all)
-        self.root.bind('<Control-A>', self.select_all)
-        self.root.bind_all('<Control-b>', self.toggle_status_bar)
-        self.root.bind_all('<Control-B>', self.toggle_status_bar)
         self.root.bind_all('<ButtonRelease-1>', self.maybe_dismiss_transient_ui, add='+')
         self.root.bind_all('<ButtonRelease-3>', self.maybe_dismiss_transient_ui, add='+')
-        self.root.bind('<Control-d>', self.insert_date)
-        self.root.bind('<Control-D>', self.insert_date)
-        self.root.bind('<Control-Shift-D>', self.insert_time_date)
-        self.root.bind('<Control-Shift-d>', self.insert_time_date)
-        self.root.bind('<Control-e>', lambda e: self.export_notes_report())
-        self.root.bind('<Control-E>', lambda e: self.export_notes_report())
-        self.root.bind('<Control-Shift-T>', self.close_current_tab)
-        self.root.bind('<Control-Shift-t>', self.close_current_tab)
-        self.root.bind('<Control-Tab>', self.switch_tab_right)
-        self.root.bind('<Control-Shift-F>', self.show_font_dialog)
-        self.root.bind('<Control-Shift-f>', self.show_font_dialog)
-        # Search / Navigation
-        self.root.bind('<Control-f>', lambda e: self.show_find_panel())
-        self.root.bind('<Control-F>', lambda e: self.show_find_panel())
-        self.root.bind('<Control-r>', lambda e: self.show_replace_panel())
-        self.root.bind('<Control-R>', lambda e: self.show_replace_panel())
-        self.root.bind('<Control-Shift-k>', self.show_command_panel)
-        self.root.bind('<Control-Shift-K>', self.show_command_panel)
-        self.root.bind('<Control-Shift-o>', self.show_symbol_navigator)
-        self.root.bind('<Control-Shift-O>', self.show_symbol_navigator)
-        self.root.bind('<Control-Alt-p>', lambda e: self.show_symbol_navigator(project_scope=True))
-        self.root.bind('<Control-Alt-P>', lambda e: self.show_symbol_navigator(project_scope=True))
-        self.root.bind('<F3>', self.find_next)
-        self.root.bind('<Shift-F3>', self.find_previous)
-        self.root.bind('<F4>', self.goto_next_note)
-        self.root.bind('<F9>', self.toggle_fold_at_cursor)
-        self.root.bind('<Shift-F9>', self.collapse_all_folds)
-        self.root.bind('<Control-F9>', self.expand_all_folds)
-        self.root.bind('<Control-g>', self.goto_line_dialog)
-        self.root.bind('<Control-G>', self.goto_line_dialog)
         self.root.bind_all('<Prior>', self.page_up)
         self.root.bind_all('<Next>', self.page_down)
-        self.root.bind_all('<Control-Prior>', self.goto_document_start)
-        self.root.bind_all('<Control-Next>', self.goto_document_end)
-
-        # Zoom
         self.root.bind('<Control-MouseWheel>', self.on_ctrl_mousewheel)
         self.root.bind('<Control-Button-4>', self.on_ctrl_mousewheel)
         self.root.bind('<Control-Button-5>', self.on_ctrl_mousewheel)
-        self.root.bind('<Control-plus>', self.zoom_in)
-        self.root.bind('<Control-equal>', self.zoom_in)
-        self.root.bind('<Control-KP_Add>', self.zoom_in)
-        self.root.bind('<Control-minus>', self.zoom_out)
-        self.root.bind('<Control-KP_Subtract>', self.zoom_out)
-        self.root.bind('<Control-q>', lambda e: self.show_split_compare())
-        self.root.bind('<Control-Q>', lambda e: self.show_split_compare())
-        self.root.bind('<F11>', self.toggle_fullscreen)
+        self.apply_hotkey_bindings()
 
     def cut_or_close_panel(self, event=None):
         if self.find_panel_visible or self.replace_panel_visible:
@@ -10999,8 +11563,6 @@ class NotepadX:
                     '<<Selection>>'):
             self.compare_text.bind(evt, self.handle_compare_activity, add='+')
         self.compare_text.bind('<KeyPress>', self.handle_compare_keypress)
-        self.compare_text.bind('<Control-b>', self.toggle_status_bar)
-        self.compare_text.bind('<Control-B>', self.toggle_status_bar)
         self.compare_text.bind('<Control-x>', self.cut)
         self.compare_text.bind('<Control-X>', self.cut)
         self.compare_text.bind('<Control-v>', self.paste)
@@ -11011,8 +11573,6 @@ class NotepadX:
         self.compare_text.bind('<Control-Shift-Z>', self.redo)
         self.compare_text.bind('<Prior>', self.page_up)
         self.compare_text.bind('<Next>', self.page_down)
-        self.compare_text.bind('<Control-Prior>', self.goto_document_start)
-        self.compare_text.bind('<Control-Next>', self.goto_document_end)
         self.compare_text.bind('<FocusIn>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<Enter>', self.remember_hovered_editor, add='+')
         self.compare_text.bind('<Motion>', self.remember_hovered_editor, add='+')
@@ -11022,12 +11582,6 @@ class NotepadX:
         self.compare_text.bind('<Button-1>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<ButtonRelease-1>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<Button-3>', self.show_compare_context_menu)
-        self.compare_text.bind('<F3>', self.find_next)
-        self.compare_text.bind('<Shift-F3>', self.find_previous)
-        self.compare_text.bind('<Control-Shift-r>', self.save_and_run)
-        self.compare_text.bind('<Control-Shift-R>', self.save_and_run)
-        self.compare_text.bind('<Control-Shift-x>', self.ctrl_shift_x)
-        self.compare_text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         self.compare_text.bind('<<Modified>>', self.on_compare_modified)
 
         self.compare_view = {
@@ -11217,8 +11771,6 @@ class NotepadX:
         text.bind('<MouseWheel>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
         text.bind('<Button-4>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
         text.bind('<Button-5>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
-        text.bind('<Control-b>', self.toggle_status_bar)
-        text.bind('<Control-B>', self.toggle_status_bar)
         text.bind('<Control-x>', self.cut)
         text.bind('<Control-X>', self.cut)
         text.bind('<Control-v>', self.paste)
@@ -11229,12 +11781,6 @@ class NotepadX:
         text.bind('<Control-Shift-Z>', self.redo)
         text.bind('<Prior>', self.page_up)
         text.bind('<Next>', self.page_down)
-        text.bind('<Control-Prior>', self.goto_document_start)
-        text.bind('<Control-Next>', self.goto_document_end)
-        text.bind('<Control-Shift-r>', self.save_and_run)
-        text.bind('<Control-Shift-R>', self.save_and_run)
-        text.bind('<Control-Shift-x>', self.ctrl_shift_x)
-        text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         text.bind('<FocusIn>', lambda e, frame=tab_frame: self.remember_doc_focus(frame), add='+')
         text.bind('<Enter>', self.remember_hovered_editor, add='+')
         text.bind('<Motion>', self.remember_hovered_editor, add='+')
@@ -16247,6 +16793,10 @@ class NotepadX:
             'locale_code': self.locale_code,
             'compare_file': compare_file,
             'compare_base_file': compare_base_file,
+            'hotkey_overrides': {
+                action_id: value for action_id, value in self.hotkey_overrides.items()
+                if action_id in self.get_hotkey_definitions()
+            },
         }
 
     def schedule_recovery_save(self):
@@ -16560,6 +17110,7 @@ class NotepadX:
             self.command_panel_min_height,
             min(self.command_panel_max_height, int(session.get('command_panel_height', self.command_panel_default_height)))
         )
+        self.hotkey_overrides = dict(session.get('hotkey_overrides', {}))
         self.window_layout_restored = False
         if has_saved_window_layout:
             self.window_layout_restored = self.apply_saved_window_layout(
@@ -16595,6 +17146,7 @@ class NotepadX:
         if saved_theme not in self.get_available_syntax_theme_names():
             saved_theme = 'Default'
         self.syntax_theme.set(saved_theme)
+        self.create_menu()
         for doc in self.documents.values():
             self.apply_syntax_tag_colors(doc['text'])
             self.apply_text_theme_effect(doc)
@@ -17247,6 +17799,7 @@ class NotepadX:
     # ─── Menu ────────────────────────────────────────────────────
     def create_menu(self):
         t = self.tr
+        hk = self.get_hotkey_display
         self.menu = tk.Menu(self.root, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a', activeforeground='white')
         self.root.config(menu=self.menu)
@@ -17254,26 +17807,26 @@ class NotepadX:
         file_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
         self.menu.add_cascade(label=t('menu.file', 'File'), menu=file_menu)
-        file_menu.add_command(label=t('menu.file.open', 'Open'), command=self.open_file, accelerator=t('accel.open', 'Ctrl+W'))
-        file_menu.add_command(label=t('menu.file.open_project', 'Open Project'), command=self.open_project, accelerator=t('accel.open_project', 'Ctrl+Shift+W'))
-        file_menu.add_command(label='Open Remote (SSH)', command=self.open_remote_file_dialog, accelerator='Ctrl+Alt+O')
-        file_menu.add_command(label=t('menu.file.grab_git', 'Grab Git'), command=self.grab_git_project, accelerator=t('accel.grab_git', 'Ctrl+Shift+G'))
+        file_menu.add_command(label=t('menu.file.open', 'Open'), command=self.open_file, accelerator=hk('open'))
+        file_menu.add_command(label=t('menu.file.open_project', 'Open Project'), command=self.open_project, accelerator=hk('open_project'))
+        file_menu.add_command(label='Open Remote (SSH)', command=self.open_remote_file_dialog, accelerator=hk('open_remote'))
+        file_menu.add_command(label=t('menu.file.grab_git', 'Grab Git'), command=self.grab_git_project, accelerator=hk('grab_git'))
         self.recent_menu = tk.Menu(file_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                                    activebackground='#3a3a3a')
         file_menu.add_cascade(label=t('menu.file.recent', 'Recent'), menu=self.recent_menu)
         self.refresh_recent_files_menu()
-        file_menu.add_command(label=t('menu.file.new_tab', 'New Tab'), command=self.new_tab, accelerator=t('accel.new_tab', 'Ctrl+T'))
-        file_menu.add_command(label=t('menu.file.close_tab', 'Close Tab'), command=self.close_current_tab, accelerator=t('accel.close_tab', 'Ctrl+Shift+T'))
-        file_menu.add_command(label=t('menu.file.save', 'Save'), command=self.save, accelerator=t('accel.save', 'Ctrl+S'))
-        file_menu.add_command(label=t('menu.file.save_all', 'Save All'), command=self.save_all, accelerator=t('accel.save_all', 'Ctrl+Shift+S'))
-        file_menu.add_command(label=t('menu.file.save_as', 'Save As'), command=self.save_as, accelerator=t('accel.save_as', 'Ctrl+Shift+Q'))
-        file_menu.add_command(label=t('save.copy_title', 'Save Copy As'), command=self.save_copy_as)
-        file_menu.add_command(label=t('menu.file.save_and_run', 'Save and Run'), command=self.save_and_run, accelerator=t('accel.save_and_run', 'Ctrl+Shift+R'))
-        file_menu.add_command(label=t('menu.file.save_as_encrypted', 'Save As Encrypted'), command=self.save_encrypted_copy, accelerator=t('accel.save_as_encrypted', 'Ctrl+Shift+E'))
-        file_menu.add_command(label=t('menu.file.print', 'Print'), command=self.print_file, accelerator=t('accel.print', 'Ctrl+P'))
-        file_menu.add_command(label=t('menu.file.export_notes', 'Export Notes'), command=self.export_notes_report, accelerator=t('accel.export_notes', 'Ctrl+E'))
+        file_menu.add_command(label=t('menu.file.new_tab', 'New Tab'), command=self.new_tab, accelerator=hk('new_tab'))
+        file_menu.add_command(label=t('menu.file.close_tab', 'Close Tab'), command=self.close_current_tab, accelerator=hk('close_tab'))
+        file_menu.add_command(label=t('menu.file.save', 'Save'), command=self.save, accelerator=hk('save'))
+        file_menu.add_command(label=t('menu.file.save_all', 'Save All'), command=self.save_all, accelerator=hk('save_all'))
+        file_menu.add_command(label=t('menu.file.save_as', 'Save As'), command=self.save_as, accelerator=hk('save_as'))
+        file_menu.add_command(label=t('save.copy_title', 'Save Copy As'), command=self.save_copy_as, accelerator=hk('save_copy_as'))
+        file_menu.add_command(label=t('menu.file.save_and_run', 'Save and Run'), command=self.save_and_run, accelerator=hk('save_and_run'))
+        file_menu.add_command(label=t('menu.file.save_as_encrypted', 'Save As Encrypted'), command=self.save_encrypted_copy, accelerator=hk('save_as_encrypted'))
+        file_menu.add_command(label=t('menu.file.print', 'Print'), command=self.print_file, accelerator=hk('print'))
+        file_menu.add_command(label=t('menu.file.export_notes', 'Export Notes'), command=self.export_notes_report, accelerator=hk('export_notes'))
         file_menu.add_separator()
-        file_menu.add_command(label=t('menu.file.exit', 'Exit'), command=self.exit_app, accelerator=t('accel.exit', 'Ctrl+Shift+X'))
+        file_menu.add_command(label=t('menu.file.exit', 'Exit'), command=self.exit_app, accelerator=hk('exit'))
 
         edit_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
@@ -17286,31 +17839,31 @@ class NotepadX:
         edit_menu.add_command(label=t('menu.edit.paste', 'Paste'), command=self.paste, accelerator=t('accel.paste', 'Ctrl+V'))
         edit_menu.add_command(label=t('menu.edit.select_all', 'Select All'), command=self.select_all, accelerator=t('accel.select_all', 'Ctrl+A'))
         edit_menu.add_separator()
-        edit_menu.add_command(label=t('menu.edit.find', 'Find'), command=self.show_find_panel, accelerator=t('accel.find', 'Ctrl+F'))
-        edit_menu.add_command(label=t('menu.edit.find_next', 'Find Next'), command=self.find_next, accelerator=t('accel.find_next', 'F3'))
-        edit_menu.add_command(label=t('menu.edit.find_previous', 'Find Previous'), command=self.find_previous, accelerator=t('accel.find_previous', 'Shift+F3'))
-        edit_menu.add_command(label=t('menu.edit.replace', 'Replace'), command=self.show_replace_panel, accelerator=t('accel.replace', 'Ctrl+R'))
-        edit_menu.add_command(label='Command Panel', command=self.show_command_panel, accelerator='Ctrl+Shift+K')
-        edit_menu.add_command(label='Jump to Symbol', command=self.show_symbol_navigator, accelerator='Ctrl+Shift+O')
-        edit_menu.add_command(label='Project Symbols', command=lambda: self.show_symbol_navigator(project_scope=True), accelerator='Ctrl+Alt+P')
+        edit_menu.add_command(label=t('menu.edit.find', 'Find'), command=self.show_find_panel, accelerator=hk('find'))
+        edit_menu.add_command(label=t('menu.edit.find_next', 'Find Next'), command=self.find_next, accelerator=hk('find_next'))
+        edit_menu.add_command(label=t('menu.edit.find_previous', 'Find Previous'), command=self.find_previous, accelerator=hk('find_previous'))
+        edit_menu.add_command(label=t('menu.edit.replace', 'Replace'), command=self.show_replace_panel, accelerator=hk('replace'))
+        edit_menu.add_command(label='Command Panel', command=self.show_command_panel, accelerator=hk('command_panel'))
+        edit_menu.add_command(label='Jump to Symbol', command=self.show_symbol_navigator, accelerator=hk('jump_symbol'))
+        edit_menu.add_command(label='Project Symbols', command=lambda: self.show_symbol_navigator(project_scope=True), accelerator=hk('project_symbols'))
         edit_menu.add_separator()
-        edit_menu.add_command(label='Toggle Fold', command=self.toggle_fold_at_cursor, accelerator='F9')
-        edit_menu.add_command(label='Collapse All Folds', command=self.collapse_all_folds, accelerator='Shift+F9')
-        edit_menu.add_command(label='Expand All Folds', command=self.expand_all_folds, accelerator='Ctrl+F9')
+        edit_menu.add_command(label='Toggle Fold', command=self.toggle_fold_at_cursor, accelerator=hk('toggle_fold'))
+        edit_menu.add_command(label='Collapse All Folds', command=self.collapse_all_folds, accelerator=hk('collapse_all_folds'))
+        edit_menu.add_command(label='Expand All Folds', command=self.expand_all_folds, accelerator=hk('expand_all_folds'))
         edit_menu.add_separator()
-        edit_menu.add_command(label=t('menu.edit.date', 'Date'), command=self.insert_date, accelerator=t('accel.date', 'Ctrl+D'))
-        edit_menu.add_command(label=t('menu.edit.time_date', 'Time/Date'), command=self.insert_time_date, accelerator=t('accel.time_date', 'Ctrl+Shift+D'))
-        edit_menu.add_command(label=t('menu.edit.font', 'Font'), command=self.show_font_dialog, accelerator=t('accel.font', 'Ctrl+Shift+F'))
+        edit_menu.add_command(label=t('menu.edit.date', 'Date'), command=self.insert_date, accelerator=hk('date'))
+        edit_menu.add_command(label=t('menu.edit.time_date', 'Time/Date'), command=self.insert_time_date, accelerator=hk('time_date'))
+        edit_menu.add_command(label=t('menu.edit.font', 'Font'), command=self.show_font_dialog, accelerator=hk('font'))
         self.language_menu = tk.Menu(edit_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a', postcommand=self.refresh_language_menu)
         edit_menu.add_cascade(label=t('menu.edit.language', 'Language'), menu=self.language_menu)
         self.refresh_language_menu()
         view_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
         self.menu.add_cascade(label=t('menu.view', 'View'), menu=view_menu)
-        view_menu.add_command(label=t('menu.view.full_screen', 'Full Screen'), command=self.toggle_fullscreen, accelerator=t('accel.full_screen', 'F11'))
-        view_menu.add_command(label=t('menu.view.switch_tab', 'Switch Tab'), command=self.switch_tab_right, accelerator=t('accel.switch_tab', 'Ctrl+Tab'))
-        view_menu.add_command(label=t('menu.view.currently_editing', 'Currently Editing'), command=self.toggle_currently_editing_panel, accelerator=t('accel.currently_editing', 'Ctrl+Shift+C'))
-        view_menu.add_command(label=t('menu.edit.cycle_notes', 'Cycle Notes'), command=self.goto_next_note, accelerator=t('accel.cycle_notes', 'F4'))
+        view_menu.add_command(label=t('menu.view.full_screen', 'Full Screen'), command=self.toggle_fullscreen, accelerator=hk('fullscreen'))
+        view_menu.add_command(label=t('menu.view.switch_tab', 'Switch Tab'), command=self.switch_tab_right, accelerator=hk('switch_tab'))
+        view_menu.add_command(label=t('menu.view.currently_editing', 'Currently Editing'), command=self.toggle_currently_editing_panel, accelerator=hk('currently_editing'))
+        view_menu.add_command(label=t('menu.edit.cycle_notes', 'Cycle Notes'), command=self.goto_next_note, accelerator=hk('cycle_notes'))
         note_filter_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         view_menu.add_cascade(label=t('menu.edit.filter_notes', 'Filter Notes'), menu=note_filter_menu)
         note_filter_menu.add_radiobutton(label=t('note.filter.all', 'All'), variable=self.note_filter, value='all')
@@ -17319,12 +17872,12 @@ class NotepadX:
         note_filter_menu.add_radiobutton(label=t('note.filter.green', 'Green'), variable=self.note_filter, value='green')
         note_filter_menu.add_radiobutton(label=t('note.filter.red', 'Red'), variable=self.note_filter, value='red')
         note_filter_menu.add_radiobutton(label=t('note.filter.blue', 'Light Blue'), variable=self.note_filter, value='blue')
-        view_menu.add_command(label=t('menu.edit.goto_line', 'Go To Line'), command=self.goto_line_dialog, accelerator=t('accel.goto_line', 'Ctrl+G'))
-        view_menu.add_command(label=t('menu.edit.top_of_document', 'Top of Document'), command=self.goto_document_start, accelerator=t('accel.top_of_document', 'Ctrl+PgUp'))
-        view_menu.add_command(label=t('menu.edit.bottom_of_document', 'Bottom of Document'), command=self.goto_document_end, accelerator=t('accel.bottom_of_document', 'Ctrl+PgDn'))
+        view_menu.add_command(label=t('menu.edit.goto_line', 'Go To Line'), command=self.goto_line_dialog, accelerator=hk('goto_line'))
+        view_menu.add_command(label=t('menu.edit.top_of_document', 'Top of Document'), command=self.goto_document_start, accelerator=hk('top_of_document'))
+        view_menu.add_command(label=t('menu.edit.bottom_of_document', 'Bottom of Document'), command=self.goto_document_end, accelerator=hk('bottom_of_document'))
         syntax_theme_menu = tk.Menu(view_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color, activebackground='#3a3a3a')
         view_menu.add_cascade(label=t('menu.view.syntax_theme', 'Syntax Theme'), menu=syntax_theme_menu)
-        syntax_theme_menu.add_command(label=t('menu.view.create_theme', 'Create Theme'), command=self.show_create_theme_dialog)
+        syntax_theme_menu.add_command(label=t('menu.view.create_theme', 'Create Theme'), command=self.show_create_theme_dialog, accelerator=hk('create_theme'))
         syntax_theme_menu.add_separator()
         for theme_name in self.get_available_syntax_theme_names():
             syntax_theme_menu.add_radiobutton(
@@ -17346,34 +17899,36 @@ class NotepadX:
                 value=mode_value,
                 command=lambda value=mode_value: self.set_current_syntax_override(value)
             )
-        view_menu.add_command(label=t('menu.view.compare_tabs', 'Compare Tabs'), command=self.show_split_compare, accelerator=t('accel.compare_tabs', 'Ctrl+Q'))
-        view_menu.add_command(label=t('menu.view.close_compare_tabs', 'Close Compare Tabs'), command=self.close_compare_panel, accelerator=t('accel.close_compare_tabs', 'Ctrl+Shift+X'))
+        view_menu.add_command(label=t('menu.view.compare_tabs', 'Compare Tabs'), command=self.show_split_compare, accelerator=hk('compare_tabs'))
+        view_menu.add_command(label=t('menu.view.close_compare_tabs', 'Close Compare Tabs'), command=self.close_compare_panel, accelerator=hk('exit'))
 
         settings_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                                 activebackground='#3a3a3a')
         self.menu.add_cascade(label=t('menu.settings', 'Settings'), menu=settings_menu)
-        settings_menu.add_checkbutton(label=t('menu.view.edit_with_notepadx', 'Edit with Notepad-X'), variable=self.edit_with_shell_enabled, command=self.toggle_edit_with_shell)
-        settings_menu.add_checkbutton(label=t('menu.view.sound', 'Sound'), variable=self.sound_enabled, command=self.toggle_sound)
+        settings_menu.add_checkbutton(label=t('menu.view.edit_with_notepadx', 'Edit with Notepad-X'), variable=self.edit_with_shell_enabled, command=self.toggle_edit_with_shell, accelerator=hk('edit_with_notepadx'))
+        settings_menu.add_checkbutton(label=t('menu.view.sound', 'Sound'), variable=self.sound_enabled, command=self.toggle_sound, accelerator=hk('sound'))
         settings_menu.add_separator()
-        settings_menu.add_checkbutton(label=t('menu.view.status_bar', 'Status Bar'), variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator=t('accel.status_bar', 'Ctrl+B'))
-        settings_menu.add_checkbutton(label=t('menu.view.numbered_lines', 'Numbered Lines'), variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines)
-        settings_menu.add_checkbutton(label=t('menu.view.autocomplete', 'Autocomplete'), variable=self.autocomplete_enabled, command=self.toggle_autocomplete)
-        settings_menu.add_checkbutton(label=t('menu.view.spell_check', 'Spell Check'), variable=self.spell_check_enabled, command=self.toggle_spell_check, accelerator=t('accel.spell_check', 'F7'))
-        settings_menu.add_checkbutton(label='Auto Pair Brackets/Quotes', variable=self.auto_pair_enabled, command=self.save_session)
-        settings_menu.add_checkbutton(label='Compare Multi-Edit', variable=self.compare_multi_edit_enabled, command=self.save_session)
-        settings_menu.add_checkbutton(label='Minimap', variable=self.minimap_enabled, command=self.toggle_minimap)
-        settings_menu.add_checkbutton(label='Breadcrumbs', variable=self.breadcrumbs_enabled, command=self.toggle_breadcrumbs)
-        settings_menu.add_checkbutton(label='Diagnostics', variable=self.diagnostics_enabled, command=self.toggle_diagnostics)
-        settings_menu.add_checkbutton(label='Auto Save', variable=self.autosave_enabled, command=self.save_session)
-        settings_menu.add_checkbutton(label=t('menu.view.word_wrap', 'Word Wrap'), variable=self.word_wrap_enabled, command=self.toggle_word_wrap)
-        settings_menu.add_checkbutton(label=t('menu.view.preview_markdown', 'Preview Markdown'), variable=self.markdown_preview_enabled, command=self.toggle_markdown_preview, accelerator=t('accel.preview_markdown', 'Ctrl+Shift+P'))
-        settings_menu.add_checkbutton(label=t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), variable=self.sync_page_navigation_enabled, command=self.save_session)
+        settings_menu.add_checkbutton(label=t('menu.view.status_bar', 'Status Bar'), variable=self.status_bar_enabled, command=self.toggle_status_bar, accelerator=hk('status_bar'))
+        settings_menu.add_checkbutton(label=t('menu.view.numbered_lines', 'Numbered Lines'), variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines, accelerator=hk('numbered_lines'))
+        settings_menu.add_checkbutton(label=t('menu.view.autocomplete', 'Autocomplete'), variable=self.autocomplete_enabled, command=self.toggle_autocomplete, accelerator=hk('autocomplete'))
+        settings_menu.add_checkbutton(label=t('menu.view.spell_check', 'Spell Check'), variable=self.spell_check_enabled, command=self.toggle_spell_check, accelerator=hk('spell_check'))
+        settings_menu.add_checkbutton(label='Auto Pair Brackets/Quotes', variable=self.auto_pair_enabled, command=self.save_session, accelerator=hk('auto_pair'))
+        settings_menu.add_checkbutton(label='Compare Multi-Edit', variable=self.compare_multi_edit_enabled, command=self.save_session, accelerator=hk('compare_multi_edit'))
+        settings_menu.add_checkbutton(label='Minimap', variable=self.minimap_enabled, command=self.toggle_minimap, accelerator=hk('minimap'))
+        settings_menu.add_checkbutton(label='Breadcrumbs', variable=self.breadcrumbs_enabled, command=self.toggle_breadcrumbs, accelerator=hk('breadcrumbs'))
+        settings_menu.add_checkbutton(label='Diagnostics', variable=self.diagnostics_enabled, command=self.toggle_diagnostics, accelerator=hk('diagnostics'))
+        settings_menu.add_checkbutton(label='Auto Save', variable=self.autosave_enabled, command=self.save_session, accelerator=hk('autosave'))
+        settings_menu.add_checkbutton(label=t('menu.view.word_wrap', 'Word Wrap'), variable=self.word_wrap_enabled, command=self.toggle_word_wrap, accelerator=hk('word_wrap'))
+        settings_menu.add_checkbutton(label=t('menu.view.preview_markdown', 'Preview Markdown'), variable=self.markdown_preview_enabled, command=self.toggle_markdown_preview, accelerator=hk('preview_markdown'))
+        settings_menu.add_checkbutton(label=t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), variable=self.sync_page_navigation_enabled, command=self.save_session, accelerator=hk('sync_page_navigation'))
+        settings_menu.add_separator()
+        settings_menu.add_command(label=t('menu.settings.hotkeys', 'Hotkey Settings'), command=self.show_hotkey_config_dialog, accelerator=hk('hotkey_settings'))
 
         help_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
         self.menu.add_cascade(label=t('menu.help', 'Help'), menu=help_menu)
-        help_menu.add_command(label=t('menu.help.contents', 'Help Contents'), command=self.show_help_contents)
-        help_menu.add_command(label=t('menu.help.about', 'About Notepad-X'), command=self.show_about_dialog)
+        help_menu.add_command(label=t('menu.help.contents', 'Help Contents'), command=self.show_help_contents, accelerator=hk('help_contents'))
+        help_menu.add_command(label=t('menu.help.about', 'About Notepad-X'), command=self.show_about_dialog, accelerator=hk('about'))
 
     def show_help_contents(self):
         dialog = self.create_toplevel(self.root)

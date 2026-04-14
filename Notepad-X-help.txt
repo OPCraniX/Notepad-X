@@ -1,7 +1,7 @@
 Notepad-X Help
 
 Overview
-Notepad-X is a tabbed desktop text editor for Windows focused on fast editing, code navigation, compare/preview workflows, shared notes, safer saves, and responsive handling of large files.
+Notepad-X is a tabbed desktop text editor for Windows focused on fast editing, code navigation, compare/preview workflows, shared notes, safer saves, responsive handling of large files, and quick project inspection.
 
 Quick Start
 - `Ctrl+W` opens a file.
@@ -29,6 +29,12 @@ Tabs
 - Right-click a tab for save, copy name/path, reveal, and move-to-new-window actions.
 - Modified tabs show `*`.
 - Session restore reopens file-backed tabs on launch.
+
+Project Workflows
+- `Open Project` can load a file plus related files from the same folder into the current session.
+- `Grab Git` downloads a public GitHub repository locally and lets you open chosen files after the download finishes.
+- Project Symbols can search across the files you have opened from a folder or downloaded repo.
+- Tabs can also be moved into a new Notepad-X window from the tab context menu.
 
 Line Numbers and Folding
 - `Settings > Numbered Lines` shows or hides the gutter.
@@ -185,6 +191,7 @@ Autosave, Backups, Session Restore, and Recovery
 Settings Menu
 - `Settings` collects the checkmark/toggle options that used to be split across `Edit` and `View`.
 - It includes Status Bar, Numbered Lines, Autocomplete, Spell Check, Auto Pair, Compare Multi-Edit, Minimap, Breadcrumbs, Diagnostics, Auto Save, Word Wrap, Markdown Preview, Sync PgUp/PgDn, Sound, and `Edit with Notepad-X`.
+- `Settings > Hotkey Settings` opens the built-in shortcut editor for rebinding app hotkeys.
 
 Large Files
 - Large files can load in the background.
@@ -196,7 +203,7 @@ File Menu
 - Open: Open a file.
 - Open Project: Open a file plus related files from the same folder.
 - Open Remote (SSH): Open a remote file through `scp`.
-- Grab Git: Download a public GitHub repository and open chosen files.
+- Grab Git: Download a public GitHub repository and open chosen files from the downloaded project.
 - Recent: Reopen recent files.
 - New Tab: Open a new untitled tab.
 - Close Tab: Close the current tab.
@@ -216,6 +223,7 @@ Keyboard Shortcuts
 - `Ctrl+S`: Save
 - `Ctrl+Shift+S`: Save All
 - `Ctrl+Shift+Q`: Save As
+- `Ctrl+Alt+S`: Save Copy As
 - `Ctrl+Shift+E`: Save As Encrypted
 - `Ctrl+Shift+R`: Save and Run
 - `Ctrl+P`: Print
@@ -237,6 +245,8 @@ Keyboard Shortcuts
 - `Ctrl+Shift+P`: Preview Markdown
 - `Ctrl+Shift+C`: Currently Editing
 - `Ctrl+Q`: Compare Tabs
+- `Ctrl+Alt+T`: Create Theme
+- `Ctrl+Alt+K`: Hotkey Settings
 - `Ctrl+B`: Toggle Status Bar
 - `Ctrl+Tab`: Switch Tab
 - `Ctrl+PgUp`: Top of Document
@@ -245,3 +255,7 @@ Keyboard Shortcuts
 - `Ctrl+-`: Zoom Out
 - `Ctrl+Mouse Wheel`: Zoom
 - `F11`: Full Screen
+- `F1`: Help Contents
+- `Shift+F1`: About Notepad-X
+
+Most settings toggles also have default hotkeys now, and you can change them from `Hotkey Settings`.

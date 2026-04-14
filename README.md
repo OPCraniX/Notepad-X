@@ -1,8 +1,8 @@
 # Notepad-X
 
-Notepad-X is a Windows tabbed text editor built for everyday writing, code editing, side-by-side comparison, shared notes, and safer handling of very large files.
+Notepad-X is a Windows tabbed text editor built for everyday writing, code editing, side-by-side comparison, shared notes, project browsing, and safer handling of very large files.
 
-It keeps the familiar single-window desktop editor workflow, then layers in compare mode, live Markdown preview, syntax-aware editing, recovery tools, remote file access, and a growing set of coding helpers without turning into a full IDE.
+It keeps the familiar single-window desktop editor workflow, then layers in compare mode, live Markdown preview, syntax-aware editing, recovery tools, Grab Git project downloads, remote file access, Find in Files, and a growing set of coding helpers without turning into a full IDE.
 
 ## Highlights
 
@@ -15,11 +15,13 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - Auto-pairing for brackets and quotes with matching-pair highlight
 - Minimap, breadcrumbs, numbered lines, and synced `PgUp` / `PgDn` navigation in compare/preview
 - Real-time diagnostics for warnings and syntax problems, including hover tooltips
+- `Grab Git` for downloading a public GitHub repo and opening the files you want from inside the editor
 - Docked command panel for quick commands, menu actions, and shell tasks
+- `Find In Files`, live Find/Replace, and project symbol search for moving around bigger codebases
 - SSH-style remote open/save for `user@host:/absolute/path` files using `scp`
 - Autosave, atomic saves, backup snapshots, and large-file virtual mode
 - Tab right-click actions for save, copy path/name, reveal, and move-to-new-window
-- A dedicated `Settings` menu for editor toggles and checkmark-based options
+- A dedicated `Settings` menu for editor toggles, plus a built-in hotkey editor for rebinding shortcuts
 - Shared notes with replies, unread tracking, filters, and export
 - `Save and Run`, encrypted `.npxe` saves, theme support, locale switching, and Windows shell integration
 
@@ -95,6 +97,13 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - `Save As Encrypted` creates passphrase-protected `.npxe` files
 - `Open Remote (SSH)` fetches and saves remote files through `scp`
 
+### Projects and Repo Work
+
+- `Open Project` loads a file and nearby related files from the same folder into the session
+- `Grab Git` downloads a public GitHub repository into a local folder and lets you open the files you care about right away
+- Project-wide symbol lookup helps you jump across larger codebases after opening a folder or downloaded repo
+- Tabs can be moved into a new Notepad-X window when you want to split work across windows
+
 ## Command Panel
 
 Press `Ctrl+Shift+K` to open the bottom command panel.
@@ -127,6 +136,13 @@ It can also run shell commands from the current document directory. `cls` or `cl
 - Notepad-X pulls the file locally through `scp`, edits it normally, and pushes changes back on save
 - This is a file open/save workflow, not a full remote workspace explorer
 
+## Grab Git
+
+- Use `File > Grab Git` or `Ctrl+Shift+G`
+- Paste a public GitHub repository URL and Notepad-X downloads it locally for you
+- After the download finishes, you can choose which files to open instead of manually digging through the whole repo first
+- This makes it easy to inspect or edit a project quickly without leaving the editor
+
 ## Large Files
 
 - Large files can load asynchronously to keep the UI responsive
@@ -138,6 +154,7 @@ It can also run shell commands from the current document directory. `cls` or `cl
 
 - `Settings` collects the checkmark/toggle options that used to be split across `Edit` and `View`
 - It includes status bar, numbered lines, autocomplete, spell check, auto-pair, compare multi-edit, minimap, breadcrumbs, diagnostics, autosave, word wrap, Markdown preview, sync page navigation, sound, and `Edit with Notepad-X`
+- `Settings > Hotkey Settings` opens the built-in shortcut editor so you can rebind feature hotkeys without editing config files
 
 ## Main Shortcuts
 
@@ -150,6 +167,7 @@ It can also run shell commands from the current document directory. `cls` or `cl
 - `Ctrl+S` Save
 - `Ctrl+Shift+S` Save All
 - `Ctrl+Shift+Q` Save As
+- `Ctrl+Alt+S` Save Copy As
 - `Ctrl+Shift+E` Save As Encrypted
 - `Ctrl+Shift+R` Save and Run
 - `Ctrl+E` Export Notes
@@ -171,6 +189,8 @@ It can also run shell commands from the current document directory. `cls` or `cl
 - `Ctrl+Shift+C` Currently Editing
 - `Ctrl+Q` Compare Tabs
 - `Ctrl+Shift+X` Close compare/preview/panels or exit
+- `Ctrl+Alt+T` Create Theme
+- `Ctrl+Alt+K` Hotkey Settings
 - `Ctrl+B` Toggle Status Bar
 - `Ctrl+Tab` Switch Tab
 - `Ctrl+PgUp` Top of Document
@@ -179,6 +199,10 @@ It can also run shell commands from the current document directory. `cls` or `cl
 - `Ctrl+-` Zoom Out
 - `Ctrl+Mouse Wheel` Zoom
 - `F11` Full Screen
+- `F1` Help Contents
+- `Shift+F1` About Notepad-X
+
+Most settings toggles now also ship with defaults and can be reviewed or changed in `Hotkey Settings`.
 
 ## Benchmark Snapshot
 
