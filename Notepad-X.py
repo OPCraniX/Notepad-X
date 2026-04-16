@@ -118,6 +118,7 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.file": "File",
     "menu.file.open": "Open",
     "menu.file.open_project": "Open Project",
+    "menu.file.open_remote": "Open Remote (SSH)",
     "menu.file.grab_git": "Grab Git",
     "menu.file.recent": "Recent",
     "menu.file.new_tab": "New Tab",
@@ -141,6 +142,12 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.edit.find_next": "Find Next",
     "menu.edit.find_previous": "Find Previous",
     "menu.edit.replace": "Replace",
+    "menu.edit.command_panel": "Command Panel",
+    "menu.edit.jump_symbol": "Jump to Symbol",
+    "menu.edit.project_symbols": "Project Symbols",
+    "menu.edit.toggle_fold": "Toggle Fold",
+    "menu.edit.collapse_all_folds": "Collapse All Folds",
+    "menu.edit.expand_all_folds": "Expand All Folds",
     "menu.edit.cycle_notes": "Cycle Notes",
     "menu.edit.filter_notes": "Filter Notes",
     "menu.edit.goto_line": "Go To Line",
@@ -168,11 +175,22 @@ DEFAULT_LOCALE_STRINGS = {
     "menu.view.currently_editing": "Currently Editing",
     "menu.view.compare_tabs": "Compare Tabs",
     "menu.view.close_compare_tabs": "Close Compare Tabs",
+    "menu.view.zoom_in": "Zoom In",
+    "menu.view.zoom_out": "Zoom Out",
     "menu.settings": "Settings",
+    "menu.settings.auto_pair": "Auto Pair Brackets/Quotes",
+    "menu.settings.compare_multi_edit": "Compare Multi-Edit",
+    "menu.settings.minimap": "Minimap",
+    "menu.settings.breadcrumbs": "Breadcrumbs",
+    "menu.settings.diagnostics": "Diagnostics",
+    "menu.settings.autosave": "Auto Save",
     "menu.settings.hotkeys": "Hotkey Settings",
     "menu.help": "Help",
     "menu.help.contents": "Help Contents",
     "menu.help.about": "About Notepad-X",
+    "symbol.navigator.title": "Symbols",
+    "symbol.navigator.project_title": "Project Symbols",
+    "symbol.navigator.no_symbols": "No symbols were found for this scope.",
     "hotkey.dialog.title": "Hotkey Settings",
     "hotkey.dialog.instructions": "Select an action, then press the shortcut you want to assign.",
     "hotkey.dialog.actions": "Actions",
@@ -456,12 +474,14 @@ DEFAULT_LOCALE_STRINGS = {
     "syntax.mode.sql": "SQL",
     "accel.open": "Ctrl+W",
     "accel.open_project": "Ctrl+Shift+W",
+    "accel.open_remote": "Ctrl+Alt+O",
     "accel.grab_git": "Ctrl+Shift+G",
     "accel.new_tab": "Ctrl+T",
     "accel.close_tab": "Ctrl+Shift+T",
     "accel.save": "Ctrl+S",
     "accel.save_all": "Ctrl+Shift+S",
     "accel.save_as": "Ctrl+Shift+Q",
+    "accel.save_copy_as": "Ctrl+Alt+S",
     "accel.save_and_run": "Ctrl+Shift+R",
     "accel.save_as_encrypted": "Ctrl+Shift+E",
     "accel.print": "Ctrl+P",
@@ -477,6 +497,12 @@ DEFAULT_LOCALE_STRINGS = {
     "accel.find_next": "F3",
     "accel.find_previous": "Shift+F3",
     "accel.replace": "Ctrl+R",
+    "accel.command_panel": "Ctrl+Shift+K",
+    "accel.jump_symbol": "Ctrl+Shift+O",
+    "accel.project_symbols": "Ctrl+Alt+P",
+    "accel.toggle_fold": "F9",
+    "accel.collapse_all_folds": "Shift+F9",
+    "accel.expand_all_folds": "Ctrl+F9",
     "accel.cycle_notes": "F4",
     "accel.goto_line": "Ctrl+G",
     "accel.top_of_document": "Ctrl+PgUp",
@@ -492,6 +518,24 @@ DEFAULT_LOCALE_STRINGS = {
     "accel.currently_editing": "Ctrl+Shift+C",
     "accel.compare_tabs": "Ctrl+Q",
     "accel.close_compare_tabs": "Ctrl+Shift+X",
+    "accel.create_theme": "Ctrl+Alt+T",
+    "accel.zoom_in": "Ctrl+Plus",
+    "accel.zoom_out": "Ctrl+Minus",
+    "accel.edit_with_notepadx": "Ctrl+Alt+X",
+    "accel.sound": "Ctrl+Alt+Shift+M",
+    "accel.numbered_lines": "Ctrl+Alt+L",
+    "accel.autocomplete": "Ctrl+Alt+A",
+    "accel.auto_pair": "Ctrl+Alt+Shift+P",
+    "accel.compare_multi_edit": "Ctrl+Alt+M",
+    "accel.minimap": "Ctrl+Alt+I",
+    "accel.breadcrumbs": "Ctrl+Alt+B",
+    "accel.diagnostics": "Ctrl+Alt+D",
+    "accel.autosave": "Ctrl+Alt+Shift+A",
+    "accel.word_wrap": "Ctrl+Alt+W",
+    "accel.sync_page_navigation": "Ctrl+Alt+Y",
+    "accel.hotkey_settings": "Ctrl+Alt+K",
+    "accel.help_contents": "F1",
+    "accel.about": "Shift+F1",
     "grab_git.title": "Grab Git",
     "grab_git.prompt": "Enter the GitHub project as:\nusername/project",
     "grab_git.invalid": "Enter the project as username/project.\n\nExample:\nopenai/openai-python",
@@ -934,7 +978,7 @@ class NotepadX:
     def init_config(self):
         self.is_windows = os.name == 'nt'
         self.is_linux = sys.platform.startswith('linux')
-        self.app_version = "v1.0.7"
+        self.app_version = "v1.0.8"
         self.resource_dir = self.get_resource_dir()
         self.app_dir = self.get_app_dir()
         self.machine_profile_slug = self.get_machine_profile_slug()
@@ -7459,21 +7503,21 @@ class NotepadX:
                 return "Closed compare panel.\n"
             return "No compare panel is open.\n"
         toggle_commands = {
-            'autosave': (self.autosave_enabled, self.save_session, 'Autosave'),
-            'minimap': (self.minimap_enabled, self.toggle_minimap, 'Minimap'),
-            'diagnostics': (self.diagnostics_enabled, self.toggle_diagnostics, 'Diagnostics'),
-            'edit-with-notepad-x': (self.edit_with_shell_enabled, self.toggle_edit_with_shell, 'Edit with Notepad-X'),
-            'edit-with-shell': (self.edit_with_shell_enabled, self.toggle_edit_with_shell, 'Edit with Notepad-X'),
-            'sound': (self.sound_enabled, self.toggle_sound, 'Sound'),
-            'status-bar': (self.status_bar_enabled, self.toggle_status_bar, 'Status bar'),
-            'numbered-lines': (self.numbered_lines_enabled, self.toggle_numbered_lines, 'Numbered lines'),
-            'autocomplete': (self.autocomplete_enabled, self.toggle_autocomplete, 'Autocomplete'),
-            'spell-check': (self.spell_check_enabled, self.toggle_spell_check, 'Spell check'),
-            'auto-pair': (self.auto_pair_enabled, self.save_session, 'Auto pair brackets/quotes'),
-            'compare-multi-edit': (self.compare_multi_edit_enabled, self.save_session, 'Compare multi-edit'),
-            'breadcrumbs': (self.breadcrumbs_enabled, self.toggle_breadcrumbs, 'Breadcrumbs'),
-            'word-wrap': (self.word_wrap_enabled, self.toggle_word_wrap, 'Word wrap'),
-            'sync-page-navigation': (self.sync_page_navigation_enabled, self.save_session, 'Sync page navigation'),
+            'autosave': (self.autosave_enabled, self.save_session, self.tr('menu.settings.autosave', 'Auto Save')),
+            'minimap': (self.minimap_enabled, self.toggle_minimap, self.tr('menu.settings.minimap', 'Minimap')),
+            'diagnostics': (self.diagnostics_enabled, self.toggle_diagnostics, self.tr('menu.settings.diagnostics', 'Diagnostics')),
+            'edit-with-notepad-x': (self.edit_with_shell_enabled, self.toggle_edit_with_shell, self.tr('menu.view.edit_with_notepadx', 'Edit with Notepad-X')),
+            'edit-with-shell': (self.edit_with_shell_enabled, self.toggle_edit_with_shell, self.tr('menu.view.edit_with_notepadx', 'Edit with Notepad-X')),
+            'sound': (self.sound_enabled, self.toggle_sound, self.tr('menu.view.sound', 'Sound')),
+            'status-bar': (self.status_bar_enabled, self.toggle_status_bar, self.tr('menu.view.status_bar', 'Status Bar')),
+            'numbered-lines': (self.numbered_lines_enabled, self.toggle_numbered_lines, self.tr('menu.view.numbered_lines', 'Numbered Lines')),
+            'autocomplete': (self.autocomplete_enabled, self.toggle_autocomplete, self.tr('menu.view.autocomplete', 'Autocomplete')),
+            'spell-check': (self.spell_check_enabled, self.toggle_spell_check, self.tr('menu.view.spell_check', 'Spell Check')),
+            'auto-pair': (self.auto_pair_enabled, self.save_session, self.tr('menu.settings.auto_pair', 'Auto Pair Brackets/Quotes')),
+            'compare-multi-edit': (self.compare_multi_edit_enabled, self.save_session, self.tr('menu.settings.compare_multi_edit', 'Compare Multi-Edit')),
+            'breadcrumbs': (self.breadcrumbs_enabled, self.toggle_breadcrumbs, self.tr('menu.settings.breadcrumbs', 'Breadcrumbs')),
+            'word-wrap': (self.word_wrap_enabled, self.toggle_word_wrap, self.tr('menu.view.word_wrap', 'Word Wrap')),
+            'sync-page-navigation': (self.sync_page_navigation_enabled, self.save_session, self.tr('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare')),
         }
         if command_name in toggle_commands:
             variable, callback, label = toggle_commands[command_name]
@@ -10044,63 +10088,63 @@ class NotepadX:
     def get_hotkey_definitions(self):
         t = self.tr
         return OrderedDict([
-            ('open', {'section': t('menu.file', 'File'), 'label': t('menu.file.open', 'Open'), 'default': 'Ctrl+W', 'handler': lambda event=None: self.open_file(event)}),
-            ('open_project', {'section': t('menu.file', 'File'), 'label': t('menu.file.open_project', 'Open Project'), 'default': 'Ctrl+Shift+W', 'handler': lambda event=None: self.open_project(event)}),
-            ('open_remote', {'section': t('menu.file', 'File'), 'label': 'Open Remote (SSH)', 'default': 'Ctrl+Alt+O', 'handler': lambda event=None: self.open_remote_file_dialog(event)}),
-            ('grab_git', {'section': t('menu.file', 'File'), 'label': t('menu.file.grab_git', 'Grab Git'), 'default': 'Ctrl+Shift+G', 'handler': lambda event=None: self.grab_git_project(event)}),
-            ('new_tab', {'section': t('menu.file', 'File'), 'label': t('menu.file.new_tab', 'New Tab'), 'default': 'Ctrl+T', 'handler': lambda event=None: self.new_tab(event)}),
-            ('close_tab', {'section': t('menu.file', 'File'), 'label': t('menu.file.close_tab', 'Close Tab'), 'default': 'Ctrl+Shift+T', 'handler': lambda event=None: self.close_current_tab(event)}),
-            ('save', {'section': t('menu.file', 'File'), 'label': t('menu.file.save', 'Save'), 'default': 'Ctrl+S', 'handler': lambda event=None: self.save(event)}),
-            ('save_all', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_all', 'Save All'), 'default': 'Ctrl+Shift+S', 'handler': lambda event=None: self.save_all(event)}),
-            ('save_as', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_as', 'Save As'), 'default': 'Ctrl+Shift+Q', 'handler': lambda event=None: self.save_as()}),
-            ('save_copy_as', {'section': t('menu.file', 'File'), 'label': t('save.copy_title', 'Save Copy As'), 'default': 'Ctrl+Alt+S', 'handler': lambda event=None: self.save_copy_as()}),
-            ('save_and_run', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_and_run', 'Save and Run'), 'default': 'Ctrl+Shift+R', 'handler': lambda event=None: self.save_and_run(event)}),
-            ('save_as_encrypted', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_as_encrypted', 'Save As Encrypted'), 'default': 'Ctrl+Shift+E', 'handler': lambda event=None: self.save_encrypted_copy()}),
-            ('print', {'section': t('menu.file', 'File'), 'label': t('menu.file.print', 'Print'), 'default': 'Ctrl+P', 'handler': lambda event=None: self.print_file(event)}),
-            ('export_notes', {'section': t('menu.file', 'File'), 'label': t('menu.file.export_notes', 'Export Notes'), 'default': 'Ctrl+E', 'handler': lambda event=None: self.export_notes_report()}),
-            ('exit', {'section': t('menu.file', 'File'), 'label': t('menu.file.exit', 'Exit'), 'default': 'Ctrl+Shift+X', 'handler': lambda event=None: self.ctrl_shift_x(event)}),
-            ('find', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find', 'Find'), 'default': 'Ctrl+F', 'handler': lambda event=None: self.show_find_panel()}),
-            ('find_next', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find_next', 'Find Next'), 'default': 'F3', 'handler': lambda event=None: self.find_next(event)}),
-            ('find_previous', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find_previous', 'Find Previous'), 'default': 'Shift+F3', 'handler': lambda event=None: self.find_previous(event)}),
-            ('replace', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.replace', 'Replace'), 'default': 'Ctrl+R', 'handler': lambda event=None: self.show_replace_panel()}),
-            ('command_panel', {'section': t('menu.edit', 'Edit'), 'label': 'Command Panel', 'default': 'Ctrl+Shift+K', 'handler': lambda event=None: self.show_command_panel(event)}),
-            ('jump_symbol', {'section': t('menu.edit', 'Edit'), 'label': 'Jump to Symbol', 'default': 'Ctrl+Shift+O', 'handler': lambda event=None: self.show_symbol_navigator(event)}),
-            ('project_symbols', {'section': t('menu.edit', 'Edit'), 'label': 'Project Symbols', 'default': 'Ctrl+Alt+P', 'handler': lambda event=None: self.show_symbol_navigator(project_scope=True)}),
-            ('toggle_fold', {'section': t('menu.edit', 'Edit'), 'label': 'Toggle Fold', 'default': 'F9', 'handler': lambda event=None: self.toggle_fold_at_cursor(event)}),
-            ('collapse_all_folds', {'section': t('menu.edit', 'Edit'), 'label': 'Collapse All Folds', 'default': 'Shift+F9', 'handler': lambda event=None: self.collapse_all_folds(event)}),
-            ('expand_all_folds', {'section': t('menu.edit', 'Edit'), 'label': 'Expand All Folds', 'default': 'Ctrl+F9', 'handler': lambda event=None: self.expand_all_folds(event)}),
-            ('date', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.date', 'Date'), 'default': 'Ctrl+D', 'handler': lambda event=None: self.insert_date(event)}),
-            ('time_date', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.time_date', 'Time/Date'), 'default': 'Ctrl+Shift+D', 'handler': lambda event=None: self.insert_time_date(event)}),
-            ('font', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.font', 'Font'), 'default': 'Ctrl+Shift+F', 'handler': lambda event=None: self.show_font_dialog(event)}),
-            ('fullscreen', {'section': t('menu.view', 'View'), 'label': t('menu.view.full_screen', 'Full Screen'), 'default': 'F11', 'handler': lambda event=None: self.toggle_fullscreen(event)}),
-            ('switch_tab', {'section': t('menu.view', 'View'), 'label': t('menu.view.switch_tab', 'Switch Tab'), 'default': 'Ctrl+Tab', 'handler': lambda event=None: self.switch_tab_right(event)}),
-            ('currently_editing', {'section': t('menu.view', 'View'), 'label': t('menu.view.currently_editing', 'Currently Editing'), 'default': 'Ctrl+Shift+C', 'handler': lambda event=None: self.toggle_currently_editing_panel(event)}),
-            ('cycle_notes', {'section': t('menu.view', 'View'), 'label': t('menu.edit.cycle_notes', 'Cycle Notes'), 'default': 'F4', 'handler': lambda event=None: self.goto_next_note(event)}),
-            ('goto_line', {'section': t('menu.view', 'View'), 'label': t('menu.edit.goto_line', 'Go To Line'), 'default': 'Ctrl+G', 'handler': lambda event=None: self.goto_line_dialog(event)}),
-            ('top_of_document', {'section': t('menu.view', 'View'), 'label': t('menu.edit.top_of_document', 'Top of Document'), 'default': 'Ctrl+PgUp', 'handler': lambda event=None: self.goto_document_start(event)}),
-            ('bottom_of_document', {'section': t('menu.view', 'View'), 'label': t('menu.edit.bottom_of_document', 'Bottom of Document'), 'default': 'Ctrl+PgDn', 'handler': lambda event=None: self.goto_document_end(event)}),
-            ('create_theme', {'section': t('menu.view', 'View'), 'label': t('menu.view.create_theme', 'Create Theme'), 'default': 'Ctrl+Alt+T', 'handler': lambda event=None: self.show_create_theme_dialog()}),
-            ('compare_tabs', {'section': t('menu.view', 'View'), 'label': t('menu.view.compare_tabs', 'Compare Tabs'), 'default': 'Ctrl+Q', 'handler': lambda event=None: self.show_split_compare()}),
-            ('preview_markdown', {'section': t('menu.view', 'View'), 'label': t('menu.view.preview_markdown', 'Preview Markdown'), 'default': 'Ctrl+Shift+P', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.markdown_preview_enabled, self.toggle_markdown_preview)}),
-            ('zoom_in', {'section': t('menu.view', 'View'), 'label': 'Zoom In', 'default': 'Ctrl+Plus', 'handler': lambda event=None: self.zoom_in(event)}),
-            ('zoom_out', {'section': t('menu.view', 'View'), 'label': 'Zoom Out', 'default': 'Ctrl+Minus', 'handler': lambda event=None: self.zoom_out(event)}),
-            ('edit_with_notepadx', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.edit_with_notepadx', 'Edit with Notepad-X'), 'default': 'Ctrl+Alt+X', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.edit_with_shell_enabled, self.toggle_edit_with_shell)}),
-            ('sound', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.sound', 'Sound'), 'default': 'Ctrl+Alt+Shift+M', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.sound_enabled, self.toggle_sound)}),
-            ('status_bar', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.status_bar', 'Status Bar'), 'default': 'Ctrl+B', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.status_bar_enabled, self.toggle_status_bar)}),
-            ('numbered_lines', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.numbered_lines', 'Numbered Lines'), 'default': 'Ctrl+Alt+L', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.numbered_lines_enabled, self.toggle_numbered_lines)}),
-            ('autocomplete', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.autocomplete', 'Autocomplete'), 'default': 'Ctrl+Alt+A', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.autocomplete_enabled, self.toggle_autocomplete)}),
-            ('spell_check', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.spell_check', 'Spell Check'), 'default': 'F7', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.spell_check_enabled, self.toggle_spell_check)}),
-            ('auto_pair', {'section': t('menu.settings', 'Settings'), 'label': 'Auto Pair Brackets/Quotes', 'default': 'Ctrl+Alt+Shift+P', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.auto_pair_enabled, self.save_session)}),
-            ('compare_multi_edit', {'section': t('menu.settings', 'Settings'), 'label': 'Compare Multi-Edit', 'default': 'Ctrl+Alt+M', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.compare_multi_edit_enabled, self.save_session)}),
-            ('minimap', {'section': t('menu.settings', 'Settings'), 'label': 'Minimap', 'default': 'Ctrl+Alt+I', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.minimap_enabled, self.toggle_minimap)}),
-            ('breadcrumbs', {'section': t('menu.settings', 'Settings'), 'label': 'Breadcrumbs', 'default': 'Ctrl+Alt+B', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.breadcrumbs_enabled, self.toggle_breadcrumbs)}),
-            ('diagnostics', {'section': t('menu.settings', 'Settings'), 'label': 'Diagnostics', 'default': 'Ctrl+Alt+D', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.diagnostics_enabled, self.toggle_diagnostics)}),
-            ('autosave', {'section': t('menu.settings', 'Settings'), 'label': 'Auto Save', 'default': 'Ctrl+Alt+Shift+A', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.autosave_enabled, self.save_session)}),
-            ('word_wrap', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.word_wrap', 'Word Wrap'), 'default': 'Ctrl+Alt+W', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.word_wrap_enabled, self.toggle_word_wrap)}),
-            ('sync_page_navigation', {'section': t('menu.settings', 'Settings'), 'label': t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), 'default': 'Ctrl+Alt+Y', 'handler': lambda event=None: self.toggle_boolean_hotkey(self.sync_page_navigation_enabled, self.save_session)}),
-            ('hotkey_settings', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.hotkeys', 'Hotkey Settings'), 'default': 'Ctrl+Alt+K', 'handler': lambda event=None: self.show_hotkey_config_dialog()}),
-            ('help_contents', {'section': t('menu.help', 'Help'), 'label': t('menu.help.contents', 'Help Contents'), 'default': 'F1', 'handler': lambda event=None: self.show_help_contents()}),
-            ('about', {'section': t('menu.help', 'Help'), 'label': t('menu.help.about', 'About Notepad-X'), 'default': 'Shift+F1', 'handler': lambda event=None: self.show_about_dialog()}),
+            ('open', {'section': t('menu.file', 'File'), 'label': t('menu.file.open', 'Open'), 'default': t('accel.open', 'Ctrl+W'), 'handler': lambda event=None: self.open_file(event)}),
+            ('open_project', {'section': t('menu.file', 'File'), 'label': t('menu.file.open_project', 'Open Project'), 'default': t('accel.open_project', 'Ctrl+Shift+W'), 'handler': lambda event=None: self.open_project(event)}),
+            ('open_remote', {'section': t('menu.file', 'File'), 'label': t('menu.file.open_remote', 'Open Remote (SSH)'), 'default': t('accel.open_remote', 'Ctrl+Alt+O'), 'handler': lambda event=None: self.open_remote_file_dialog(event)}),
+            ('grab_git', {'section': t('menu.file', 'File'), 'label': t('menu.file.grab_git', 'Grab Git'), 'default': t('accel.grab_git', 'Ctrl+Shift+G'), 'handler': lambda event=None: self.grab_git_project(event)}),
+            ('new_tab', {'section': t('menu.file', 'File'), 'label': t('menu.file.new_tab', 'New Tab'), 'default': t('accel.new_tab', 'Ctrl+T'), 'handler': lambda event=None: self.new_tab(event)}),
+            ('close_tab', {'section': t('menu.file', 'File'), 'label': t('menu.file.close_tab', 'Close Tab'), 'default': t('accel.close_tab', 'Ctrl+Shift+T'), 'handler': lambda event=None: self.close_current_tab(event)}),
+            ('save', {'section': t('menu.file', 'File'), 'label': t('menu.file.save', 'Save'), 'default': t('accel.save', 'Ctrl+S'), 'handler': lambda event=None: self.save(event)}),
+            ('save_all', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_all', 'Save All'), 'default': t('accel.save_all', 'Ctrl+Shift+S'), 'handler': lambda event=None: self.save_all(event)}),
+            ('save_as', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_as', 'Save As'), 'default': t('accel.save_as', 'Ctrl+Shift+Q'), 'handler': lambda event=None: self.save_as()}),
+            ('save_copy_as', {'section': t('menu.file', 'File'), 'label': t('save.copy_title', 'Save Copy As'), 'default': t('accel.save_copy_as', 'Ctrl+Alt+S'), 'handler': lambda event=None: self.save_copy_as()}),
+            ('save_and_run', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_and_run', 'Save and Run'), 'default': t('accel.save_and_run', 'Ctrl+Shift+R'), 'handler': lambda event=None: self.save_and_run(event)}),
+            ('save_as_encrypted', {'section': t('menu.file', 'File'), 'label': t('menu.file.save_as_encrypted', 'Save As Encrypted'), 'default': t('accel.save_as_encrypted', 'Ctrl+Shift+E'), 'handler': lambda event=None: self.save_encrypted_copy()}),
+            ('print', {'section': t('menu.file', 'File'), 'label': t('menu.file.print', 'Print'), 'default': t('accel.print', 'Ctrl+P'), 'handler': lambda event=None: self.print_file(event)}),
+            ('export_notes', {'section': t('menu.file', 'File'), 'label': t('menu.file.export_notes', 'Export Notes'), 'default': t('accel.export_notes', 'Ctrl+E'), 'handler': lambda event=None: self.export_notes_report()}),
+            ('exit', {'section': t('menu.file', 'File'), 'label': t('menu.file.exit', 'Exit'), 'default': t('accel.exit', 'Ctrl+Shift+X'), 'handler': lambda event=None: self.ctrl_shift_x(event)}),
+            ('find', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find', 'Find'), 'default': t('accel.find', 'Ctrl+F'), 'handler': lambda event=None: self.show_find_panel()}),
+            ('find_next', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find_next', 'Find Next'), 'default': t('accel.find_next', 'F3'), 'handler': lambda event=None: self.find_next(event)}),
+            ('find_previous', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.find_previous', 'Find Previous'), 'default': t('accel.find_previous', 'Shift+F3'), 'handler': lambda event=None: self.find_previous(event)}),
+            ('replace', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.replace', 'Replace'), 'default': t('accel.replace', 'Ctrl+R'), 'handler': lambda event=None: self.show_replace_panel()}),
+            ('command_panel', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.command_panel', 'Command Panel'), 'default': t('accel.command_panel', 'Ctrl+Shift+K'), 'handler': lambda event=None: self.show_command_panel(event)}),
+            ('jump_symbol', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.jump_symbol', 'Jump to Symbol'), 'default': t('accel.jump_symbol', 'Ctrl+Shift+O'), 'handler': lambda event=None: self.show_symbol_navigator(event)}),
+            ('project_symbols', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.project_symbols', 'Project Symbols'), 'default': t('accel.project_symbols', 'Ctrl+Alt+P'), 'handler': lambda event=None: self.show_symbol_navigator(project_scope=True)}),
+            ('toggle_fold', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.toggle_fold', 'Toggle Fold'), 'default': t('accel.toggle_fold', 'F9'), 'handler': lambda event=None: self.toggle_fold_at_cursor(event)}),
+            ('collapse_all_folds', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.collapse_all_folds', 'Collapse All Folds'), 'default': t('accel.collapse_all_folds', 'Shift+F9'), 'handler': lambda event=None: self.collapse_all_folds(event)}),
+            ('expand_all_folds', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.expand_all_folds', 'Expand All Folds'), 'default': t('accel.expand_all_folds', 'Ctrl+F9'), 'handler': lambda event=None: self.expand_all_folds(event)}),
+            ('date', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.date', 'Date'), 'default': t('accel.date', 'Ctrl+D'), 'handler': lambda event=None: self.insert_date(event)}),
+            ('time_date', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.time_date', 'Time/Date'), 'default': t('accel.time_date', 'Ctrl+Shift+D'), 'handler': lambda event=None: self.insert_time_date(event)}),
+            ('font', {'section': t('menu.edit', 'Edit'), 'label': t('menu.edit.font', 'Font'), 'default': t('accel.font', 'Ctrl+Shift+F'), 'handler': lambda event=None: self.show_font_dialog(event)}),
+            ('fullscreen', {'section': t('menu.view', 'View'), 'label': t('menu.view.full_screen', 'Full Screen'), 'default': t('accel.full_screen', 'F11'), 'handler': lambda event=None: self.toggle_fullscreen(event)}),
+            ('switch_tab', {'section': t('menu.view', 'View'), 'label': t('menu.view.switch_tab', 'Switch Tab'), 'default': t('accel.switch_tab', 'Ctrl+Tab'), 'handler': lambda event=None: self.switch_tab_right(event)}),
+            ('currently_editing', {'section': t('menu.view', 'View'), 'label': t('menu.view.currently_editing', 'Currently Editing'), 'default': t('accel.currently_editing', 'Ctrl+Shift+C'), 'handler': lambda event=None: self.toggle_currently_editing_panel(event)}),
+            ('cycle_notes', {'section': t('menu.view', 'View'), 'label': t('menu.edit.cycle_notes', 'Cycle Notes'), 'default': t('accel.cycle_notes', 'F4'), 'handler': lambda event=None: self.goto_next_note(event)}),
+            ('goto_line', {'section': t('menu.view', 'View'), 'label': t('menu.edit.goto_line', 'Go To Line'), 'default': t('accel.goto_line', 'Ctrl+G'), 'handler': lambda event=None: self.goto_line_dialog(event)}),
+            ('top_of_document', {'section': t('menu.view', 'View'), 'label': t('menu.edit.top_of_document', 'Top of Document'), 'default': t('accel.top_of_document', 'Ctrl+PgUp'), 'handler': lambda event=None: self.goto_document_start(event)}),
+            ('bottom_of_document', {'section': t('menu.view', 'View'), 'label': t('menu.edit.bottom_of_document', 'Bottom of Document'), 'default': t('accel.bottom_of_document', 'Ctrl+PgDn'), 'handler': lambda event=None: self.goto_document_end(event)}),
+            ('create_theme', {'section': t('menu.view', 'View'), 'label': t('menu.view.create_theme', 'Create Theme'), 'default': t('accel.create_theme', 'Ctrl+Alt+T'), 'handler': lambda event=None: self.show_create_theme_dialog()}),
+            ('compare_tabs', {'section': t('menu.view', 'View'), 'label': t('menu.view.compare_tabs', 'Compare Tabs'), 'default': t('accel.compare_tabs', 'Ctrl+Q'), 'handler': lambda event=None: self.show_split_compare()}),
+            ('preview_markdown', {'section': t('menu.view', 'View'), 'label': t('menu.view.preview_markdown', 'Preview Markdown'), 'default': t('accel.preview_markdown', 'Ctrl+Shift+P'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.markdown_preview_enabled, self.toggle_markdown_preview)}),
+            ('zoom_in', {'section': t('menu.view', 'View'), 'label': t('menu.view.zoom_in', 'Zoom In'), 'default': t('accel.zoom_in', 'Ctrl+Plus'), 'handler': lambda event=None: self.zoom_in(event)}),
+            ('zoom_out', {'section': t('menu.view', 'View'), 'label': t('menu.view.zoom_out', 'Zoom Out'), 'default': t('accel.zoom_out', 'Ctrl+Minus'), 'handler': lambda event=None: self.zoom_out(event)}),
+            ('edit_with_notepadx', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.edit_with_notepadx', 'Edit with Notepad-X'), 'default': t('accel.edit_with_notepadx', 'Ctrl+Alt+X'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.edit_with_shell_enabled, self.toggle_edit_with_shell)}),
+            ('sound', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.sound', 'Sound'), 'default': t('accel.sound', 'Ctrl+Alt+Shift+M'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.sound_enabled, self.toggle_sound)}),
+            ('status_bar', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.status_bar', 'Status Bar'), 'default': t('accel.status_bar', 'Ctrl+B'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.status_bar_enabled, self.toggle_status_bar)}),
+            ('numbered_lines', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.numbered_lines', 'Numbered Lines'), 'default': t('accel.numbered_lines', 'Ctrl+Alt+L'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.numbered_lines_enabled, self.toggle_numbered_lines)}),
+            ('autocomplete', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.autocomplete', 'Autocomplete'), 'default': t('accel.autocomplete', 'Ctrl+Alt+A'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.autocomplete_enabled, self.toggle_autocomplete)}),
+            ('spell_check', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.spell_check', 'Spell Check'), 'default': t('accel.spell_check', 'F7'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.spell_check_enabled, self.toggle_spell_check)}),
+            ('auto_pair', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.auto_pair', 'Auto Pair Brackets/Quotes'), 'default': t('accel.auto_pair', 'Ctrl+Alt+Shift+P'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.auto_pair_enabled, self.save_session)}),
+            ('compare_multi_edit', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.compare_multi_edit', 'Compare Multi-Edit'), 'default': t('accel.compare_multi_edit', 'Ctrl+Alt+M'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.compare_multi_edit_enabled, self.save_session)}),
+            ('minimap', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.minimap', 'Minimap'), 'default': t('accel.minimap', 'Ctrl+Alt+I'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.minimap_enabled, self.toggle_minimap)}),
+            ('breadcrumbs', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.breadcrumbs', 'Breadcrumbs'), 'default': t('accel.breadcrumbs', 'Ctrl+Alt+B'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.breadcrumbs_enabled, self.toggle_breadcrumbs)}),
+            ('diagnostics', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.diagnostics', 'Diagnostics'), 'default': t('accel.diagnostics', 'Ctrl+Alt+D'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.diagnostics_enabled, self.toggle_diagnostics)}),
+            ('autosave', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.autosave', 'Auto Save'), 'default': t('accel.autosave', 'Ctrl+Alt+Shift+A'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.autosave_enabled, self.save_session)}),
+            ('word_wrap', {'section': t('menu.settings', 'Settings'), 'label': t('menu.view.word_wrap', 'Word Wrap'), 'default': t('accel.word_wrap', 'Ctrl+Alt+W'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.word_wrap_enabled, self.toggle_word_wrap)}),
+            ('sync_page_navigation', {'section': t('menu.settings', 'Settings'), 'label': t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), 'default': t('accel.sync_page_navigation', 'Ctrl+Alt+Y'), 'handler': lambda event=None: self.toggle_boolean_hotkey(self.sync_page_navigation_enabled, self.save_session)}),
+            ('hotkey_settings', {'section': t('menu.settings', 'Settings'), 'label': t('menu.settings.hotkeys', 'Hotkey Settings'), 'default': t('accel.hotkey_settings', 'Ctrl+Alt+K'), 'handler': lambda event=None: self.show_hotkey_config_dialog()}),
+            ('help_contents', {'section': t('menu.help', 'Help'), 'label': t('menu.help.contents', 'Help Contents'), 'default': t('accel.help_contents', 'F1'), 'handler': lambda event=None: self.show_help_contents()}),
+            ('about', {'section': t('menu.help', 'Help'), 'label': t('menu.help.about', 'About Notepad-X'), 'default': t('accel.about', 'Shift+F1'), 'handler': lambda event=None: self.show_about_dialog()}),
         ])
 
     def toggle_boolean_hotkey(self, variable, callback):
@@ -12355,13 +12399,17 @@ class NotepadX:
         if not symbols:
             messagebox.showinfo(
                 self.tr('app.name', 'Notepad-X'),
-                'No symbols were found for this scope.',
+                self.tr('symbol.navigator.no_symbols', 'No symbols were found for this scope.'),
                 parent=self.root
             )
             return "break"
 
         dialog = self.create_toplevel(self.root)
-        dialog.title('Project Symbols' if project_scope else 'Symbols')
+        dialog.title(
+            self.tr('symbol.navigator.project_title', 'Project Symbols')
+            if project_scope
+            else self.tr('symbol.navigator.title', 'Symbols')
+        )
         dialog.transient(self.root)
         dialog.configure(bg=self.bg_color)
         dialog.geometry('720x480')
@@ -17809,7 +17857,7 @@ class NotepadX:
         self.menu.add_cascade(label=t('menu.file', 'File'), menu=file_menu)
         file_menu.add_command(label=t('menu.file.open', 'Open'), command=self.open_file, accelerator=hk('open'))
         file_menu.add_command(label=t('menu.file.open_project', 'Open Project'), command=self.open_project, accelerator=hk('open_project'))
-        file_menu.add_command(label='Open Remote (SSH)', command=self.open_remote_file_dialog, accelerator=hk('open_remote'))
+        file_menu.add_command(label=t('menu.file.open_remote', 'Open Remote (SSH)'), command=self.open_remote_file_dialog, accelerator=hk('open_remote'))
         file_menu.add_command(label=t('menu.file.grab_git', 'Grab Git'), command=self.grab_git_project, accelerator=hk('grab_git'))
         self.recent_menu = tk.Menu(file_menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                                    activebackground='#3a3a3a')
@@ -17843,13 +17891,13 @@ class NotepadX:
         edit_menu.add_command(label=t('menu.edit.find_next', 'Find Next'), command=self.find_next, accelerator=hk('find_next'))
         edit_menu.add_command(label=t('menu.edit.find_previous', 'Find Previous'), command=self.find_previous, accelerator=hk('find_previous'))
         edit_menu.add_command(label=t('menu.edit.replace', 'Replace'), command=self.show_replace_panel, accelerator=hk('replace'))
-        edit_menu.add_command(label='Command Panel', command=self.show_command_panel, accelerator=hk('command_panel'))
-        edit_menu.add_command(label='Jump to Symbol', command=self.show_symbol_navigator, accelerator=hk('jump_symbol'))
-        edit_menu.add_command(label='Project Symbols', command=lambda: self.show_symbol_navigator(project_scope=True), accelerator=hk('project_symbols'))
+        edit_menu.add_command(label=t('menu.edit.command_panel', 'Command Panel'), command=self.show_command_panel, accelerator=hk('command_panel'))
+        edit_menu.add_command(label=t('menu.edit.jump_symbol', 'Jump to Symbol'), command=self.show_symbol_navigator, accelerator=hk('jump_symbol'))
+        edit_menu.add_command(label=t('menu.edit.project_symbols', 'Project Symbols'), command=lambda: self.show_symbol_navigator(project_scope=True), accelerator=hk('project_symbols'))
         edit_menu.add_separator()
-        edit_menu.add_command(label='Toggle Fold', command=self.toggle_fold_at_cursor, accelerator=hk('toggle_fold'))
-        edit_menu.add_command(label='Collapse All Folds', command=self.collapse_all_folds, accelerator=hk('collapse_all_folds'))
-        edit_menu.add_command(label='Expand All Folds', command=self.expand_all_folds, accelerator=hk('expand_all_folds'))
+        edit_menu.add_command(label=t('menu.edit.toggle_fold', 'Toggle Fold'), command=self.toggle_fold_at_cursor, accelerator=hk('toggle_fold'))
+        edit_menu.add_command(label=t('menu.edit.collapse_all_folds', 'Collapse All Folds'), command=self.collapse_all_folds, accelerator=hk('collapse_all_folds'))
+        edit_menu.add_command(label=t('menu.edit.expand_all_folds', 'Expand All Folds'), command=self.expand_all_folds, accelerator=hk('expand_all_folds'))
         edit_menu.add_separator()
         edit_menu.add_command(label=t('menu.edit.date', 'Date'), command=self.insert_date, accelerator=hk('date'))
         edit_menu.add_command(label=t('menu.edit.time_date', 'Time/Date'), command=self.insert_time_date, accelerator=hk('time_date'))
@@ -17912,12 +17960,12 @@ class NotepadX:
         settings_menu.add_checkbutton(label=t('menu.view.numbered_lines', 'Numbered Lines'), variable=self.numbered_lines_enabled, command=self.toggle_numbered_lines, accelerator=hk('numbered_lines'))
         settings_menu.add_checkbutton(label=t('menu.view.autocomplete', 'Autocomplete'), variable=self.autocomplete_enabled, command=self.toggle_autocomplete, accelerator=hk('autocomplete'))
         settings_menu.add_checkbutton(label=t('menu.view.spell_check', 'Spell Check'), variable=self.spell_check_enabled, command=self.toggle_spell_check, accelerator=hk('spell_check'))
-        settings_menu.add_checkbutton(label='Auto Pair Brackets/Quotes', variable=self.auto_pair_enabled, command=self.save_session, accelerator=hk('auto_pair'))
-        settings_menu.add_checkbutton(label='Compare Multi-Edit', variable=self.compare_multi_edit_enabled, command=self.save_session, accelerator=hk('compare_multi_edit'))
-        settings_menu.add_checkbutton(label='Minimap', variable=self.minimap_enabled, command=self.toggle_minimap, accelerator=hk('minimap'))
-        settings_menu.add_checkbutton(label='Breadcrumbs', variable=self.breadcrumbs_enabled, command=self.toggle_breadcrumbs, accelerator=hk('breadcrumbs'))
-        settings_menu.add_checkbutton(label='Diagnostics', variable=self.diagnostics_enabled, command=self.toggle_diagnostics, accelerator=hk('diagnostics'))
-        settings_menu.add_checkbutton(label='Auto Save', variable=self.autosave_enabled, command=self.save_session, accelerator=hk('autosave'))
+        settings_menu.add_checkbutton(label=t('menu.settings.auto_pair', 'Auto Pair Brackets/Quotes'), variable=self.auto_pair_enabled, command=self.save_session, accelerator=hk('auto_pair'))
+        settings_menu.add_checkbutton(label=t('menu.settings.compare_multi_edit', 'Compare Multi-Edit'), variable=self.compare_multi_edit_enabled, command=self.save_session, accelerator=hk('compare_multi_edit'))
+        settings_menu.add_checkbutton(label=t('menu.settings.minimap', 'Minimap'), variable=self.minimap_enabled, command=self.toggle_minimap, accelerator=hk('minimap'))
+        settings_menu.add_checkbutton(label=t('menu.settings.breadcrumbs', 'Breadcrumbs'), variable=self.breadcrumbs_enabled, command=self.toggle_breadcrumbs, accelerator=hk('breadcrumbs'))
+        settings_menu.add_checkbutton(label=t('menu.settings.diagnostics', 'Diagnostics'), variable=self.diagnostics_enabled, command=self.toggle_diagnostics, accelerator=hk('diagnostics'))
+        settings_menu.add_checkbutton(label=t('menu.settings.autosave', 'Auto Save'), variable=self.autosave_enabled, command=self.save_session, accelerator=hk('autosave'))
         settings_menu.add_checkbutton(label=t('menu.view.word_wrap', 'Word Wrap'), variable=self.word_wrap_enabled, command=self.toggle_word_wrap, accelerator=hk('word_wrap'))
         settings_menu.add_checkbutton(label=t('menu.view.preview_markdown', 'Preview Markdown'), variable=self.markdown_preview_enabled, command=self.toggle_markdown_preview, accelerator=hk('preview_markdown'))
         settings_menu.add_checkbutton(label=t('menu.edit.sync_page_navigation', 'Sync PgUp/PgDn in Compare'), variable=self.sync_page_navigation_enabled, command=self.save_session, accelerator=hk('sync_page_navigation'))
