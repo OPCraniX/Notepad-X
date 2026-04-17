@@ -1899,6 +1899,50 @@ class NotepadX:
     def get_theme_dir(self, config_dir):
         return os.path.join(config_dir, 'themes')
 
+    def get_bundled_locale_dirs(self):
+        candidates = []
+        base_dirs = [
+            getattr(self, 'resource_dir', None),
+            get_notepadx_app_dir(),
+            os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else None,
+        ]
+        for base_dir in base_dirs:
+            if not base_dir:
+                continue
+            for relative_parts in (('cfg', 'language'), ('language',)):
+                candidates.append(os.path.join(base_dir, *relative_parts))
+        unique_dirs = []
+        seen_dirs = set()
+        for candidate in candidates:
+            try:
+                normalized = os.path.normcase(os.path.abspath(candidate))
+            except (TypeError, ValueError, OSError):
+                continue
+            if normalized in seen_dirs:
+                continue
+            seen_dirs.add(normalized)
+            unique_dirs.append(candidate)
+        return unique_dirs
+
+    def get_locale_search_dirs(self, locale_dir=None):
+        primary_dir = locale_dir or getattr(self, 'locale_dir', None) or (
+            os.path.dirname(self.locale_path) if getattr(self, 'locale_path', None)
+            else self.get_locale_dir(self.get_config_dir(self.app_dir))
+        )
+        candidates = [primary_dir] + self.get_bundled_locale_dirs()
+        unique_dirs = []
+        seen_dirs = set()
+        for candidate in candidates:
+            try:
+                normalized = os.path.normcase(os.path.abspath(candidate))
+            except (TypeError, ValueError, OSError):
+                continue
+            if normalized in seen_dirs:
+                continue
+            seen_dirs.add(normalized)
+            unique_dirs.append(candidate)
+        return unique_dirs
+
     def migrate_language_files(self, config_dir=None, locale_dir=None):
         config_dir = config_dir or self.get_config_dir(self.app_dir)
         locale_dir = locale_dir or self.get_locale_dir(config_dir)
@@ -1923,6 +1967,29 @@ class NotepadX:
                 shutil.move(source_path, target_path)
             except OSError:
                 continue
+        for bundled_dir in self.get_bundled_locale_dirs():
+            try:
+                source_entries = os.listdir(bundled_dir)
+            except OSError:
+                continue
+            for entry in source_entries:
+                if not entry.lower().endswith('.yml'):
+                    continue
+                source_path = os.path.join(bundled_dir, entry)
+                if not os.path.isfile(source_path):
+                    continue
+                target_path = os.path.join(locale_dir, entry)
+                try:
+                    if os.path.abspath(source_path) == os.path.abspath(target_path):
+                        continue
+                except (TypeError, ValueError, OSError):
+                    pass
+                if os.path.exists(target_path):
+                    continue
+                try:
+                    shutil.copy2(source_path, target_path)
+                except OSError:
+                    continue
 
     def get_builtin_theme_definitions(self):
         return {
@@ -2516,31 +2583,29 @@ class NotepadX:
             else self.get_locale_dir(self.get_config_dir(self.app_dir))
         )
         candidate = os.path.join(locale_dir, f'{safe_code}.yml')
-        try:
-            for entry in os.listdir(locale_dir):
-                if not entry.lower().endswith('.yml'):
-                    continue
-                if os.path.splitext(entry)[0].strip().lower() == safe_code:
-                    return os.path.join(locale_dir, entry)
-        except OSError:
-            pass
+        for search_dir in self.get_locale_search_dirs(locale_dir):
+            try:
+                for entry in os.listdir(search_dir):
+                    if not entry.lower().endswith('.yml'):
+                        continue
+                    if os.path.splitext(entry)[0].strip().lower() == safe_code:
+                        return os.path.join(search_dir, entry)
+            except OSError:
+                continue
         return candidate
 
     def get_available_language_codes(self):
-        config_dir = getattr(self, 'locale_dir', None) or (
-            os.path.dirname(self.locale_path) if getattr(self, 'locale_path', None)
-            else self.get_locale_dir(self.get_config_dir(self.app_dir))
-        )
         codes = []
-        try:
-            for entry in os.listdir(config_dir):
-                if not entry.lower().endswith('.yml'):
-                    continue
-                code = os.path.splitext(entry)[0].strip().lower()
-                if code:
-                    codes.append(code)
-        except OSError:
-            pass
+        for search_dir in self.get_locale_search_dirs():
+            try:
+                for entry in os.listdir(search_dir):
+                    if not entry.lower().endswith('.yml'):
+                        continue
+                    code = os.path.splitext(entry)[0].strip().lower()
+                    if code:
+                        codes.append(code)
+            except OSError:
+                continue
         if 'en_us' not in codes:
             codes.append('en_us')
         return sorted(set(codes), key=lambda value: (value != 'en_us', value))
