@@ -10450,6 +10450,15 @@ class NotepadX:
         result = definition['handler'](event)
         return "break" if result is None else result
 
+    def invoke_hotkey_for_event(self, event=None):
+        shortcut = self.capture_hotkey_from_event(event)
+        if shortcut is None:
+            return None
+        for action_id in self.get_hotkey_definitions():
+            if self.normalize_hotkey_shortcut(self.get_hotkey_shortcut(action_id)) == shortcut:
+                return self.invoke_hotkey_action(action_id, event)
+        return None
+
     def apply_hotkey_bindings(self):
         for sequence in getattr(self, 'hotkey_bound_sequences', set()):
             try:
@@ -11735,6 +11744,8 @@ class NotepadX:
                     '<<Selection>>'):
             self.compare_text.bind(evt, self.handle_compare_activity, add='+')
         self.compare_text.bind('<KeyPress>', self.handle_compare_keypress)
+        self.compare_text.bind('<Control-Shift-x>', self.ctrl_shift_x)
+        self.compare_text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         self.compare_text.bind('<Control-x>', self.cut)
         self.compare_text.bind('<Control-X>', self.cut)
         self.compare_text.bind('<Control-v>', self.paste)
@@ -11943,6 +11954,8 @@ class NotepadX:
         text.bind('<MouseWheel>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
         text.bind('<Button-4>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
         text.bind('<Button-5>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
+        text.bind('<Control-Shift-x>', self.ctrl_shift_x)
+        text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         text.bind('<Control-x>', self.cut)
         text.bind('<Control-X>', self.cut)
         text.bind('<Control-v>', self.paste)
@@ -20325,6 +20338,10 @@ class NotepadX:
         return "break"
 
     def cut(self, event=None):
+        hotkey_result = self.invoke_hotkey_for_event(event)
+        if hotkey_result is not None:
+            return hotkey_result
+
         target = None
         if event is not None and isinstance(getattr(event, 'widget', None), tk.Text):
             target = event.widget
