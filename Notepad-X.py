@@ -5248,6 +5248,38 @@ class NotepadX:
                 self.log_exception("persist editor identity", exc)
                 return
 
+    def get_window_work_area(self, window):
+        screen_width = max(1, window.winfo_screenwidth())
+        screen_height = max(1, window.winfo_screenheight())
+        if self.is_windows:
+            try:
+                class MonitorInfo(ctypes.Structure):
+                    _fields_ = [
+                        ('cbSize', wintypes.DWORD),
+                        ('rcMonitor', wintypes.RECT),
+                        ('rcWork', wintypes.RECT),
+                        ('dwFlags', wintypes.DWORD),
+                    ]
+
+                user32 = ctypes.WinDLL('user32', use_last_error=True)
+                user32.MonitorFromWindow.restype = ctypes.c_void_p
+                user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+                user32.GetMonitorInfoW.restype = wintypes.BOOL
+                user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MonitorInfo)]
+                hwnd = wintypes.HWND(int(window.winfo_id()))
+                monitor = user32.MonitorFromWindow(hwnd, 0x00000002)
+                if monitor:
+                    monitor_info = MonitorInfo()
+                    monitor_info.cbSize = ctypes.sizeof(MonitorInfo)
+                    if user32.GetMonitorInfoW(monitor, ctypes.byref(monitor_info)):
+                        rect = monitor_info.rcWork
+                        width = max(1, int(rect.right - rect.left))
+                        height = max(1, int(rect.bottom - rect.top))
+                        return int(rect.left), int(rect.top), width, height
+            except Exception:
+                pass
+        return 0, 0, screen_width, screen_height
+
     def center_window(self, window, parent=None):
         try:
             window.update_idletasks()
@@ -5281,16 +5313,14 @@ class NotepadX:
             else:
                 x = parent_x + max(0, (parent_width - width) // 2)
                 y = parent_y + max(0, (parent_height - height) // 2)
+        work_area_window = parent if parent is not None else window
+        work_x, work_y, work_width, work_height = self.get_window_work_area(work_area_window)
         if parent is None:
-            screen_width = window.winfo_screenwidth()
-            screen_height = window.winfo_screenheight()
-            x = max(0, (screen_width - width) // 2)
-            y = max(0, (screen_height - height) // 2)
+            x = work_x + max(0, (work_width - width) // 2)
+            y = work_y + max(0, (work_height - height) // 2)
 
-        screen_width = max(1, window.winfo_screenwidth())
-        screen_height = max(1, window.winfo_screenheight())
-        x = max(0, min(int(x), max(0, screen_width - width)))
-        y = max(0, min(int(y), max(0, screen_height - height)))
+        x = max(work_x, min(int(x), work_x + max(0, work_width - width)))
+        y = max(work_y, min(int(y), work_y + max(0, work_height - height)))
         window.geometry(f"{width}x{height}+{x}+{y}")
 
     def center_window_after_show(self, window, parent=None, attempts=3, delay_ms=60):
@@ -18621,7 +18651,7 @@ class NotepadX:
                     ).pack(side='left')
 
     def wrap_about_requirements(self):
-        max_line_chars = 54
+        max_line_chars = 68
         rows = []
         row = []
         row_chars = len(self.tr('about.requirements', 'Requierments:')) + 1
@@ -18794,7 +18824,7 @@ class NotepadX:
         dialog.attributes('-topmost', True)
         dialog.grab_set()
         dialog.focus_force()
-        dialog.after(1, lambda current=dialog: self.center_window_after_show(current))
+        dialog.after(1, lambda current=dialog: self.center_window_after_show(current, None, 5, 80))
         dialog.after(50, lambda: dialog.attributes('-topmost', False) if dialog.winfo_exists() else None)
 
     def open_repo_link(self):
