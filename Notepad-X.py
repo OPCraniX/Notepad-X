@@ -1099,9 +1099,16 @@ class NotepadX:
         }
         self.max_recent_files = 10
         self.max_search_history = 10
+        self.max_search_history_entry_length = 512
         self.max_command_history = 25
+        self.max_command_history_entry_length = 1000
         self.max_session_files = 100
         self.max_recovery_tabs = 20
+        self.max_shared_editors = 32
+        self.max_shared_editor_id_length = 128
+        self.max_shared_editor_label_length = 80
+        self.max_shared_editor_host_length = 128
+        self.max_shared_editor_ip_length = 64
         self.shared_editor_stale_seconds = 30
         self.max_note_text_length = 4000
         self.max_note_name_length = 120
@@ -6779,7 +6786,7 @@ class NotepadX:
         self.select_command_history_value(selected_value)
 
     def record_command_history(self, command_text):
-        cleaned_command = str(command_text or '').strip()
+        cleaned_command = self.normalize_history_entry(command_text, self.max_command_history_entry_length)
         if not cleaned_command:
             return False
         updated_history = [
@@ -8117,6 +8124,10 @@ class NotepadX:
             clipboard_text = self.get_breadcrumb_click_value(doc, event=event, text_widget=breadcrumb_widget)
         return self.copy_text_to_clipboard(clipboard_text, event)
 
+    def normalize_history_entry(self, entry, max_length):
+        value = self.trim_text(entry, max_length)
+        return value or ''
+
     def sanitize_search_history_entries(self, entries):
         cleaned_entries = []
         seen = set()
@@ -8124,7 +8135,7 @@ class NotepadX:
         for entry in source_entries:
             if not isinstance(entry, str):
                 continue
-            value = entry.strip()
+            value = self.normalize_history_entry(entry, self.max_search_history_entry_length)
             if not value:
                 continue
             lowered = value.lower()
@@ -8143,7 +8154,7 @@ class NotepadX:
         for entry in source_entries:
             if not isinstance(entry, str):
                 continue
-            value = entry.strip()
+            value = self.normalize_history_entry(entry, self.max_command_history_entry_length)
             if not value:
                 continue
             lowered = value.lower()
@@ -8420,7 +8431,7 @@ class NotepadX:
         return None
 
     def add_search_history_entry(self, attribute_name, query):
-        cleaned_query = str(query or '').strip()
+        cleaned_query = self.normalize_history_entry(query, self.max_search_history_entry_length)
         if not cleaned_query:
             return False
 
@@ -10853,19 +10864,17 @@ class NotepadX:
         for widget in reversed(self.root.winfo_children()):
             if not isinstance(widget, tk.Toplevel):
                 continue
+            if getattr(widget, 'notepadx_close_role', None) not in {'help', 'about'}:
+                continue
             try:
-                title = widget.title()
+                close_callback = getattr(widget, 'notepadx_close_callback', None)
+                if callable(close_callback):
+                    close_callback()
+                else:
+                    widget.destroy()
+                return True
             except tk.TclError:
                 continue
-            if title in {
-                self.tr('app.help_title', 'Notepad-X Help'),
-                self.tr('app.about_title', 'About Notepad-X')
-            }:
-                try:
-                    widget.destroy()
-                    return True
-                except tk.TclError:
-                    continue
         return False
 
     def toggle_fullscreen(self, event=None):
@@ -16130,20 +16139,22 @@ class NotepadX:
         sanitized = []
         seen_ids = set()
         for entry in editors or []:
+            if len(sanitized) >= self.max_shared_editors:
+                break
             if not isinstance(entry, dict):
                 continue
-            editor_id = str(entry.get('id', '')).strip()
+            editor_id = self.trim_text(entry.get('id'), self.max_shared_editor_id_length)
             if not editor_id or editor_id in seen_ids:
                 continue
-            label = str(entry.get('label', '')).strip() or None
+            label = self.trim_text(entry.get('label'), self.max_shared_editor_label_length)
             pid = entry.get('pid')
             if isinstance(pid, str) and pid.isdigit():
                 pid = int(pid)
             if not isinstance(pid, int) or pid <= 0:
                 pid = None
             last_seen = self.normalize_optional_metadata(entry.get('last_seen'))
-            host = self.trim_text(self.normalize_optional_metadata(entry.get('host')), 128)
-            ip = self.trim_text(self.normalize_optional_metadata(entry.get('ip')), 64)
+            host = self.trim_text(self.normalize_optional_metadata(entry.get('host')), self.max_shared_editor_host_length)
+            ip = self.trim_text(self.normalize_optional_metadata(entry.get('ip')), self.max_shared_editor_ip_length)
             sanitized.append({'id': editor_id, 'label': label, 'pid': pid, 'last_seen': last_seen, 'host': host, 'ip': ip})
             seen_ids.add(editor_id)
         return sanitized
@@ -18129,6 +18140,7 @@ class NotepadX:
 
     def show_help_contents(self):
         dialog = self.create_toplevel(self.root)
+        dialog.notepadx_close_role = 'help'
         dialog.title(self.tr('app.help_title', 'Notepad-X Help'))
         dialog.transient(self.root)
         dialog.configure(bg=self.bg_color)
@@ -18172,11 +18184,12 @@ class NotepadX:
         help_text.insert('1.0', content)
         help_text.configure(state='disabled')
         help_text.bind('<Control-Button-1>', self.activate_help_lolcat)
+        dialog.notepadx_close_callback = lambda current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget)
 
         close_button = tk.Button(
             dialog,
             text=self.tr('common.close', 'Close'),
-            command=lambda current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget),
+            command=dialog.notepadx_close_callback,
             bg='#2d2d2d',
             fg=self.fg_color,
             activebackground='#3a3a3a',
@@ -18188,8 +18201,8 @@ class NotepadX:
         )
         close_button.pack(pady=(0, 12))
 
-        dialog.bind('<Escape>', lambda e, current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget))
-        dialog.protocol('WM_DELETE_WINDOW', lambda current=dialog, widget=help_text: self.close_help_contents_dialog(current, widget))
+        dialog.bind('<Escape>', lambda e: dialog.notepadx_close_callback())
+        dialog.protocol('WM_DELETE_WINDOW', dialog.notepadx_close_callback)
         self.center_window(dialog)
         dialog.lift()
         dialog.attributes('-topmost', True)
@@ -18826,6 +18839,7 @@ class NotepadX:
 
     def show_about_dialog(self):
         dialog = self.create_toplevel(self.root)
+        dialog.notepadx_close_role = 'about'
         dialog.title(self.tr('app.about_title', 'About Notepad-X'))
         dialog.transient(self.root)
         dialog.resizable(False, False)
