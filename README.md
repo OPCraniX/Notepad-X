@@ -160,26 +160,26 @@ It can also run shell commands from the current document directory. `cls` or `cl
 
 Notepad-X currently ships with 20 bundled language files:
 
-- Arabic (United Arab Emirates) - `ar_AE`
-- Arabic (Egypt) - `ar_EG`
-- Arabic (Morocco) - `ar_MA`
-- Arabic (Saudi Arabia) - `ar_SA`
-- Bengali (Bangladesh) - `bn_BD`
-- Chinese (Simplified, China) - `zh_CN`
-- Dutch (Netherlands) - `nl_NL`
-- English (United States) - `en_us`
-- French (Canada) - `fr_CA`
-- German (Germany) - `de_DE`
-- Hebrew (Israel) - `he_IL`
-- Hindi (India) - `hi_IN`
-- Indonesian (Indonesia) - `id_ID`
-- Italian (Italy) - `it_IT`
-- Japanese (Japan) - `ja_JP`
-- Portuguese (Brazil) - `pt_BR`
-- Russian (Russia) - `ru_RU`
-- Spanish (Latin America) - `es_419`
-- Spanish (Spain) - `es_ES`
-- Ukrainian (Ukraine) - `uk_UA`
+- Arabic (United Arab Emirates) - العربية (الإمارات العربية المتحدة) - ar_AE
+- Arabic (Egypt) - العربية (مصر) - ar_EG
+- Arabic (Morocco) - العربية (المغرب) - ar_MA
+- Arabic (Saudi Arabia) - العربية (المملكة العربية السعودية) - ar_SA
+- Bengali (Bangladesh) - বাংলা (বাংলাদেশ) - bn_BD
+- Chinese (Simplified, China) - 中文（简体，中国） - zh_CN
+- Dutch (Netherlands) - Nederlands (Nederland) - nl_NL
+- English (United States) - English (United States) - en_US
+- French (Canada) - Français (Canada) - fr_CA
+- German (Germany) - Deutsch (Deutschland) - de_DE
+- Hebrew (Israel) - עברית (ישראל) - he_IL
+- Hindi (India) - हिन्दी (भारत) - hi_IN
+- Indonesian (Indonesia) - Bahasa Indonesia (Indonesia) - id_ID
+- Italian (Italy) - Italiano (Italia) - it_IT
+- Japanese (Japan) - 日本語（日本） - ja_JP
+- Portuguese (Brazil) - Português (Brasil) - pt_BR
+- Russian (Russia) - Русский (Россия) - ru_RU
+- Spanish (Latin America) - Español (Latinoamérica) - es_419
+- Spanish (Spain) - Español (España) - es_ES
+- Ukrainian (Ukraine) - Українська (Україна) - uk_UA
 
 ## Main Shortcuts
 
