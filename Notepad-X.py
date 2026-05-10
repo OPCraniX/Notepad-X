@@ -8742,9 +8742,11 @@ class NotepadX:
             pass
 
     def goto_document_start(self, event=None):
-        targets = self.get_page_navigation_targets(event)
+        source_widget = self.get_page_navigation_source_widget(event)
+        targets = self.get_page_navigation_targets(event, source_widget)
         if not targets:
             return "break"
+        moved_targets = []
         for widget in targets:
             doc = self.get_navigation_doc_for_widget(widget)
             if doc and doc.get('virtual_mode'):
@@ -8759,20 +8761,18 @@ class NotepadX:
                 widget.mark_set(tk.INSERT, '1.0')
                 widget.tag_remove('sel', '1.0', tk.END)
                 widget.see('1.0')
-                self.set_last_active_editor_widget(widget)
             except tk.TclError:
                 continue
-            if doc:
-                self.remember_doc_view_state(doc)
-                self.update_line_number_gutter(doc)
-                self.schedule_minimap_refresh(doc)
-        self.update_status()
+            moved_targets.append(widget)
+        self.finish_page_navigation(moved_targets, source_widget)
         return "break"
 
     def goto_document_end(self, event=None):
-        targets = self.get_page_navigation_targets(event)
+        source_widget = self.get_page_navigation_source_widget(event)
+        targets = self.get_page_navigation_targets(event, source_widget)
         if not targets:
             return "break"
+        moved_targets = []
         for widget in targets:
             doc = self.get_navigation_doc_for_widget(widget)
             try:
@@ -8794,14 +8794,10 @@ class NotepadX:
                 widget.mark_set(tk.INSERT, target_index)
                 widget.tag_remove('sel', '1.0', tk.END)
                 widget.see(target_index)
-                self.set_last_active_editor_widget(widget)
             except tk.TclError:
                 continue
-            if doc:
-                self.remember_doc_view_state(doc)
-                self.update_line_number_gutter(doc)
-                self.schedule_minimap_refresh(doc)
-        self.update_status()
+            moved_targets.append(widget)
+        self.finish_page_navigation(moved_targets, source_widget)
         return "break"
 
     def remember_compare_focus(self, event=None):
@@ -9006,8 +9002,8 @@ class NotepadX:
             return hovered_widget
         return None
 
-    def get_page_navigation_targets(self, event=None):
-        source_widget = self.get_page_navigation_source_widget(event)
+    def get_page_navigation_targets(self, event=None, source_widget=None):
+        source_widget = source_widget or self.get_page_navigation_source_widget(event)
         if source_widget is None:
             return []
 
@@ -9022,6 +9018,25 @@ class NotepadX:
                 return targets
 
         return [source_widget]
+
+    def finish_page_navigation(self, targets, source_widget=None):
+        seen_docs = set()
+        for widget in targets:
+            doc = self.get_navigation_doc_for_widget(widget)
+            if not doc:
+                continue
+            doc_key = id(doc)
+            if doc_key in seen_docs:
+                continue
+            seen_docs.add(doc_key)
+            self.remember_doc_view_state(doc)
+            self.update_line_number_gutter(doc)
+            self.schedule_minimap_refresh(doc)
+        if source_widget is not None:
+            self.set_last_active_editor_widget(source_widget)
+        elif targets:
+            self.set_last_active_editor_widget(targets[0])
+        self.update_status()
 
     def sync_widget_insert_to_visible_line(self, widget):
         try:
@@ -9125,35 +9140,37 @@ class NotepadX:
         return True
 
     def page_up(self, event=None):
-        targets = self.get_page_navigation_targets(event)
+        hotkey_result = self.invoke_hotkey_for_event(event)
+        if hotkey_result is not None:
+            return hotkey_result
+
+        source_widget = self.get_page_navigation_source_widget(event)
+        targets = self.get_page_navigation_targets(event, source_widget)
         if not targets:
             return
+        moved_targets = []
         for widget in targets:
             if not self.scroll_widget_page_by_visible_lines(widget, -1):
                 continue
-            self.set_last_active_editor_widget(widget)
-            doc = self.get_navigation_doc_for_widget(widget)
-            if doc:
-                self.remember_doc_view_state(doc)
-                self.update_line_number_gutter(doc)
-                self.schedule_minimap_refresh(doc)
-        self.update_status()
+            moved_targets.append(widget)
+        self.finish_page_navigation(moved_targets, source_widget)
         return "break"
 
     def page_down(self, event=None):
-        targets = self.get_page_navigation_targets(event)
+        hotkey_result = self.invoke_hotkey_for_event(event)
+        if hotkey_result is not None:
+            return hotkey_result
+
+        source_widget = self.get_page_navigation_source_widget(event)
+        targets = self.get_page_navigation_targets(event, source_widget)
         if not targets:
             return
+        moved_targets = []
         for widget in targets:
             if not self.scroll_widget_page_by_visible_lines(widget, 1):
                 continue
-            self.set_last_active_editor_widget(widget)
-            doc = self.get_navigation_doc_for_widget(widget)
-            if doc:
-                self.remember_doc_view_state(doc)
-                self.update_line_number_gutter(doc)
-                self.schedule_minimap_refresh(doc)
-        self.update_status()
+            moved_targets.append(widget)
+        self.finish_page_navigation(moved_targets, source_widget)
         return "break"
 
     def get_doc_for_text_widget(self, widget):
@@ -11765,6 +11782,8 @@ class NotepadX:
         self.compare_text.bind('<Control-Shift-Z>', self.redo)
         self.compare_text.bind('<Prior>', self.page_up)
         self.compare_text.bind('<Next>', self.page_down)
+        self.compare_text.bind('<Control-Prior>', self.page_up)
+        self.compare_text.bind('<Control-Next>', self.page_down)
         self.compare_text.bind('<FocusIn>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<Enter>', self.remember_hovered_editor, add='+')
         self.compare_text.bind('<Motion>', self.remember_hovered_editor, add='+')
@@ -11975,6 +11994,8 @@ class NotepadX:
         text.bind('<Control-Shift-Z>', self.redo)
         text.bind('<Prior>', self.page_up)
         text.bind('<Next>', self.page_down)
+        text.bind('<Control-Prior>', self.page_up)
+        text.bind('<Control-Next>', self.page_down)
         text.bind('<FocusIn>', lambda e, frame=tab_frame: self.remember_doc_focus(frame), add='+')
         text.bind('<Enter>', self.remember_hovered_editor, add='+')
         text.bind('<Motion>', self.remember_hovered_editor, add='+')
