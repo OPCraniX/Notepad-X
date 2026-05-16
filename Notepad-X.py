@@ -4999,6 +4999,27 @@ class NotepadX:
             return False
         if b'\x00' in sample:
             return True
+
+        decoded_sample = None
+        try:
+            decoded_sample = sample.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            if exc.end >= len(sample) and exc.start > 0:
+                try:
+                    decoded_sample = sample[:exc.start].decode('utf-8')
+                except UnicodeDecodeError:
+                    decoded_sample = None
+        if decoded_sample is not None:
+            allowed_controls = {'\t', '\n', '\r', '\b', '\f'}
+            control_chars = sum(
+                1 for char in decoded_sample
+                if (
+                    (ord(char) < 32 and char not in allowed_controls) or
+                    0x7f <= ord(char) <= 0x9f
+                )
+            )
+            return (control_chars / max(1, len(decoded_sample))) > 0.30
+
         text_bytes = b'\t\n\r\b\f' + bytes(range(32, 127))
         non_text = sum(byte not in text_bytes for byte in sample)
         return (non_text / max(1, len(sample))) > 0.30
@@ -16219,8 +16240,17 @@ class NotepadX:
     def get_doc_editor_label(self, doc):
         return doc.get('note_editor_label') or 'Notepad-X'
 
+    def can_use_shared_note_sidecars(self, doc):
+        return bool(
+            doc
+            and doc.get('file_path')
+            and not doc.get('virtual_mode')
+            and not doc.get('preview_mode')
+            and not self.is_notepadx_support_file(doc.get('file_path'))
+        )
+
     def refresh_doc_shared_editor_state(self, doc, force_write=False):
-        if not doc or not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+        if not self.can_use_shared_note_sidecars(doc):
             return
         sidecar_path = self.get_editors_sidecar_path(doc['file_path'])
         payload = self.load_shared_editors(sidecar_path)
@@ -16638,7 +16668,7 @@ class NotepadX:
         }
 
     def persist_doc_notes(self, doc):
-        if not doc or not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+        if not self.can_use_shared_note_sidecars(doc):
             return
 
         exported = self.export_doc_notes(doc)
@@ -16657,7 +16687,7 @@ class NotepadX:
         self.save_session()
 
     def restore_doc_notes(self, doc):
-        if not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+        if not self.can_use_shared_note_sidecars(doc):
             return
 
         sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
@@ -16712,10 +16742,9 @@ class NotepadX:
         doc['last_unread_count'] = self.get_unread_note_count(doc)
 
     def register_doc_for_shared_notes(self, doc):
-        if not doc.get('file_path') or doc.get('notes_registered'):
+        if not self.can_use_shared_note_sidecars(doc) or doc.get('notes_registered'):
             return
 
-        sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
         doc['notes_registered'] = True
         try:
             self.refresh_doc_shared_editor_state(doc, force_write=True)
@@ -16726,6 +16755,13 @@ class NotepadX:
 
     def unregister_doc_from_shared_notes(self, doc):
         if not doc.get('file_path') or not doc.get('notes_registered'):
+            return
+        if self.is_notepadx_support_file(doc.get('file_path')):
+            doc['note_editors'] = []
+            doc['note_active_editors'] = 0
+            doc['note_editor_label'] = None
+            doc['notes_registered'] = False
+            self.update_status()
             return
 
         sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
@@ -16754,7 +16790,7 @@ class NotepadX:
             status_dirty = False
             for doc in list(self.documents.values()):
                 try:
-                    if not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
+                    if not self.can_use_shared_note_sidecars(doc):
                         continue
 
                     notes_sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
