@@ -7945,6 +7945,72 @@ class NotepadX:
             bar_width = max(2, int((segment_length / max_length) * max(4, width - 6)))
             minimap.create_rectangle(2, y0, min(width - 2, 2 + bar_width), y1, fill='#4f708f', outline='')
 
+    def get_minimap_view_fractions(self, doc, text, total_lines):
+        total_lines = max(1, int(total_lines or 1))
+        try:
+            if doc.get('virtual_mode'):
+                first = (max(1, int(doc.get('window_start_line', 1) or 1)) - 1) / total_lines
+                last = max(1, int(doc.get('window_end_line', 1) or 1)) / total_lines
+            else:
+                first, last = text.yview()
+        except (tk.TclError, TypeError, ValueError):
+            try:
+                top_line = int(text.index('@0,0').split('.')[0])
+                bottom_line = int(text.index(f'@0,{max(1, text.winfo_height())}').split('.')[0])
+            except (tk.TclError, ValueError):
+                top_line = 1
+                bottom_line = min(total_lines, max(1, total_lines // 5))
+            first = (top_line - 1) / total_lines
+            last = bottom_line / total_lines
+
+        first = min(1.0, max(0.0, float(first)))
+        last = min(1.0, max(first, float(last)))
+        return first, last
+
+    def draw_minimap_viewport(self, doc, minimap, text, width, height, total_lines):
+        view_first, view_last = self.get_minimap_view_fractions(doc, text, total_lines)
+        view_y0 = int(view_first * height)
+        view_y1 = max(view_y0 + 6, int(view_last * height))
+        minimap.create_rectangle(
+            0,
+            view_y0,
+            width,
+            min(height, view_y1),
+            outline='#9ecbff',
+            width=1,
+            tags=('minimap_viewport',)
+        )
+
+    def refresh_minimap_viewport(self, doc):
+        if not doc or not self.minimap_enabled.get():
+            return
+        minimap = doc.get('minimap')
+        text = doc.get('text')
+        model = doc.get('minimap_model')
+        if not minimap or not text:
+            return
+        if not model or doc.get('minimap_model_dirty', True):
+            self.schedule_minimap_refresh(doc)
+            return
+        try:
+            if not minimap.winfo_exists() or not text.winfo_exists() or not minimap.winfo_ismapped():
+                return
+            width = max(1, minimap.winfo_width())
+            height = max(1, minimap.winfo_height())
+            if height <= 2:
+                height = max(120, minimap.winfo_reqheight())
+            minimap.delete('minimap_viewport')
+            self.draw_minimap_viewport(
+                doc,
+                minimap,
+                text,
+                width,
+                height,
+                max(1, int(model.get('total_lines', 1) or 1))
+            )
+        except tk.TclError:
+            return
+
     def draw_minimap_overlays(self, doc, minimap, text, width, height, total_lines):
         diagnostics = doc.get('diagnostics', [])
         for diagnostic in diagnostics:
@@ -7953,19 +8019,7 @@ class NotepadX:
             marker_color = '#ff6b6b' if diagnostic.get('severity') == 'error' else '#ffcc66'
             minimap.create_rectangle(width - 4, y, width - 1, min(height, y + 3), fill=marker_color, outline='')
 
-        try:
-            top_line = int(text.index('@0,0').split('.')[0])
-            bottom_line = int(text.index(f'@0,{max(1, text.winfo_height())}').split('.')[0])
-        except (tk.TclError, ValueError):
-            top_line = 1
-            bottom_line = min(total_lines, max(1, total_lines // 5))
-        if doc.get('virtual_mode'):
-            window_start_line = max(1, int(doc.get('window_start_line', 1) or 1))
-            top_line = max(1, min(total_lines, window_start_line + top_line - 1))
-            bottom_line = max(top_line, min(total_lines, window_start_line + bottom_line - 1))
-        view_y0 = int((top_line - 1) / total_lines * height)
-        view_y1 = max(view_y0 + 6, int(bottom_line / total_lines * height))
-        minimap.create_rectangle(0, view_y0, width, view_y1, outline='#9ecbff', width=1)
+        self.draw_minimap_viewport(doc, minimap, text, width, height, total_lines)
 
     def refresh_minimap(self, doc):
         if not doc:
@@ -8030,12 +8084,11 @@ class NotepadX:
                 total_lines = max(1, int(text.index('end-1c').split('.')[0]))
             height = max(1, minimap.winfo_height())
             target_ratio = min(1.0, max(0.0, float(event.y) / float(height)))
-            target_line = max(1, min(total_lines, int(target_ratio * total_lines) + 1))
             if doc.get('virtual_mode') and self.is_virtual_index_ready(doc):
-                self.load_virtual_window(doc, target_line)
+                target_line = max(1, min(total_lines, int(target_ratio * total_lines) + 1))
+                self.load_virtual_window(doc, target_line, move_insert=False)
             else:
-                text.mark_set(tk.INSERT, f'{target_line}.0')
-                text.see(f'{target_line}.0')
+                text.yview_moveto(target_ratio)
             self.set_last_active_editor_widget(text)
         except (tk.TclError, ValueError, ZeroDivisionError):
             return "break"
@@ -14068,7 +14121,7 @@ class NotepadX:
             data = f.read(end_byte - start_byte)
         return data.decode('utf-8', errors='replace')
 
-    def load_virtual_window(self, doc, target_line=1):
+    def load_virtual_window(self, doc, target_line=1, move_insert=True):
         if not self.is_virtual_index_ready(doc):
             return False
         total_lines = max(1, int(doc.get('total_file_lines', 1) or 1))
@@ -14102,12 +14155,14 @@ class NotepadX:
             local_line = max(1, target_line - start_line + 1)
             try:
                 line_length = len(text.get(f"{local_line}.0", f"{local_line}.end"))
-                text.mark_set(tk.INSERT, f"{local_line}.{min(current_col, line_length)}")
+                if move_insert:
+                    text.mark_set(tk.INSERT, f"{local_line}.{min(current_col, line_length)}")
                 text.see(f"{local_line}.0")
             except tk.TclError:
                 return False
-            doc['last_virtual_line'] = target_line
-            doc['last_virtual_col'] = max(0, min(current_col, line_length))
+            if move_insert:
+                doc['last_virtual_line'] = target_line
+                doc['last_virtual_col'] = max(0, min(current_col, line_length))
             self.update_vertical_scrollbar(doc['frame'], None, None, None)
             self.update_line_number_gutter(doc)
             self.schedule_minimap_refresh(doc)
@@ -14130,13 +14185,16 @@ class NotepadX:
         line_length = 0
         try:
             line_length = len(text.get(f"{local_line}.0", f"{local_line}.end"))
-            text.mark_set(tk.INSERT, f"{local_line}.{min(current_col, line_length)}")
+            if move_insert:
+                text.mark_set(tk.INSERT, f"{local_line}.{min(current_col, line_length)}")
             text.see(f"{local_line}.0")
         except tk.TclError:
-            text.mark_set(tk.INSERT, '1.0')
+            if move_insert:
+                text.mark_set(tk.INSERT, '1.0')
 
-        doc['last_virtual_line'] = target_line
-        doc['last_virtual_col'] = max(0, min(current_col, line_length))
+        if move_insert:
+            doc['last_virtual_line'] = target_line
+            doc['last_virtual_col'] = max(0, min(current_col, line_length))
         self.update_vertical_scrollbar(doc['frame'], None, None, None)
         self.update_line_number_gutter(doc)
         self.schedule_minimap_refresh(doc)
@@ -14939,6 +14997,7 @@ class NotepadX:
                 scrollbar.set(first, last)
             self.remember_doc_view_state(doc)
             self.update_line_number_gutter(doc)
+            self.refresh_minimap_viewport(doc)
             return
 
         total_lines = max(1, doc['total_file_lines'])
@@ -14946,6 +15005,7 @@ class NotepadX:
         last_fraction = doc['window_end_line'] / total_lines
         scrollbar.set(first_fraction, min(1.0, last_fraction))
         self.update_line_number_gutter(doc)
+        self.refresh_minimap_viewport(doc)
 
     def on_compare_vertical_scroll(self, *args):
         if not self.compare_view or not self.compare_view.get('text'):
@@ -14953,10 +15013,12 @@ class NotepadX:
         self.hide_diagnostic_tooltip()
         self.compare_view['text'].yview(*args)
         self.update_line_number_gutter(self.compare_view)
+        self.refresh_minimap_viewport(self.compare_view)
 
     def update_compare_vertical_scrollbar(self, scrollbar, first, last):
         scrollbar.set(first, last)
         self.update_line_number_gutter(self.compare_view)
+        self.refresh_minimap_viewport(self.compare_view)
 
     def sync_compare_note_tags(self, source_doc=None):
         if not self.compare_active or not self.compare_view:
