@@ -1126,6 +1126,7 @@ class NotepadX:
         self.live_find_max_matches_per_widget = 1000
         self.live_find_max_matches_typing = 150
         self.intellisense_max_project_files = 24
+        self.intellisense_max_project_file_bytes = 5 * 1024 * 1024
         self.intellisense_max_suggestions = 28
         self.spellcheck_delay_ms = 260
         self.spellcheck_max_chars = 250000
@@ -11844,6 +11845,8 @@ class NotepadX:
                     '<<Selection>>'):
             self.compare_text.bind(evt, self.handle_compare_activity, add='+')
         self.compare_text.bind('<KeyPress>', self.handle_compare_keypress)
+        self.compare_text.bind('<Control-Prior>', self.goto_document_start)
+        self.compare_text.bind('<Control-Next>', self.goto_document_end)
         self.compare_text.bind('<Control-Shift-x>', self.ctrl_shift_x)
         self.compare_text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         self.compare_text.bind('<Control-x>', self.cut)
@@ -11856,8 +11859,6 @@ class NotepadX:
         self.compare_text.bind('<Control-Shift-Z>', self.redo)
         self.compare_text.bind('<Prior>', self.page_up)
         self.compare_text.bind('<Next>', self.page_down)
-        self.compare_text.bind('<Control-Prior>', self.page_up)
-        self.compare_text.bind('<Control-Next>', self.page_down)
         self.compare_text.bind('<FocusIn>', self.remember_compare_focus, add='+')
         self.compare_text.bind('<Enter>', self.remember_hovered_editor, add='+')
         self.compare_text.bind('<Motion>', self.remember_hovered_editor, add='+')
@@ -12056,6 +12057,8 @@ class NotepadX:
         text.bind('<MouseWheel>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
         text.bind('<Button-4>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
         text.bind('<Button-5>', lambda e, frame=tab_frame: self.on_text_mousewheel(e, frame))
+        text.bind('<Control-Prior>', self.goto_document_start)
+        text.bind('<Control-Next>', self.goto_document_end)
         text.bind('<Control-Shift-x>', self.ctrl_shift_x)
         text.bind('<Control-Shift-X>', self.ctrl_shift_x)
         text.bind('<Control-x>', self.cut)
@@ -12068,8 +12071,6 @@ class NotepadX:
         text.bind('<Control-Shift-Z>', self.redo)
         text.bind('<Prior>', self.page_up)
         text.bind('<Next>', self.page_down)
-        text.bind('<Control-Prior>', self.page_up)
-        text.bind('<Control-Next>', self.page_down)
         text.bind('<FocusIn>', lambda e, frame=tab_frame: self.remember_doc_focus(frame), add='+')
         text.bind('<Enter>', self.remember_hovered_editor, add='+')
         text.bind('<Motion>', self.remember_hovered_editor, add='+')
@@ -12584,10 +12585,8 @@ class NotepadX:
             for candidate_path in self.get_project_source_files(doc['file_path'])[:self.intellisense_max_project_files]:
                 if candidate_path == doc.get('file_path'):
                     continue
-                try:
-                    with open(candidate_path, 'r', encoding='utf-8', errors='replace') as source_file:
-                        content = source_file.read()
-                except OSError:
+                content = self.read_project_symbol_source(candidate_path)
+                if content is None:
                     continue
                 mode = self.infer_syntax_mode_from_path(candidate_path, content)
                 for symbol in self.extract_symbols_from_content(content, mode, candidate_path):
@@ -16173,6 +16172,9 @@ class NotepadX:
             if os.path.normcase(os.path.abspath(variant_path)) == canonical_normalized:
                 continue
             try:
+                variant_stat = os.lstat(variant_path)
+                if not stat.S_ISREG(variant_stat.st_mode) or variant_stat.st_nlink > 1:
+                    continue
                 os.remove(variant_path)
             except OSError:
                 pass
@@ -16690,7 +16692,7 @@ class NotepadX:
         if not self.write_json_atomically(sidecar_path, payload, 'notepadx-editors-', 'write shared editors'):
             raise OSError(f"Could not write editor sidecar: {sidecar_path}")
         self.cleanup_duplicate_sidecar_variants(sidecar_path)
-        self.show_support_file(sidecar_path)
+        self.hide_support_file(sidecar_path)
 
     def load_shared_editors(self, sidecar_path, fallback_payload=None):
         variant_paths = [path for path in self.get_sidecar_variants(sidecar_path) if os.path.exists(path)]
@@ -19690,6 +19692,33 @@ class NotepadX:
         finish_clone()
         return "break"
 
+    def read_project_symbol_source(self, file_path):
+        max_bytes = max(1, int(self.intellisense_max_project_file_bytes))
+        try:
+            path_stat = os.lstat(file_path)
+            if not stat.S_ISREG(path_stat.st_mode):
+                return None
+            flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0)
+            descriptor = os.open(file_path, flags)
+            try:
+                opened_stat = os.fstat(descriptor)
+                if (
+                    opened_stat.st_dev != path_stat.st_dev or
+                    opened_stat.st_ino != path_stat.st_ino
+                ):
+                    return None
+                with os.fdopen(descriptor, 'rb') as source_file:
+                    descriptor = None
+                    raw_content = source_file.read(max_bytes + 1)
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+        except (OSError, TypeError, ValueError):
+            return None
+        if len(raw_content) > max_bytes or b'\x00' in raw_content:
+            return None
+        return raw_content.decode('utf-8', errors='replace')
+
     def get_project_source_files(self, file_path):
         source_extensions = {
             '.py', '.pyw', '.rs', '.c', '.h', '.cpp', '.cc', '.cxx',
@@ -19699,6 +19728,7 @@ class NotepadX:
         }
         file_path = os.path.abspath(file_path)
         project_dir = os.path.dirname(file_path)
+        project_real_dir = os.path.normcase(os.path.realpath(project_dir))
         selected_extension = os.path.splitext(file_path)[1].lower()
         related_files = [file_path]
 
@@ -19708,10 +19738,19 @@ class NotepadX:
             return related_files
 
         for entry in directory_entries:
-            if not entry.is_file():
+            try:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+            except OSError:
                 continue
             candidate_path = os.path.abspath(entry.path)
             if candidate_path == file_path:
+                continue
+            try:
+                candidate_real_path = os.path.normcase(os.path.realpath(candidate_path))
+                if os.path.commonpath((project_real_dir, candidate_real_path)) != project_real_dir:
+                    continue
+            except (OSError, ValueError):
                 continue
             candidate_name = entry.name.lower()
             if self.is_notepadx_support_file(candidate_name):
@@ -20471,10 +20510,6 @@ class NotepadX:
         return "break"
 
     def cut(self, event=None):
-        hotkey_result = self.invoke_hotkey_for_event(event)
-        if hotkey_result is not None:
-            return hotkey_result
-
         target = None
         if event is not None and isinstance(getattr(event, 'widget', None), tk.Text):
             target = event.widget
@@ -20552,6 +20587,68 @@ class NotepadX:
         self.root.update_idletasks()
         return "break"
 
+    def get_windows_clipboard_text(self):
+        if not self.is_windows:
+            return None
+        try:
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+            user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+            user32.OpenClipboard.argtypes = [wintypes.HWND]
+            user32.OpenClipboard.restype = wintypes.BOOL
+            user32.GetClipboardData.argtypes = [wintypes.UINT]
+            user32.GetClipboardData.restype = ctypes.c_void_p
+            user32.CloseClipboard.argtypes = []
+            user32.CloseClipboard.restype = wintypes.BOOL
+            kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+            cf_unicode_text = 13
+            if not user32.IsClipboardFormatAvailable(cf_unicode_text):
+                return None
+            if not user32.OpenClipboard(None):
+                return None
+            try:
+                handle = user32.GetClipboardData(cf_unicode_text)
+                if not handle:
+                    return None
+                pointer = kernel32.GlobalLock(handle)
+                if not pointer:
+                    return None
+                try:
+                    return ctypes.wstring_at(pointer)
+                finally:
+                    kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+        except Exception as exc:
+            self.log_exception("read Windows clipboard", exc)
+            return None
+
+    def get_clipboard_text(self):
+        first_clipboard_text = None
+        for clipboard_type in (None, 'UTF8_STRING', 'STRING'):
+            try:
+                if clipboard_type is None:
+                    clipboard_text = self.root.clipboard_get()
+                else:
+                    clipboard_text = self.root.clipboard_get(type=clipboard_type)
+            except tk.TclError:
+                continue
+            if clipboard_text is not None:
+                text_value = str(clipboard_text)
+                if first_clipboard_text is None:
+                    first_clipboard_text = text_value
+                if text_value:
+                    return text_value
+        windows_clipboard_text = self.get_windows_clipboard_text()
+        if windows_clipboard_text is not None:
+            return windows_clipboard_text
+        return first_clipboard_text
+
     def paste(self, event=None):
         target = None
         if event is not None and isinstance(getattr(event, 'widget', None), tk.Text):
@@ -20571,11 +20668,7 @@ class NotepadX:
         if doc and self.is_doc_text_readonly(doc):
             return "break"
 
-        try:
-            clipboard_text = self.root.clipboard_get()
-        except tk.TclError:
-            return "break"
-
+        clipboard_text = self.get_clipboard_text()
         if clipboard_text is None:
             return "break"
 
