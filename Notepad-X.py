@@ -1128,6 +1128,9 @@ class NotepadX:
         self.intellisense_max_project_files = 24
         self.intellisense_max_project_file_bytes = 5 * 1024 * 1024
         self.intellisense_max_suggestions = 28
+        self.inline_math_max_chars = 256
+        self.inline_math_max_abs_value = 1.0e100
+        self.inline_math_max_exponent = 1000
         self.spellcheck_delay_ms = 260
         self.spellcheck_max_chars = 250000
         self.spellcheck_max_words = 8000
@@ -14559,6 +14562,139 @@ class NotepadX:
         self.notify_text_widget_changed(text_widget)
         return "break"
 
+    def normalize_inline_math_expression(self, expression):
+        normalized = str(expression or '').strip()
+        normalized = normalized.replace('\u00d7', '*').replace('\u00f7', '/').replace('\u2212', '-')
+        normalized = normalized.replace('^', '**')
+        normalized = re.sub(r'(?<=[0-9.)])\s*(?=\()', '*', normalized)
+        return normalized
+
+    def evaluate_inline_math_expression(self, expression):
+        expression = str(expression or '').strip()
+        if not expression or len(expression) > self.inline_math_max_chars:
+            return None
+
+        normalized = self.normalize_inline_math_expression(expression)
+        if not normalized or len(normalized) > self.inline_math_max_chars:
+            return None
+
+        try:
+            tree = ast.parse(normalized, mode='eval')
+        except SyntaxError:
+            return None
+
+        def safe_number(value):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError
+            value = float(value)
+            if not (-self.inline_math_max_abs_value <= value <= self.inline_math_max_abs_value):
+                raise ValueError
+            return value
+
+        def safe_result(value):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError
+            if not (-self.inline_math_max_abs_value <= value <= self.inline_math_max_abs_value):
+                raise ValueError
+            return value
+
+        def visit(node):
+            if isinstance(node, ast.Expression):
+                return visit(node.body)
+            if isinstance(node, ast.Constant):
+                return safe_number(node.value)
+            if isinstance(node, ast.UnaryOp):
+                operand = visit(node.operand)
+                if isinstance(node.op, ast.UAdd):
+                    return operand
+                if isinstance(node.op, ast.USub):
+                    return safe_result(-operand)
+                raise ValueError
+            if isinstance(node, ast.BinOp):
+                left = visit(node.left)
+                right = visit(node.right)
+                if isinstance(node.op, ast.Add):
+                    return safe_result(left + right)
+                if isinstance(node.op, ast.Sub):
+                    return safe_result(left - right)
+                if isinstance(node.op, ast.Mult):
+                    return safe_result(left * right)
+                if isinstance(node.op, ast.Div):
+                    return safe_result(left / right)
+                if isinstance(node.op, ast.FloorDiv):
+                    return safe_result(left // right)
+                if isinstance(node.op, ast.Mod):
+                    return safe_result(left % right)
+                if isinstance(node.op, ast.Pow):
+                    if abs(right) > self.inline_math_max_exponent:
+                        raise ValueError
+                    return safe_result(left ** right)
+                raise ValueError
+            raise ValueError
+
+        try:
+            result = visit(tree)
+        except (ArithmeticError, OverflowError, TypeError, ValueError):
+            return None
+        if result != result or result in (float('inf'), float('-inf')):
+            return None
+        return format(result, '.15g')
+
+    def build_inline_math_replacement(self, text_widget):
+        try:
+            insert_index = text_widget.index(tk.INSERT)
+            line_start = text_widget.index(f'{insert_index} linestart')
+            line_number = insert_index.split('.')[0]
+            line_prefix = text_widget.get(line_start, insert_index)
+        except tk.TclError:
+            return None
+
+        expression_text = line_prefix
+        replace_start = insert_index
+        if '=' in line_prefix:
+            equals_col = line_prefix.index('=')
+            expression_text = line_prefix[:equals_col]
+            replace_col = len(expression_text.rstrip())
+            replace_start = f"{line_number}.{replace_col}"
+        expression_text = expression_text.strip()
+        result_text = self.evaluate_inline_math_expression(expression_text)
+        if result_text is None:
+            return None
+        return replace_start, insert_index, f' = {result_text}'
+
+    def replace_text_widget_range(self, text_widget, start_index, end_index, replacement_text):
+        if not text_widget:
+            return False
+        try:
+            text_widget.tag_remove('sel', '1.0', tk.END)
+            text_widget.delete(start_index, end_index)
+            text_widget.insert(start_index, replacement_text)
+            text_widget.mark_set(tk.INSERT, f'{start_index}+{len(replacement_text)}c')
+            text_widget.edit_modified(True)
+            text_widget.see(tk.INSERT)
+            return True
+        except tk.TclError:
+            return False
+
+    def insert_inline_math_result(self, text_widget):
+        replacement = self.build_inline_math_replacement(text_widget)
+        if replacement is None:
+            return None
+
+        start_index, end_index, replacement_text = replacement
+        mirror_target = self.get_compare_mirror_target(text_widget)
+        if mirror_target is not None:
+            self.sync_mirror_target_position(text_widget, mirror_target)
+
+        if not self.replace_text_widget_range(text_widget, start_index, end_index, replacement_text):
+            return None
+
+        if mirror_target is not None:
+            if self.replace_text_widget_range(mirror_target, start_index, end_index, replacement_text):
+                self.notify_text_widget_changed(mirror_target)
+        self.notify_text_widget_changed(text_widget)
+        return "break"
+
     def clear_bracket_match_highlight(self, text_widget):
         if not isinstance(text_widget, tk.Text):
             return
@@ -14758,6 +14894,12 @@ class NotepadX:
         if (state & 0x4) and (state & 0x1) and keysym.lower() == 'x':
             return self.ctrl_shift_x(event)
 
+        if keysym in {'Return', 'KP_Enter'} and (state & 0x1) and not (state & 0x4) and not (state & 0x20000):
+            if not self.is_doc_text_readonly(doc):
+                math_result = self.insert_inline_math_result(doc['text'])
+                if math_result is not None:
+                    return math_result
+
         if self.is_shift_selection_navigation(event):
             self.hide_autocomplete_popup()
             return
@@ -14792,6 +14934,12 @@ class NotepadX:
 
         if (state & 0x4) and (state & 0x1) and keysym.lower() == 'x':
             return self.ctrl_shift_x(event)
+
+        if keysym in {'Return', 'KP_Enter'} and (state & 0x1) and not (state & 0x4) and not (state & 0x20000):
+            if source_doc and not source_doc.get('virtual_mode') and not source_doc.get('preview_mode'):
+                math_result = self.insert_inline_math_result(compare_doc['text'])
+                if math_result is not None:
+                    return math_result
 
         if self.is_shift_selection_navigation(event):
             self.hide_autocomplete_popup()
