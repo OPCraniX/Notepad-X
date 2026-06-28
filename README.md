@@ -12,6 +12,7 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
 - Smarter autocomplete with document symbols, keywords, builtins, and nearby project file suggestions
 - Symbol navigation for the current file and project-wide symbol lookup
 - Code folding with gutter `+` / `-` controls plus `F9`, `Shift+F9`, and `Ctrl+F9`
+- Inline math evaluation with `Shift+Enter` for `expression = answer` and `Ctrl+Enter` for the answer only
 - Auto-pairing for brackets and quotes with matching-pair highlight
 - Minimap, breadcrumbs, numbered lines, and synced `PgUp` / `PgDn` navigation in compare/preview
 - Real-time diagnostics for warnings and syntax problems, including hover tooltips
@@ -40,6 +41,10 @@ It keeps the familiar single-window desktop editor workflow, then layers in comp
   Python keywords and builtins
   nearby module/file names from the working folder
 - When the editor autocomplete list is open, use `Up` / `Down` to browse, `Tab` to accept, and `Enter` to insert a new line without taking the suggestion
+- Inline math evaluation works on the current line:
+  `Shift+Enter` appends or refreshes ` = answer`
+  `Ctrl+Enter` replaces the expression with the answer only
+  arithmetic supports operators like `+`, `-`, `*`, `/`, `%`, `//`, exponent `^`, parentheses, and implicit multiplication like `31(9*8)`
 - Symbol navigation supports:
   current-file symbol lookup with `Ctrl+Shift+O`
   project symbol lookup with `Ctrl+Alt+P`
@@ -203,6 +208,8 @@ Notepad-X currently ships with 20 bundled language files:
 - `Ctrl+Shift+O` Jump to Symbol
 - `Ctrl+Alt+P` Project Symbols
 - `Ctrl+G` Go To Line
+- `Shift+Enter` Calculate Current Line
+- `Ctrl+Enter` Calculate Current Line as Answer Only
 - `F3` Find Next or next unread note
 - `Shift+F3` Find Previous
 - `F4` Cycle Notes

@@ -998,7 +998,7 @@ class NotepadX:
         self.is_windows = os.name == 'nt'
         self.is_linux = sys.platform.startswith('linux')
         self.is_running_as_administrator = self.detect_running_as_administrator()
-        self.app_version = "v1.0.8"
+        self.app_version = "v1.0.9"
         self.resource_dir = self.get_resource_dir()
         self.app_dir = self.get_app_dir()
         self.machine_profile_slug = self.get_machine_profile_slug()
@@ -14640,7 +14640,7 @@ class NotepadX:
             return None
         return format(result, '.15g')
 
-    def build_inline_math_replacement(self, text_widget):
+    def build_inline_math_replacement(self, text_widget, answer_only=False):
         try:
             insert_index = text_widget.index(tk.INSERT)
             line_start = text_widget.index(f'{insert_index} linestart')
@@ -14656,10 +14656,15 @@ class NotepadX:
             expression_text = line_prefix[:equals_col]
             replace_col = len(expression_text.rstrip())
             replace_start = f"{line_number}.{replace_col}"
-        expression_text = expression_text.strip()
+        expression_source = expression_text
+        expression_text = expression_source.strip()
         result_text = self.evaluate_inline_math_expression(expression_text)
         if result_text is None:
             return None
+        if answer_only:
+            leading_match = re.match(r'[ \t]*', expression_source)
+            leading_width = len(leading_match.group(0)) if leading_match else 0
+            return f"{line_number}.{leading_width}", insert_index, result_text
         return replace_start, insert_index, f' = {result_text}'
 
     def replace_text_widget_range(self, text_widget, start_index, end_index, replacement_text):
@@ -14676,8 +14681,8 @@ class NotepadX:
         except tk.TclError:
             return False
 
-    def insert_inline_math_result(self, text_widget):
-        replacement = self.build_inline_math_replacement(text_widget)
+    def insert_inline_math_result(self, text_widget, answer_only=False):
+        replacement = self.build_inline_math_replacement(text_widget, answer_only=answer_only)
         if replacement is None:
             return None
 
@@ -14900,6 +14905,12 @@ class NotepadX:
                 if math_result is not None:
                     return math_result
 
+        if keysym in {'Return', 'KP_Enter'} and (state & 0x4) and not (state & 0x1) and not (state & 0x20000):
+            if not self.is_doc_text_readonly(doc):
+                math_result = self.insert_inline_math_result(doc['text'], answer_only=True)
+                if math_result is not None:
+                    return math_result
+
         if self.is_shift_selection_navigation(event):
             self.hide_autocomplete_popup()
             return
@@ -14938,6 +14949,12 @@ class NotepadX:
         if keysym in {'Return', 'KP_Enter'} and (state & 0x1) and not (state & 0x4) and not (state & 0x20000):
             if source_doc and not source_doc.get('virtual_mode') and not source_doc.get('preview_mode'):
                 math_result = self.insert_inline_math_result(compare_doc['text'])
+                if math_result is not None:
+                    return math_result
+
+        if keysym in {'Return', 'KP_Enter'} and (state & 0x4) and not (state & 0x1) and not (state & 0x20000):
+            if source_doc and not source_doc.get('virtual_mode') and not source_doc.get('preview_mode'):
+                math_result = self.insert_inline_math_result(compare_doc['text'], answer_only=True)
                 if math_result is not None:
                     return math_result
 
