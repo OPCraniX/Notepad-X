@@ -2587,8 +2587,16 @@ class NotepadX:
                 return value
         return value
 
+    def normalize_locale_code(self, locale_code, default='en_us'):
+        code = str(locale_code or '').strip().lower()
+        if not code:
+            return default
+        if re.fullmatch(r'[a-z0-9]+(?:_[a-z0-9]+)*', code):
+            return code
+        return default
+
     def get_locale_file_path(self, locale_code, locale_dir=None):
-        safe_code = str(locale_code or 'en_us').strip().lower()
+        safe_code = self.normalize_locale_code(locale_code)
         locale_dir = locale_dir or getattr(self, 'locale_dir', None) or (
             os.path.dirname(self.locale_path) if getattr(self, 'locale_path', None)
             else self.get_locale_dir(self.get_config_dir(self.app_dir))
@@ -2622,7 +2630,7 @@ class NotepadX:
         return sorted(set(codes), key=lambda value: (value != 'en_us', value))
 
     def get_language_display_name(self, locale_code):
-        code = str(locale_code or '').strip().lower()
+        code = self.normalize_locale_code(locale_code, default='')
         if not code:
             return self.tr('common.unknown', 'Unknown')
         exact_key = f'locale.display.{code}'
@@ -2651,7 +2659,7 @@ class NotepadX:
         return " / ".join(parts) if parts else self.tr('common.unknown', 'Unknown')
 
     def is_rtl_locale(self, locale_code=None):
-        code = str(locale_code or self.locale_code or '').strip().lower()
+        code = self.normalize_locale_code(locale_code or self.locale_code, default='')
         return code in RTL_LOCALE_CODES
 
     def ui_anchor_start(self):
@@ -2678,7 +2686,7 @@ class NotepadX:
         return font_map
 
     def get_locale_font_candidates(self, locale_code=None):
-        code = str(locale_code or self.locale_code or 'en_us').strip().lower()
+        code = self.normalize_locale_code(locale_code or self.locale_code)
         language = code.split('_', 1)[0]
         if language == 'ar':
             if self.is_windows:
@@ -2717,7 +2725,7 @@ class NotepadX:
         return self.font_family or 'Courier New'
 
     def apply_locale(self, locale_code, persist=True):
-        target_code = str(locale_code or 'en_us').strip().lower()
+        target_code = self.normalize_locale_code(locale_code)
         target_path = self.get_locale_file_path(target_code)
         if not os.path.exists(target_path):
             target_code = 'en_us'
@@ -5073,7 +5081,7 @@ class NotepadX:
         except (TypeError, ValueError):
             current_font_size = self.base_font_size
         current_font_size = max(self.min_font_size, min(self.max_font_size, current_font_size))
-        locale_code = str(session.get('locale_code', self.locale_code)).strip().lower()
+        locale_code = self.normalize_locale_code(session.get('locale_code', self.locale_code))
         if not os.path.exists(self.get_locale_file_path(locale_code)):
             locale_code = self.locale_code
         try:
