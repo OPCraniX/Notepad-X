@@ -15,6 +15,7 @@ import bisect
 import builtins
 import glob
 import keyword
+import math
 import re
 import hashlib
 import base64
@@ -998,7 +999,7 @@ class NotepadX:
         self.is_windows = os.name == 'nt'
         self.is_linux = sys.platform.startswith('linux')
         self.is_running_as_administrator = self.detect_running_as_administrator()
-        self.app_version = "v1.0.9"
+        self.app_version = "v1.1.0"
         self.resource_dir = self.get_resource_dir()
         self.app_dir = self.get_app_dir()
         self.machine_profile_slug = self.get_machine_profile_slug()
@@ -6173,6 +6174,15 @@ class NotepadX:
         self.toast_popup = None
         self.toast_after_id = None
 
+    def coerce_toast_coordinate(self, value, fallback):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            number = float(fallback)
+        if not math.isfinite(number):
+            number = float(fallback)
+        return int(number)
+
     def show_toast(self, message, x=None, y=None):
         if self.toast_after_id:
             try:
@@ -6182,37 +6192,56 @@ class NotepadX:
             self.toast_after_id = None
         self.hide_toast()
 
-        popup = tk.Label(
-            self.root,
-            text=message,
-            bg='#1f6feb',
-            fg='white',
-            font=('Segoe UI', 9, 'bold'),
-            padx=12,
-            pady=7,
-            bd=0,
-            highlightthickness=0
-        )
-        popup.update_idletasks()
+        popup = None
+        try:
+            if not self.is_live_tk_widget(getattr(self, 'root', None)):
+                return
 
-        if x is None or y is None:
-            x = self.root.winfo_pointerx()
-            y = self.root.winfo_pointery()
+            popup = tk.Label(
+                self.root,
+                text=message,
+                bg='#1f6feb',
+                fg='white',
+                font=('Segoe UI', 9, 'bold'),
+                padx=12,
+                pady=7,
+                bd=0,
+                highlightthickness=0
+            )
+            popup.update_idletasks()
 
-        self.root.update_idletasks()
-        root_x = self.root.winfo_rootx()
-        root_y = self.root.winfo_rooty()
-        local_x = int(x) - root_x + 16
-        local_y = int(y) - root_y + 14
-        max_x = max(8, self.root.winfo_width() - popup.winfo_reqwidth() - 8)
-        max_y = max(8, self.root.winfo_height() - popup.winfo_reqheight() - 8)
-        local_x = max(8, min(local_x, max_x))
-        local_y = max(8, min(local_y, max_y))
-        popup.place(x=local_x, y=local_y)
-        popup.lift()
+            fallback_x = self.root.winfo_pointerx()
+            fallback_y = self.root.winfo_pointery()
+            if x is None:
+                x = fallback_x
+            if y is None:
+                y = fallback_y
 
-        self.toast_popup = popup
-        self.toast_after_id = self.root.after(1400, self.hide_toast)
+            self.root.update_idletasks()
+            root_x = self.coerce_toast_coordinate(self.root.winfo_rootx(), 0)
+            root_y = self.coerce_toast_coordinate(self.root.winfo_rooty(), 0)
+            pointer_x = self.coerce_toast_coordinate(x, fallback_x)
+            pointer_y = self.coerce_toast_coordinate(y, fallback_y)
+            local_x = pointer_x - root_x + 16
+            local_y = pointer_y - root_y + 14
+            max_x = max(8, self.root.winfo_width() - popup.winfo_reqwidth() - 8)
+            max_y = max(8, self.root.winfo_height() - popup.winfo_reqheight() - 8)
+            local_x = max(8, min(local_x, max_x))
+            local_y = max(8, min(local_y, max_y))
+            popup.place(x=local_x, y=local_y)
+            popup.lift()
+
+            self.toast_popup = popup
+            self.toast_after_id = self.root.after(1400, self.hide_toast)
+        except (tk.TclError, TypeError, ValueError, OverflowError) as exc:
+            if popup is not None:
+                try:
+                    popup.destroy()
+                except tk.TclError:
+                    pass
+            self.toast_popup = None
+            self.toast_after_id = None
+            self.log_exception("show toast", exc)
 
     def create_line_number_gutter(self, parent, tab_id=None, doc=None):
         surface = self.get_syntax_surface_palette()
@@ -8757,36 +8786,67 @@ class NotepadX:
         return "break"
 
     # ─── Find / Replace Logic ────────────────────────────────────
+    def is_live_tk_widget(self, widget, widget_type=None):
+        if widget is None:
+            return False
+        if widget_type is not None and not isinstance(widget, widget_type):
+            return False
+        try:
+            return bool(widget.winfo_exists())
+        except (tk.TclError, AttributeError):
+            return False
+
+    def read_entry_text(self, entry_widget, where, strip=True):
+        if entry_widget is None:
+            self.log_exception(where, tk.TclError("entry widget is not available"))
+            return None
+        if not self.is_live_tk_widget(entry_widget):
+            self.log_exception(where, tk.TclError("entry widget no longer exists"))
+            return None
+        try:
+            text = entry_widget.get()
+        except (tk.TclError, AttributeError) as exc:
+            self.log_exception(where, exc)
+            return None
+        text = str(text or "")
+        return text.strip() if strip else text
+
+    def get_active_find_entry_and_query(self, where='read find query'):
+        if self.find_panel_visible:
+            entry_widget = getattr(self, 'find_entry', None)
+        elif self.replace_panel_visible:
+            entry_widget = getattr(self, 'replace_find_entry', None)
+        else:
+            return None, None
+        query = self.read_entry_text(entry_widget, where)
+        if query is None:
+            return None, None
+        return entry_widget, query
+
     def set_last_active_editor_widget(self, widget):
         if widget is None:
             return
         try:
             if widget.winfo_exists():
                 self.last_active_editor_widget = widget
-        except tk.TclError:
+        except (tk.TclError, AttributeError):
             pass
 
     def get_compare_text_widget(self):
         if not self.compare_active or not self.compare_view:
             return None
         compare_widget = self.compare_view.get('text')
-        if not compare_widget:
+        if not self.is_live_tk_widget(compare_widget, tk.Text):
             return None
-        try:
-            return compare_widget if compare_widget.winfo_exists() else None
-        except tk.TclError:
-            return None
+        return compare_widget
 
     def get_side_panel_text_widget(self):
         if not self.is_side_panel_visible() or not self.compare_view:
             return None
         side_panel_widget = self.compare_view.get('text')
-        if not side_panel_widget:
+        if not self.is_live_tk_widget(side_panel_widget, tk.Text):
             return None
-        try:
-            return side_panel_widget if side_panel_widget.winfo_exists() else None
-        except tk.TclError:
-            return None
+        return side_panel_widget
 
     def safe_focus_get(self):
         try:
@@ -8795,7 +8855,11 @@ class NotepadX:
             return None
 
     def get_active_search_widget(self):
-        valid_widgets = [doc['text'] for doc in self.documents.values() if doc.get('text')]
+        valid_widgets = [
+            doc['text']
+            for doc in self.documents.values()
+            if self.is_live_tk_widget(doc.get('text'), tk.Text)
+        ]
         compare_widget = self.get_compare_text_widget()
         if compare_widget is not None:
             valid_widgets.append(compare_widget)
@@ -8834,6 +8898,8 @@ class NotepadX:
             return "break"
         moved_targets = []
         for widget in targets:
+            if not self.is_live_tk_widget(widget, tk.Text):
+                continue
             doc = self.get_navigation_doc_for_widget(widget)
             if doc and doc.get('virtual_mode'):
                 if self.is_virtual_index_ready(doc):
@@ -8860,6 +8926,8 @@ class NotepadX:
             return "break"
         moved_targets = []
         for widget in targets:
+            if not self.is_live_tk_widget(widget, tk.Text):
+                continue
             doc = self.get_navigation_doc_for_widget(widget)
             try:
                 if doc and doc.get('virtual_mode'):
@@ -9071,7 +9139,7 @@ class NotepadX:
 
     def get_page_navigation_source_widget(self, event=None):
         widget = getattr(event, 'widget', None)
-        if isinstance(widget, tk.Text):
+        if self.is_live_tk_widget(widget, tk.Text):
             side_panel_widget = self.get_side_panel_text_widget()
             if side_panel_widget is not None and widget == side_panel_widget:
                 return widget
@@ -9090,16 +9158,24 @@ class NotepadX:
 
     def get_page_navigation_targets(self, event=None, source_widget=None):
         source_widget = source_widget or self.get_page_navigation_source_widget(event)
-        if source_widget is None:
+        if not self.is_live_tk_widget(source_widget, tk.Text):
             return []
 
-        if self.sync_page_navigation_enabled.get() and self.is_side_panel_visible():
+        try:
+            sync_enabled = bool(self.sync_page_navigation_enabled.get())
+        except (tk.TclError, AttributeError):
+            sync_enabled = False
+
+        if sync_enabled and self.is_side_panel_visible():
             targets = []
-            if isinstance(self.text, tk.Text):
-                targets.append(self.text)
+
+            def add_target(widget):
+                if self.is_live_tk_widget(widget, tk.Text) and widget not in targets:
+                    targets.append(widget)
+
+            add_target(getattr(self, 'text', None))
             side_panel_widget = self.get_side_panel_text_widget()
-            if side_panel_widget is not None and side_panel_widget not in targets:
-                targets.append(side_panel_widget)
+            add_target(side_panel_widget)
             if targets:
                 return targets
 
@@ -9108,6 +9184,8 @@ class NotepadX:
     def finish_page_navigation(self, targets, source_widget=None):
         seen_docs = set()
         for widget in targets:
+            if not self.is_live_tk_widget(widget, tk.Text):
+                continue
             doc = self.get_navigation_doc_for_widget(widget)
             if not doc:
                 continue
@@ -9118,7 +9196,7 @@ class NotepadX:
             self.remember_doc_view_state(doc)
             self.update_line_number_gutter(doc)
             self.schedule_minimap_refresh(doc)
-        if source_widget is not None:
+        if self.is_live_tk_widget(source_widget, tk.Text):
             self.set_last_active_editor_widget(source_widget)
         elif targets:
             self.set_last_active_editor_widget(targets[0])
@@ -9133,6 +9211,8 @@ class NotepadX:
             pass
 
     def get_navigation_doc_for_widget(self, widget):
+        if not self.is_live_tk_widget(widget, tk.Text):
+            return None
         side_panel_widget = self.get_side_panel_text_widget()
         if side_panel_widget is not None and widget == side_panel_widget:
             return self.compare_view
@@ -9142,6 +9222,8 @@ class NotepadX:
         return None
 
     def get_visible_widget_line_bounds(self, widget, doc=None):
+        if not self.is_live_tk_widget(widget, tk.Text):
+            return None
         try:
             widget.update_idletasks()
             top_local_line = int(widget.index('@0,0').split('.')[0])
@@ -9173,13 +9255,15 @@ class NotepadX:
         return top_local_line, bottom_local_line
 
     def scroll_widget_page_by_visible_lines(self, widget, direction):
+        if not self.is_live_tk_widget(widget, tk.Text):
+            return False
         doc = self.get_navigation_doc_for_widget(widget)
         bounds = self.get_visible_widget_line_bounds(widget, doc)
 
         if not bounds:
             try:
                 widget.yview_scroll(direction, 'page')
-            except tk.TclError:
+            except (tk.TclError, AttributeError):
                 return False
             self.sync_widget_insert_to_visible_line(widget)
             return True
@@ -9219,7 +9303,7 @@ class NotepadX:
 
             widget.mark_set(tk.INSERT, target_index)
             widget.yview(target_index)
-        except tk.TclError:
+        except (tk.TclError, AttributeError):
             return False
 
         self.sync_widget_insert_to_visible_line(widget)
@@ -9375,13 +9459,12 @@ class NotepadX:
         return True
 
     def find_next(self, event=None):
-        if self.find_panel_visible:
-            query = self.find_entry.get().strip()
-        elif self.replace_panel_visible:
-            query = self.replace_find_entry.get().strip()
-        else:
+        if not (self.find_panel_visible or self.replace_panel_visible):
             return self.goto_next_unread_note()
 
+        _, query = self.get_active_find_entry_and_query("read find next query")
+        if query is None:
+            return "break"
         if not query:
             return
 
@@ -9403,13 +9486,12 @@ class NotepadX:
         return self.find_next_across_tabs(query, target_widget)
 
     def find_previous(self, event=None):
-        if self.find_panel_visible:
-            query = self.find_entry.get().strip()
-        elif self.replace_panel_visible:
-            query = self.replace_find_entry.get().strip()
-        else:
+        if not (self.find_panel_visible or self.replace_panel_visible):
             return "break"
 
+        _, query = self.get_active_find_entry_and_query("read find previous query")
+        if query is None:
+            return "break"
         if not query:
             return "break"
 
@@ -9500,13 +9582,12 @@ class NotepadX:
         return "break"
 
     def find_from_input(self, event=None):
-        if self.find_panel_visible:
-            query = self.find_entry.get().strip()
-        elif self.replace_panel_visible:
-            query = self.replace_find_entry.get().strip()
-        else:
+        if not (self.find_panel_visible or self.replace_panel_visible):
             return "break"
 
+        _, query = self.get_active_find_entry_and_query("read find input query")
+        if query is None:
+            return "break"
         if not query:
             return "break"
 
@@ -9655,7 +9736,7 @@ class NotepadX:
             try:
                 if not widget.winfo_exists():
                     return
-            except tk.TclError:
+            except (tk.TclError, AttributeError):
                 return
             widget_id = str(widget)
             if widget_id in seen:
@@ -9679,7 +9760,7 @@ class NotepadX:
                     widget_id = str(compare_widget)
                     if widget_id not in seen:
                         widgets.append(compare_widget)
-            except tk.TclError:
+            except (tk.TclError, AttributeError):
                 pass
         return widgets
 
@@ -9705,18 +9786,12 @@ class NotepadX:
                     continue
                 widget.tag_remove(self.find_matches_tag, '1.0', tk.END)
                 widget.tag_remove(self.find_current_tag, '1.0', tk.END)
-            except tk.TclError:
+            except (tk.TclError, AttributeError):
                 continue
 
     def get_visible_find_query(self):
-        try:
-            if self.find_panel_visible and self.find_entry.winfo_exists():
-                return self.find_entry.get().strip()
-            if self.replace_panel_visible and self.replace_find_entry.winfo_exists():
-                return self.replace_find_entry.get().strip()
-        except tk.TclError:
-            return ""
-        return ""
+        _, query = self.get_active_find_entry_and_query("read visible find query")
+        return query or ""
 
     def set_find_match_summary_text(self, text):
         for label_name in ('find_results_label', 'replace_results_label'):
@@ -10246,15 +10321,8 @@ class NotepadX:
     def apply_live_find_change(self):
         self.find_change_job = None
         try:
-            if self.find_panel_visible:
-                if not self.find_entry.winfo_exists():
-                    return
-                query = self.find_entry.get().strip()
-            elif self.replace_panel_visible:
-                if not self.replace_find_entry.winfo_exists():
-                    return
-                query = self.replace_find_entry.get().strip()
-            else:
+            _, query = self.get_active_find_entry_and_query("read live find query")
+            if query is None:
                 return
 
             self.update_find_match_summary(query, allow_short_query=True)
@@ -10263,39 +10331,34 @@ class NotepadX:
             self.log_exception("live find change", exc)
 
     def on_find_entry_change(self, event=None):
-        try:
-            if self.find_panel_visible:
-                entry_widget = self.find_entry
-                query = entry_widget.get().strip()
-            elif self.replace_panel_visible:
-                entry_widget = self.replace_find_entry
-                query = entry_widget.get().strip()
-            else:
+        entry_widget, query = self.get_active_find_entry_and_query("read live find query")
+        if entry_widget is None:
+            if not (self.find_panel_visible or self.replace_panel_visible):
                 self.hide_search_history_popup()
-                return
-        except tk.TclError as exc:
-            self.log_exception("read live find query", exc)
+            return
+        if query is None:
             return
 
-        self.update_search_history_popup(entry_widget, force_show=True)
-        self.cancel_find_change_job()
-        self.update_find_match_summary(query, allow_short_query=True)
-        if not query:
-            self.clear_find_highlights()
-            return
-        if len(query) < self.live_find_min_chars:
-            self.clear_find_highlights()
-            return
         try:
-            self.find_change_job = self.root.after(30, self.apply_live_find_change)
-        except tk.TclError as exc:
-            self.log_exception("schedule live find change", exc)
+            self.update_search_history_popup(entry_widget, force_show=True)
+            self.cancel_find_change_job()
+            self.update_find_match_summary(query, allow_short_query=True)
+            if not query:
+                self.clear_find_highlights()
+                return
+            if len(query) < self.live_find_min_chars:
+                self.clear_find_highlights()
+                return
+            try:
+                self.find_change_job = self.root.after(30, self.apply_live_find_change)
+            except tk.TclError as exc:
+                self.log_exception("schedule live find change", exc)
+        except Exception as exc:
+            self.log_exception("process live find change", exc)
 
     def on_find_in_entry_change(self, event=None):
-        try:
-            query = self.find_in_entry.get().strip()
-        except tk.TclError as exc:
-            self.log_exception("read find in query", exc)
+        query = self.read_entry_text(getattr(self, 'find_in_entry', None), "read find in query")
+        if query is None:
             return
 
         if not query and not self.find_in_history:
@@ -10304,8 +10367,10 @@ class NotepadX:
         self.update_search_history_popup(self.find_in_entry, force_show=True)
 
     def replace_all(self):
-        query = self.replace_find_entry.get().strip()
-        replace_text = self.replace_entry.get()
+        query = self.read_entry_text(getattr(self, 'replace_find_entry', None), "read replace query")
+        replace_text = self.read_entry_text(getattr(self, 'replace_entry', None), "read replacement text", strip=False)
+        if query is None or replace_text is None:
+            return
         if not query:
             return
         self.hide_search_history_popup()
@@ -19899,41 +19964,66 @@ class NotepadX:
             '.asm', '.s', '.js', '.ts', '.tsx', '.jsx', '.css', '.json',
             '.xml', '.toml', '.yaml', '.yml', '.ini', '.cfg', '.sh', '.bat'
         }
+        ignored_project_dirs = {
+            '.git', '.hg', '.svn', '__pycache__', '.mypy_cache',
+            '.pytest_cache', '.ruff_cache', '.tox', '.venv', 'venv',
+            'env', 'node_modules', 'vendor', 'dist', 'build', 'target',
+            'out'
+        }
         file_path = os.path.abspath(file_path)
         project_dir = os.path.dirname(file_path)
         project_real_dir = os.path.normcase(os.path.realpath(project_dir))
         selected_extension = os.path.splitext(file_path)[1].lower()
+        if selected_extension not in source_extensions:
+            return [file_path]
         related_files = [file_path]
+        seen_files = {os.path.normcase(file_path)}
 
         try:
-            directory_entries = sorted(os.scandir(project_dir), key=lambda entry: entry.name.lower())
+            project_walk = os.walk(project_dir, topdown=True, followlinks=False)
         except OSError:
             return related_files
 
-        for entry in directory_entries:
+        for current_dir, dir_names, file_names in project_walk:
+            dir_names[:] = sorted(
+                (
+                    dir_name for dir_name in dir_names
+                    if dir_name.lower() not in ignored_project_dirs
+                ),
+                key=str.lower
+            )
             try:
-                if not entry.is_file(follow_symlinks=False):
-                    continue
-            except OSError:
-                continue
-            candidate_path = os.path.abspath(entry.path)
-            if candidate_path == file_path:
-                continue
-            try:
-                candidate_real_path = os.path.normcase(os.path.realpath(candidate_path))
-                if os.path.commonpath((project_real_dir, candidate_real_path)) != project_real_dir:
+                current_real_dir = os.path.normcase(os.path.realpath(current_dir))
+                if os.path.commonpath((project_real_dir, current_real_dir)) != project_real_dir:
+                    dir_names[:] = []
                     continue
             except (OSError, ValueError):
+                dir_names[:] = []
                 continue
-            candidate_name = entry.name.lower()
-            if self.is_notepadx_support_file(candidate_name):
-                continue
-            candidate_extension = os.path.splitext(entry.name)[1].lower()
-            if candidate_extension in source_extensions:
+
+            for file_name in sorted(file_names, key=str.lower):
+                candidate_name = file_name.lower()
+                if self.is_notepadx_support_file(candidate_name):
+                    continue
+                candidate_extension = os.path.splitext(file_name)[1].lower()
+                if candidate_extension not in source_extensions:
+                    continue
+                candidate_path = os.path.abspath(os.path.join(current_dir, file_name))
+                candidate_key = os.path.normcase(candidate_path)
+                if candidate_key in seen_files:
+                    continue
+                try:
+                    candidate_stat = os.lstat(candidate_path)
+                    if not stat.S_ISREG(candidate_stat.st_mode):
+                        continue
+                    candidate_real_path = os.path.normcase(os.path.realpath(candidate_path))
+                    if os.path.commonpath((project_real_dir, candidate_real_path)) != project_real_dir:
+                        continue
+                except (OSError, ValueError):
+                    continue
+                seen_files.add(candidate_key)
                 related_files.append(candidate_path)
 
-        if selected_extension not in source_extensions:
-            return [file_path]
         return related_files
 
     def open_file_path(self, file_path):
