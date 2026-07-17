@@ -236,6 +236,28 @@ Notepad-X currently ships with 20 bundled language files:
 
 Most settings toggles now also ship with defaults and can be reviewed or changed in `Hotkey Settings`.
 
+## Development and Release Builds
+
+Use Python 3.14.6 or newer so the packaged standard library includes the current Expat security fixes. Create an isolated virtual environment, then install the pinned feature and build dependencies:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -r requirements-build.txt
+$env:PYTHON = (Resolve-Path .\.venv\Scripts\python.exe)
+.\build-release.ps1
+```
+
+The tracked PyInstaller specification uses an explicit data allowlist. It includes locales, themes, spellcheck data, help, audio, and graphics while excluding sessions, editor identities, backups, remote caches, logs, Git data, and other mutable user content. Never create a release by archiving a used working directory or the `output` directory.
+
+Clean packaged builds store mutable state under the current user's application-data directory. Existing portable installations that already have a `cfg` directory beside the executable continue using that directory for compatibility.
+
+Run source tests independently with:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
 ## Benchmark Snapshot
 
 ![EXE benchmark comparison](gfx/exe_benchmark.png)

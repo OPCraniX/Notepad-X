@@ -1,9 +1,11 @@
 __pycache__/
 *.pyc
+.venv/
 
 build/
 dist/
 output/
+logs/
 *.rar
 
 Notepad-X.session.json
@@ -11,11 +13,11 @@ Notepad-X.editor.json
 Notepad-X.recovery.json
 Notepad-X.crash.log
 *.notepadx.notes.json
+*.notepadx.editors.json
 Notepad-X.*.session.json
 Notepad-X.*.editor.json
-Notepad-X.Version.File.txt
-*.json
-!cfg/themes/*.json
+cfg/Notepad-X.*.session.json
+cfg/Notepad-X.*.editor.json
 cfg/themes/lolcat.json
 cfg/backups/
 cfg/remote-cache/

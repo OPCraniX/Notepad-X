@@ -11,13 +11,13 @@ import importlib
 import importlib.util
 import json
 import ast
-import bisect
 import builtins
 import glob
 import keyword
 import math
 import re
 import hashlib
+import hmac
 import base64
 import codecs
 import secrets
@@ -33,6 +33,7 @@ import multiprocessing
 import webbrowser
 import shlex
 import gc
+import io
 import zlib
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -41,6 +42,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import unquote, urlparse
 from array import array
+
+
+SINGLE_INSTANCE_MAX_FILES = 100
+SINGLE_INSTANCE_MAX_PAYLOAD_BYTES = 1024 * 1024
+SINGLE_INSTANCE_PROTOCOL = 'notepadx-ipc-v2'
+SINGLE_INSTANCE_NONCE_BYTES = 32
 
 _null_streams = []
 for _stream_name in ('stdout', 'stderr'):
@@ -684,6 +691,136 @@ def get_notepadx_instance_scope_dir(app_dir):
     return candidate_dir
 
 
+def get_notepadx_ipc_secret_path(app_dir):
+    scope_dir = os.path.normcase(os.path.realpath(get_notepadx_instance_scope_dir(app_dir)))
+    scope_hash = hashlib.sha256(scope_dir.encode('utf-8', errors='replace')).hexdigest()[:32]
+    if os.name == 'nt':
+        state_root = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
+    else:
+        state_root = os.environ.get('XDG_STATE_HOME') or os.path.join(os.path.expanduser('~'), '.local', 'state')
+    return os.path.join(state_root, 'Notepad-X', 'ipc', f'{scope_hash}.key')
+
+
+def load_or_create_notepadx_ipc_secret(app_dir):
+    secret_path = get_notepadx_ipc_secret_path(app_dir)
+    secret_dir = os.path.dirname(secret_path)
+    try:
+        os.makedirs(secret_dir, mode=0o700, exist_ok=True)
+        if os.name != 'nt':
+            directory_stat = os.lstat(secret_dir)
+            if not stat.S_ISDIR(directory_stat.st_mode) or stat.S_ISLNK(directory_stat.st_mode):
+                return None
+            os.chmod(secret_dir, 0o700)
+    except OSError:
+        return None
+
+    def read_existing_secret():
+        flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0)
+        try:
+            descriptor = os.open(secret_path, flags)
+        except OSError:
+            return None
+        try:
+            file_stat = os.fstat(descriptor)
+            if not stat.S_ISREG(file_stat.st_mode):
+                return None
+            if os.name != 'nt' and stat.S_IMODE(file_stat.st_mode) & 0o077:
+                return None
+            with os.fdopen(descriptor, 'rb', closefd=False) as secret_file:
+                secret = secret_file.read(SINGLE_INSTANCE_NONCE_BYTES + 1)
+            return secret if len(secret) == SINGLE_INSTANCE_NONCE_BYTES else None
+        finally:
+            os.close(descriptor)
+
+    existing_secret = read_existing_secret()
+    if existing_secret is not None:
+        return existing_secret
+
+    secret = secrets.token_bytes(SINGLE_INSTANCE_NONCE_BYTES)
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, 'O_BINARY', 0)
+        | getattr(os, 'O_NOFOLLOW', 0)
+    )
+    try:
+        descriptor = os.open(secret_path, flags, 0o600)
+    except FileExistsError:
+        for _attempt in range(5):
+            time.sleep(0.01)
+            existing_secret = read_existing_secret()
+            if existing_secret is not None:
+                return existing_secret
+        return None
+    except OSError:
+        return None
+    try:
+        with os.fdopen(descriptor, 'wb', closefd=False) as secret_file:
+            secret_file.write(secret)
+            secret_file.flush()
+            os.fsync(secret_file.fileno())
+        if os.name != 'nt':
+            os.chmod(secret_path, 0o600)
+    except OSError:
+        try:
+            os.remove(secret_path)
+        except OSError:
+            pass
+        return None
+    finally:
+        os.close(descriptor)
+    return secret
+
+
+def encode_notepadx_ipc_nonce(value):
+    return bytes(value).hex()
+
+
+def decode_notepadx_ipc_nonce(value):
+    if not isinstance(value, str) or len(value) != SINGLE_INSTANCE_NONCE_BYTES * 2:
+        return None
+    try:
+        nonce = bytes.fromhex(value)
+    except ValueError:
+        return None
+    return nonce if len(nonce) == SINGLE_INSTANCE_NONCE_BYTES else None
+
+
+def build_notepadx_ipc_proof(secret, label, *parts):
+    digest = hmac.new(secret, digestmod=hashlib.sha256)
+    digest.update(str(label).encode('ascii', errors='strict'))
+    for part in parts:
+        digest.update(b'\0')
+        digest.update(bytes(part))
+    return digest.hexdigest()
+
+
+def canonical_notepadx_ipc_payload(payload):
+    return json.dumps(payload, ensure_ascii=False, separators=(',', ':'), sort_keys=True).encode('utf-8')
+
+
+def write_notepadx_ipc_message(stream, payload):
+    encoded = canonical_notepadx_ipc_payload(payload)
+    if len(encoded) > SINGLE_INSTANCE_MAX_PAYLOAD_BYTES:
+        raise ValueError('Single-instance IPC message is too large')
+    stream.write(encoded + b'\n')
+    stream.flush()
+
+
+def read_notepadx_ipc_message(stream):
+    encoded = stream.readline(SINGLE_INSTANCE_MAX_PAYLOAD_BYTES + 2)
+    if not encoded or len(encoded) > SINGLE_INSTANCE_MAX_PAYLOAD_BYTES + 1 or not encoded.endswith(b'\n'):
+        raise ValueError('Invalid single-instance IPC frame')
+    try:
+        payload = json.loads(encoded[:-1].decode('utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError('Invalid single-instance IPC JSON') from exc
+    if not isinstance(payload, dict):
+        raise ValueError('Single-instance IPC payload must be an object')
+    return payload
+
+
 def is_notepadx_support_file_path(file_path):
     try:
         candidate_name = os.path.basename(str(file_path)).lower()
@@ -748,11 +885,20 @@ def get_process_launch_arguments():
     return collected_args
 
 
-def normalize_startup_path_argument(raw_path, base_dir=None):
+def is_notepadx_network_or_device_path(path_value):
+    value = str(path_value or '').strip().replace('\\', '/')
+    return value.startswith('//')
+
+
+def normalize_startup_path_argument(raw_path, base_dir=None, allow_network_paths=True):
     if raw_path is None:
         return None
     value = str(raw_path).strip()
     if not value:
+        return None
+    if '\0' in value:
+        return None
+    if not allow_network_paths and is_notepadx_network_or_device_path(value):
         return None
     for _ in range(2):
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
@@ -764,6 +910,8 @@ def normalize_startup_path_argument(raw_path, base_dir=None):
         return None
     parsed = urlparse(value)
     if parsed.scheme.lower() == 'file':
+        if parsed.netloc and not allow_network_paths:
+            return None
         candidate_value = unquote(parsed.path or '')
         if parsed.netloc:
             candidate_value = f"//{parsed.netloc}{candidate_value}"
@@ -772,6 +920,8 @@ def normalize_startup_path_argument(raw_path, base_dir=None):
         value = candidate_value
     value = os.path.expandvars(os.path.expanduser(value))
     if not value:
+        return None
+    if not allow_network_paths and is_notepadx_network_or_device_path(value):
         return None
     candidate_paths = []
     if os.path.isabs(value):
@@ -790,7 +940,7 @@ def normalize_startup_path_argument(raw_path, base_dir=None):
 def get_notepadx_single_instance_port(app_dir):
     scope_dir = get_notepadx_instance_scope_dir(app_dir)
     seed = (
-        f"NotepadX::{os.path.normcase(os.path.abspath(scope_dir))}::"
+        f"NotepadX::ipc-v2::{os.path.normcase(os.path.abspath(scope_dir))}::"
         f"{os.environ.get('USERNAME') or os.environ.get('USER') or 'user'}"
     )
     seed_hash = hashlib.sha256(seed.encode('utf-8')).hexdigest()
@@ -798,12 +948,19 @@ def get_notepadx_single_instance_port(app_dir):
 
 
 def send_files_to_running_notepadx(app_dir, startup_files):
+    secret = load_or_create_notepadx_ipc_secret(app_dir)
+    if secret is None:
+        return False
     normalized_files = []
     seen_files = set()
     for raw_path in startup_files or []:
-        candidate_path = normalize_startup_path_argument(raw_path)
+        candidate_path = normalize_startup_path_argument(raw_path, allow_network_paths=False)
         if not candidate_path:
-            candidate_path = normalize_startup_path_argument(raw_path, base_dir=app_dir)
+            candidate_path = normalize_startup_path_argument(
+                raw_path,
+                base_dir=app_dir,
+                allow_network_paths=False,
+            )
         if not candidate_path:
             continue
         candidate_key = os.path.normcase(candidate_path)
@@ -811,38 +968,123 @@ def send_files_to_running_notepadx(app_dir, startup_files):
             continue
         seen_files.add(candidate_key)
         normalized_files.append(candidate_path)
+        if len(normalized_files) >= SINGLE_INSTANCE_MAX_FILES:
+            break
 
     if not normalized_files:
         return False
 
-    payload = json.dumps({
+    payload = {
         'command': 'open_files',
         'files': normalized_files,
-    }).encode('utf-8')
+    }
+    payload_bytes = canonical_notepadx_ipc_payload(payload)
+    if len(payload_bytes) > SINGLE_INSTANCE_MAX_PAYLOAD_BYTES:
+        return False
+    payload_digest = hashlib.sha256(payload_bytes).digest()
+    client_nonce = secrets.token_bytes(SINGLE_INSTANCE_NONCE_BYTES)
 
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client.settimeout(0.6)
+    client.settimeout(1.5)
+    stream = None
     try:
         client.connect(('127.0.0.1', get_notepadx_single_instance_port(app_dir)))
-        client.sendall(payload)
+        stream = client.makefile('rwb')
+        write_notepadx_ipc_message(stream, {
+            'protocol': SINGLE_INSTANCE_PROTOCOL,
+            'type': 'hello',
+            'client_nonce': encode_notepadx_ipc_nonce(client_nonce),
+        })
+        challenge = read_notepadx_ipc_message(stream)
+        if challenge.get('protocol') != SINGLE_INSTANCE_PROTOCOL or challenge.get('type') != 'challenge':
+            return False
+        server_nonce = decode_notepadx_ipc_nonce(challenge.get('server_nonce'))
+        if server_nonce is None:
+            return False
+        expected_server_proof = build_notepadx_ipc_proof(
+            secret,
+            'server',
+            client_nonce,
+            server_nonce,
+        )
+        if not hmac.compare_digest(str(challenge.get('proof') or ''), expected_server_proof):
+            return False
+        client_proof = build_notepadx_ipc_proof(
+            secret,
+            'client',
+            client_nonce,
+            server_nonce,
+            payload_digest,
+        )
+        write_notepadx_ipc_message(stream, {
+            'protocol': SINGLE_INSTANCE_PROTOCOL,
+            'type': 'request',
+            'payload': payload,
+            'proof': client_proof,
+        })
+        acknowledgement = read_notepadx_ipc_message(stream)
+        accepted_count = acknowledgement.get('accepted_count')
+        if (
+            acknowledgement.get('protocol') != SINGLE_INSTANCE_PROTOCOL
+            or acknowledgement.get('type') != 'ack'
+            or acknowledgement.get('ok') is not True
+            or not isinstance(accepted_count, int)
+            or accepted_count != len(normalized_files)
+        ):
+            return False
+        expected_ack_proof = build_notepadx_ipc_proof(
+            secret,
+            'ack',
+            client_nonce,
+            server_nonce,
+            payload_digest,
+            str(accepted_count).encode('ascii'),
+        )
+        if not hmac.compare_digest(str(acknowledgement.get('proof') or ''), expected_ack_proof):
+            return False
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
     finally:
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
         try:
             client.close()
         except OSError:
             pass
 
 
-def scan_large_text_file_index_range_worker(file_path, nominal_start, nominal_end, chunk_size=4 * 1024 * 1024, range_index=0):
+def scan_large_text_file_index_range_worker(
+    file_path,
+    nominal_start,
+    nominal_end,
+    chunk_size=4 * 1024 * 1024,
+    range_index=0,
+    line_group_size=None
+):
     safe_chunk_size = max(64 * 1024, int(chunk_size or (4 * 1024 * 1024)))
+    safe_line_group_size = None
+    if line_group_size is not None:
+        safe_line_group_size = max(1, int(line_group_size))
     file_size = os.path.getsize(file_path)
     start_offset = max(0, min(file_size, int(nominal_start or 0)))
     end_offset = max(start_offset, min(file_size, int(nominal_end if nominal_end is not None else file_size)))
 
     if start_offset >= file_size or start_offset >= end_offset:
-        return {'range_index': int(range_index or 0), 'line_lengths': []}
+        empty_result = {'range_index': int(range_index or 0)}
+        if safe_line_group_size is None:
+            empty_result['line_lengths'] = []
+        else:
+            empty_result.update({
+                'total_lines': 0,
+                'line_group_size': safe_line_group_size,
+                'line_group_counts': [],
+                'line_group_max_lengths': [],
+            })
+        return empty_result
 
     def align_start(source_file, offset):
         if offset <= 0:
@@ -878,48 +1120,84 @@ def scan_large_text_file_index_range_worker(file_path, nominal_start, nominal_en
         aligned_start = align_start(source_file, start_offset)
         aligned_end = align_end(source_file, end_offset)
         if aligned_start >= aligned_end:
-            return {'range_index': int(range_index or 0), 'line_lengths': []}
+            empty_result = {'range_index': int(range_index or 0)}
+            if safe_line_group_size is None:
+                empty_result['line_lengths'] = []
+            else:
+                empty_result.update({
+                    'total_lines': 0,
+                    'line_group_size': safe_line_group_size,
+                    'line_group_counts': [],
+                    'line_group_max_lengths': [],
+                })
+            return empty_result
 
         source_file.seek(aligned_start)
         remaining = aligned_end - aligned_start
         line_lengths = array('I')
+        line_group_counts = []
+        line_group_max_lengths = []
+        current_group_count = 0
+        current_group_max_length = 0
+        total_lines = 0
         current_line_length = 0
-        remainder = b''
+
+        def record_line(line_length):
+            nonlocal current_group_count, current_group_max_length, total_lines
+            total_lines += 1
+            if safe_line_group_size is None:
+                line_lengths.append(line_length)
+                return
+            current_group_count += 1
+            current_group_max_length = max(current_group_max_length, line_length)
+            if current_group_count >= safe_line_group_size:
+                line_group_counts.append(current_group_count)
+                line_group_max_lengths.append(current_group_max_length)
+                current_group_count = 0
+                current_group_max_length = 0
 
         while remaining > 0:
             chunk = source_file.read(min(safe_chunk_size, remaining))
             if not chunk:
                 break
             remaining -= len(chunk)
-            data = remainder + chunk
-            parts = data.split(b'\n')
-            if remaining == 0:
-                remainder = parts.pop() if parts else b''
-            else:
-                remainder = parts.pop() if parts else b''
-            if not parts and remainder and remaining > 0:
-                current_line_length += len(remainder)
-                remainder = b''
-                continue
-            if parts:
-                line_lengths.append(current_line_length + len(parts[0]))
-                if len(parts) > 1:
-                    line_lengths.extend(len(part) for part in parts[1:])
-                current_line_length = len(remainder)
-            else:
-                current_line_length += len(remainder)
-                remainder = b''
+            search_from = 0
+            while True:
+                newline_index = chunk.find(b'\n', search_from)
+                if newline_index == -1:
+                    current_line_length += len(chunk) - search_from
+                    break
+                current_line_length += newline_index - search_from
+                record_line(current_line_length)
+                current_line_length = 0
+                search_from = newline_index + 1
 
-        final_length = current_line_length + len(remainder)
-        if final_length > 0 or aligned_end >= file_size:
-            line_lengths.append(final_length)
-    return {
-        'range_index': int(range_index or 0),
-        'line_lengths': line_lengths.tolist(),
-    }
+        if current_line_length > 0 or aligned_end >= file_size:
+            record_line(current_line_length)
+        if current_group_count:
+            line_group_counts.append(current_group_count)
+            line_group_max_lengths.append(current_group_max_length)
+    result = {'range_index': int(range_index or 0)}
+    if safe_line_group_size is None:
+        result['line_lengths'] = line_lengths.tolist()
+    else:
+        result.update({
+            'total_lines': total_lines,
+            'line_group_size': safe_line_group_size,
+            'line_group_counts': line_group_counts,
+            'line_group_max_lengths': line_group_max_lengths,
+        })
+    return result
 
 
-def scan_newline_start_offsets_range_worker(file_path, start_offset, end_offset, chunk_size=4 * 1024 * 1024, range_index=0):
+def scan_newline_start_offsets_range_worker(
+    file_path,
+    start_offset,
+    end_offset,
+    chunk_size=4 * 1024 * 1024,
+    range_index=0,
+    max_line_starts=None,
+):
     safe_chunk_size = max(64 * 1024, int(chunk_size or (4 * 1024 * 1024)))
     file_size = os.path.getsize(file_path)
     safe_start = max(0, min(file_size, int(start_offset or 0)))
@@ -945,6 +1223,11 @@ def scan_newline_start_offsets_range_worker(file_path, start_offset, end_offset,
                 newline_index = chunk.find(b'\n', search_from)
                 if newline_index == -1:
                     break
+                if max_line_starts is not None and len(newline_starts) >= max(1, int(max_line_starts)):
+                    raise RuntimeError(
+                        'This file has too many lines for the in-memory large-file index. '
+                        'Use a streaming tool or split the file before opening it.'
+                    )
                 newline_starts.append(absolute_offset + newline_index + 1)
                 search_from = newline_index + 1
             consumed = len(chunk)
@@ -1057,6 +1340,7 @@ class NotepadX:
         self.background_stream_max_pending_chunks = 4
         self.background_file_result_batch_size = 2
         self.virtual_index_chunk_size = 4 * 1024 * 1024
+        self.virtual_index_max_line_starts = 1_000_000
         self.huge_file_preview_threshold_bytes = 100 * 1024 * 1024
         self.huge_file_preview_bytes = 2 * 1024 * 1024
         self.virtual_file_window_lines = 5000
@@ -1066,6 +1350,8 @@ class NotepadX:
         self.virtual_hot_chunk_cache_entries = 10
         self.virtual_cold_chunk_cache_entries = 20
         self.virtual_cold_chunk_cache_enabled = True
+        self.max_theme_json_bytes = 1024 * 1024
+        self.max_locale_file_bytes = 1024 * 1024
         config_dir = self.get_config_dir(self.app_dir)
         os.makedirs(config_dir, exist_ok=True)
         self.locale_dir = self.get_locale_dir(config_dir)
@@ -1076,6 +1362,13 @@ class NotepadX:
         os.makedirs(self.backup_dir, exist_ok=True)
         self.remote_cache_dir = os.path.join(config_dir, "remote-cache")
         os.makedirs(self.remote_cache_dir, exist_ok=True)
+        if not self.is_windows:
+            try:
+                os.chmod(self.remote_cache_dir, 0o700)
+            except OSError:
+                pass
+        self.owned_remote_shadow_paths = set()
+        self.remote_transfer_timeout_seconds = 60
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.ensure_theme_files(self.theme_dir)
         self.theme_definitions = self.load_theme_definitions(self.theme_dir)
@@ -1111,9 +1404,15 @@ class NotepadX:
         self.max_shared_editor_host_length = 128
         self.max_shared_editor_ip_length = 64
         self.shared_editor_stale_seconds = 30
+        self.max_identity_json_bytes = 1024 * 1024
+        self.max_sidecar_json_bytes = 16 * 1024 * 1024
+        self.max_session_json_bytes = 4 * 1024 * 1024
+        self.max_recovery_json_bytes = 128 * 1024 * 1024
         self.max_note_text_length = 4000
         self.max_note_name_length = 120
         self.max_note_reply_length = 1000
+        self.max_note_responses = 500
+        self.max_shared_notes = 5000
         self.encryption_magic = b'NPXENC1'
         self.encryption_version = 1
         self.encryption_key_length = 32
@@ -1123,12 +1422,23 @@ class NotepadX:
         self.encryption_scrypt_r = 8
         self.encryption_scrypt_p = 1
         self.encryption_scrypt_maxmem = 128 * 1024 * 1024
+        self.encryption_header_max_bytes = 64 * 1024
+        self.max_encrypted_file_bytes = 64 * 1024 * 1024
+        self.encryption_scrypt_max_work_factor = (
+            self.encryption_scrypt_n * self.encryption_scrypt_r * self.encryption_scrypt_p * 4
+        )
         self.live_find_min_chars = 2
         self.live_find_max_matches_per_widget = 1000
         self.live_find_max_matches_typing = 150
+        self.find_in_max_files = 10_000
+        self.find_in_max_file_bytes = 16 * 1024 * 1024
+        self.find_in_max_results = 5_000
+        self.find_in_max_total_matches = 1_000_000
         self.intellisense_max_project_files = 24
         self.intellisense_max_project_file_bytes = 5 * 1024 * 1024
         self.intellisense_max_suggestions = 28
+        self.grab_git_max_project_files = 10000
+        self.grab_git_clone_timeout_seconds = 300
         self.inline_math_max_chars = 256
         self.inline_math_max_abs_value = 1.0e100
         self.inline_math_max_exponent = 1000
@@ -1150,7 +1460,7 @@ class NotepadX:
         self.find_history = []
         self.find_in_history = []
         self.closed_session_files = set()
-        self.note_sync_interval_ms = 100
+        self.note_sync_interval_ms = 500
         self.note_editor_heartbeat_interval_ms = 1500
         self.markdown_preview_delay_ms = 45
         self.command_output_max_chars = 50000
@@ -1160,6 +1470,8 @@ class NotepadX:
         self.diagnostic_tooltip_delay_ms = 350
         self.autosave_delay_ms = 12000
         self.max_backup_versions_per_doc = 20
+        self.max_single_backup_bytes = 256 * 1024 * 1024
+        self.max_backup_bytes_per_doc = 512 * 1024 * 1024
         self.markdown_link_pattern = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
         self.markdown_inline_patterns = (
             ('md_code_inline', re.compile(r'`([^`]+)`')),
@@ -1177,6 +1489,7 @@ class NotepadX:
         self.log_warning_level_pattern = re.compile(r'^\s*(?:\[[^\]]+\]\s*)?(?:warn(?:ing)?)\b[:\s-]*(.*)$', re.IGNORECASE)
         self.single_instance_host = '127.0.0.1'
         self.single_instance_port = get_notepadx_single_instance_port(self.app_dir)
+        self.single_instance_secret = load_or_create_notepadx_ipc_secret(self.app_dir)
         self.single_instance_server = None
         self.single_instance_listener_thread = None
         self.single_instance_running = False
@@ -1187,6 +1500,7 @@ class NotepadX:
         self.index_process_executor = None
         self.index_process_executor_disabled = False
         self.index_process_chunk_size = 4 * 1024 * 1024
+        self.index_process_line_group_size = 256
         self.index_process_target_workers = max(1, (int(os.cpu_count() or 1) + 1) // 2)
         self.index_process_min_bytes_per_worker = 24 * 1024 * 1024
         self.virtual_index_task_multiplier = 4
@@ -1260,6 +1574,7 @@ class NotepadX:
         self.command_panel_resize_origin_height = self.command_panel_height
         self.command_runner_thread = None
         self.command_runner_active = False
+        self.command_runner_process = None
         self.command_output_buffer = []
         self.default_window_width = 1500
         self.default_window_height = 700
@@ -1465,6 +1780,10 @@ class NotepadX:
         if executor is None:
             return
         try:
+            terminate_workers = getattr(executor, 'terminate_workers', None)
+            if callable(terminate_workers):
+                terminate_workers()
+                return
             executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:
             executor.shutdown(wait=False)
@@ -1539,7 +1858,8 @@ class NotepadX:
                     start_offset,
                     end_offset,
                     self.index_process_chunk_size,
-                    range_index
+                    range_index,
+                    self.index_process_line_group_size
                 )
                 for range_index, (start_offset, end_offset) in enumerate(index_ranges)
             ]
@@ -1571,15 +1891,39 @@ class NotepadX:
             total_lines = 0
             for item in partial_results:
                 try:
-                    total_lines += len(item.get('line_lengths') or [])
-                except TypeError:
+                    if 'total_lines' in item:
+                        total_lines += max(0, int(item.get('total_lines') or 0))
+                    else:
+                        total_lines += len(item.get('line_lengths') or [])
+                except (TypeError, ValueError):
                     continue
             total_lines = max(1, total_lines)
-            sample_step = max(1, total_lines // self.minimap_max_segments)
+            sample_step = self.get_minimap_sample_step(total_lines)
             segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
             segment_max_lengths = [0] * segment_count
             current_line_index = 0
             for item in partial_results:
+                group_counts = item.get('line_group_counts')
+                group_max_lengths = item.get('line_group_max_lengths')
+                if isinstance(group_counts, list) and isinstance(group_max_lengths, list):
+                    for raw_count, raw_max_length in zip(group_counts, group_max_lengths):
+                        if current_line_index >= total_lines:
+                            break
+                        try:
+                            group_count = max(0, int(raw_count or 0))
+                            safe_length = max(0, int(raw_max_length or 0))
+                        except (TypeError, ValueError):
+                            continue
+                        if group_count <= 0:
+                            continue
+                        group_end_index = min(total_lines, current_line_index + group_count)
+                        first_segment = min(segment_count - 1, current_line_index // sample_step)
+                        last_segment = min(segment_count - 1, max(current_line_index, group_end_index - 1) // sample_step)
+                        for segment_index in range(first_segment, last_segment + 1):
+                            if safe_length > segment_max_lengths[segment_index]:
+                                segment_max_lengths[segment_index] = safe_length
+                        current_line_index = group_end_index
+                    continue
                 for raw_length in (item.get('line_lengths') or []):
                     safe_length = max(0, int(raw_length or 0))
                     segment_index = min(segment_count - 1, current_line_index // sample_step)
@@ -1878,7 +2222,14 @@ class NotepadX:
         return os.path.join(base_dir, 'Notepad-X')
 
     def get_emergency_support_dir(self):
-        return os.path.join(tempfile.gettempdir(), 'Notepad-X')
+        user_scope = (
+            os.environ.get('USERNAME')
+            or os.environ.get('USER')
+            or os.path.expanduser('~')
+            or 'user'
+        )
+        scope_hash = hashlib.sha256(str(user_scope).encode('utf-8', errors='replace')).hexdigest()[:12]
+        return os.path.join(tempfile.gettempdir(), f'Notepad-X-{scope_hash}')
 
     def get_config_dir(self, base_dir):
         return os.path.join(base_dir, 'cfg')
@@ -2174,7 +2525,12 @@ class NotepadX:
             value = payload.get(key)
             if not isinstance(value, str) or not value.strip():
                 return None
-            sanitized[key] = value.strip()
+            value = value.strip()
+            try:
+                self.root.winfo_rgb(value)
+            except (tk.TclError, TypeError, ValueError):
+                return None
+            sanitized[key] = value
         return sanitized
 
     def sanitize_theme_definition(self, theme_name, payload):
@@ -2262,9 +2618,12 @@ class NotepadX:
             if not os.path.isfile(file_path):
                 continue
             try:
-                with open(file_path, 'r', encoding='utf-8') as theme_file:
-                    payload = json.load(theme_file)
-            except (OSError, json.JSONDecodeError):
+                with open(file_path, 'rb') as theme_file:
+                    raw_payload = theme_file.read(self.max_theme_json_bytes + 1)
+                if len(raw_payload) > self.max_theme_json_bytes:
+                    continue
+                payload = json.loads(raw_payload.decode('utf-8'))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
             fallback_name = os.path.splitext(entry)[0].replace('_', ' ').strip().title()
             sanitized = self.sanitize_theme_definition(fallback_name, payload)
@@ -2341,12 +2700,12 @@ class NotepadX:
 
     def save_theme_payload(self, theme_name, payload):
         file_path = self.get_theme_file_path(theme_name)
-        try:
-            with open(file_path, 'w', encoding='utf-8') as theme_file:
-                json.dump(payload, theme_file, indent=2, ensure_ascii=False)
-                theme_file.write('\n')
-        except OSError as exc:
-            self.show_filesystem_error(self.tr('theme.save_failed_title', 'Save Theme Failed'), file_path, exc)
+        if not self.write_json_atomically(file_path, payload, 'notepadx-theme-', 'save theme'):
+            self.show_filesystem_error(
+                self.tr('theme.save_failed_title', 'Save Theme Failed'),
+                file_path,
+                OSError(self.tr('theme.save_failed_title', 'Save Theme Failed')),
+            )
             return False
         self.theme_definitions = self.load_theme_definitions(self.theme_dir)
         self.create_menu()
@@ -2552,21 +2911,25 @@ class NotepadX:
         strings = dict(DEFAULT_LOCALE_STRINGS)
         payload = {}
         needs_write = False
+        load_failed = False
         if not os.path.exists(locale_path):
             needs_write = True
         try:
             if os.path.exists(locale_path):
-                with open(locale_path, 'r', encoding='utf-8') as f:
-                    loaded_payload = self.parse_locale_strings(f.read())
+                with open(locale_path, 'rb') as f:
+                    raw_payload = f.read(self.max_locale_file_bytes + 1)
+                if len(raw_payload) > self.max_locale_file_bytes:
+                    raise ValueError('Locale file exceeds the configured safety limit')
+                loaded_payload = self.parse_locale_strings(raw_payload.decode('utf-8'))
                 if isinstance(loaded_payload, dict):
                     for key, value in loaded_payload.items():
                         if isinstance(key, str) and isinstance(value, str):
                             payload[key] = value
-        except OSError:
-            pass
+        except (OSError, UnicodeDecodeError, ValueError):
+            load_failed = True
         if payload:
             strings.update(payload)
-        if not payload or any(key not in payload for key in DEFAULT_LOCALE_STRINGS):
+        if not load_failed and (not payload or any(key not in payload for key in DEFAULT_LOCALE_STRINGS)):
             needs_write = True
         if needs_write:
             try:
@@ -2820,12 +3183,19 @@ class NotepadX:
     def get_app_dir(self):
         if getattr(sys, 'frozen', False):
             exe_dir = os.path.dirname(sys.executable)
-            if self.directory_is_writable(exe_dir):
+            # Keep existing portable installations working, but do not create new
+            # mutable state beside a clean release executable.
+            legacy_config_dir = self.get_config_dir(exe_dir)
+            if os.path.isdir(legacy_config_dir) and self.directory_is_writable(exe_dir):
                 return exe_dir
-            fallback_dir = self.get_user_support_dir()
-            os.makedirs(fallback_dir, exist_ok=True)
-            return fallback_dir
-        return os.path.dirname(__file__)
+        else:
+            source_dir = os.path.dirname(os.path.abspath(__file__))
+            if self.directory_is_writable(source_dir):
+                return source_dir
+        for fallback_dir in (self.get_user_support_dir(), self.get_emergency_support_dir()):
+            if self.directory_is_writable(fallback_dir):
+                return fallback_dir
+        raise OSError('Notepad-X could not find a writable directory for settings and recovery files')
 
     def move_support_paths_to_user_dir(self):
         fallback_dir = self.get_user_support_dir()
@@ -2835,6 +3205,12 @@ class NotepadX:
         os.makedirs(config_dir, exist_ok=True)
         self.locale_dir = self.get_locale_dir(config_dir)
         os.makedirs(self.locale_dir, exist_ok=True)
+        self.theme_dir = self.get_theme_dir(config_dir)
+        os.makedirs(self.theme_dir, exist_ok=True)
+        self.backup_dir = os.path.join(config_dir, 'backups')
+        os.makedirs(self.backup_dir, exist_ok=True)
+        self.remote_cache_dir = os.path.join(config_dir, 'remote-cache')
+        os.makedirs(self.remote_cache_dir, exist_ok=True)
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.session_path = self.build_session_path(config_dir)
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
@@ -2849,6 +3225,12 @@ class NotepadX:
         os.makedirs(config_dir, exist_ok=True)
         self.locale_dir = self.get_locale_dir(config_dir)
         os.makedirs(self.locale_dir, exist_ok=True)
+        self.theme_dir = self.get_theme_dir(config_dir)
+        os.makedirs(self.theme_dir, exist_ok=True)
+        self.backup_dir = os.path.join(config_dir, 'backups')
+        os.makedirs(self.backup_dir, exist_ok=True)
+        self.remote_cache_dir = os.path.join(config_dir, 'remote-cache')
+        os.makedirs(self.remote_cache_dir, exist_ok=True)
         self.migrate_language_files(config_dir=config_dir, locale_dir=self.locale_dir)
         self.session_path = self.build_session_path(config_dir)
         self.editor_identity_path = self.build_editor_identity_path(config_dir)
@@ -2877,6 +3259,8 @@ class NotepadX:
         if not isinstance(responses, list):
             return sanitized
         for response in responses:
+            if len(sanitized) >= self.max_note_responses:
+                break
             if not isinstance(response, dict):
                 continue
             response_text = self.trim_text(response.get('text', ''), self.max_note_text_length)
@@ -2894,12 +3278,20 @@ class NotepadX:
         return sanitized
 
     def get_local_machine_name(self):
+        if hasattr(self, '_local_machine_name_cache'):
+            return self._local_machine_name_cache
         try:
-            return self.trim_text(socket.gethostname() or None, 128)
+            machine_name = self.trim_text(socket.gethostname() or None, 128)
         except OSError:
-            return None
+            machine_name = None
+        self._local_machine_name_cache = machine_name
+        return machine_name
 
     def get_local_lan_ip(self):
+        now = time.monotonic()
+        cached_at = float(getattr(self, '_local_lan_ip_cache_at', 0.0) or 0.0)
+        if (now - cached_at) < 60.0 and hasattr(self, '_local_lan_ip_cache'):
+            return self._local_lan_ip_cache
         candidates = []
         try:
             probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -2930,7 +3322,10 @@ class NotepadX:
             if ip.startswith(("10.", "192.168.", "172.")):
                 preferred = ip
                 break
-        return self.trim_text(preferred or fallback, 64)
+        resolved_ip = self.trim_text(preferred or fallback, 64)
+        self._local_lan_ip_cache = resolved_ip
+        self._local_lan_ip_cache_at = now
+        return resolved_ip
 
     def get_note_color_hex(self, value):
         return self.note_colors[self.normalize_note_color(value)]
@@ -2961,10 +3356,18 @@ class NotepadX:
             pass
         return parsed.strftime('%Y-%m-%d %I:%M:%S %p')
 
-    def read_json_file(self, file_path, context_name, default):
+    def read_json_file(self, file_path, context_name, default, max_bytes=None):
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
+            if max_bytes is None:
+                with open(file_path, 'r', encoding='utf-8') as source_file:
+                    payload = json.load(source_file)
+            else:
+                safe_max_bytes = max(1, int(max_bytes))
+                with open(file_path, 'rb') as source_file:
+                    raw_payload = source_file.read(safe_max_bytes + 1)
+                if len(raw_payload) > safe_max_bytes:
+                    raise ValueError(f'JSON file exceeds the {safe_max_bytes}-byte safety limit')
+                payload = json.loads(raw_payload.decode('utf-8'))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             self.log_exception(context_name, exc)
             return default
@@ -2976,33 +3379,32 @@ class NotepadX:
         target_mode = None
         temp_path = None
         if not self.is_windows:
-            try:
-                target_mode = stat.S_IMODE(os.stat(file_path).st_mode) | 0o664
-            except OSError:
-                target_mode = 0o664
+            target_name = os.path.basename(file_path).lower()
+            private_support_file = (
+                target_name == 'notepad-x.recovery.json'
+                or (target_name.startswith('notepad-x.') and target_name.endswith('.session.json'))
+                or (target_name.startswith('notepad-x.') and target_name.endswith('.editor.json'))
+            )
+            if private_support_file:
+                target_mode = 0o600
+            else:
+                try:
+                    target_mode = stat.S_IMODE(os.stat(file_path).st_mode)
+                except OSError:
+                    target_mode = None
         try:
             fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=directory)
             with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
+                if target_mode is not None:
+                    os.fchmod(temp_file.fileno(), target_mode)
                 json.dump(payload, temp_file, indent=2)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
             os.replace(temp_path, file_path)
-            if target_mode is not None:
-                os.chmod(file_path, target_mode)
             return True
         except OSError as exc:
             self.log_exception(context_name, exc)
-            try:
-                with open(file_path, 'w', encoding='utf-8') as direct_file:
-                    json.dump(payload, direct_file, indent=2)
-                    direct_file.flush()
-                    os.fsync(direct_file.fileno())
-                if target_mode is not None:
-                    os.chmod(file_path, target_mode)
-                return True
-            except OSError as direct_exc:
-                self.log_exception(f"{context_name} direct fallback", direct_exc)
-                return False
+            return False
         finally:
             if temp_path and os.path.exists(temp_path):
                 try:
@@ -3011,6 +3413,8 @@ class NotepadX:
                     pass
 
     def write_binary_atomically(self, file_path, payload_bytes, prefix, context_name):
+        if os.path.islink(file_path):
+            file_path = os.path.realpath(file_path)
         directory = os.path.dirname(file_path) or '.'
         os.makedirs(directory, exist_ok=True)
         target_mode = None
@@ -3019,16 +3423,16 @@ class NotepadX:
             try:
                 target_mode = stat.S_IMODE(os.stat(file_path).st_mode)
             except OSError:
-                target_mode = 0o664
+                target_mode = None
         try:
             fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=directory)
             with os.fdopen(fd, 'wb') as temp_file:
+                if target_mode is not None:
+                    os.fchmod(temp_file.fileno(), target_mode)
                 temp_file.write(payload_bytes)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
             os.replace(temp_path, file_path)
-            if target_mode is not None:
-                os.chmod(file_path, target_mode)
             return True
         except OSError as exc:
             self.log_exception(context_name, exc)
@@ -3063,23 +3467,15 @@ class NotepadX:
         passphrase_bytes = str(passphrase or '').encode('utf-8')
         if not passphrase_bytes:
             raise ValueError(self.tr('encryption.error.passphrase_required', 'A passphrase is required.'))
-        salt_text = header.get('salt')
-        if not isinstance(salt_text, str) or not salt_text.strip():
-            raise ValueError(self.tr('encryption.error.missing_salt', 'Encrypted file is missing its salt.'))
-        salt = base64.b64decode(salt_text.encode('ascii'))
-        n = int(header.get('n', self.encryption_scrypt_n))
-        r = int(header.get('r', self.encryption_scrypt_r))
-        p = int(header.get('p', self.encryption_scrypt_p))
-        required_memory = (128 * n * r) + (256 * r * p)
-        maxmem = max(self.encryption_scrypt_maxmem, required_memory * 2)
+        validated = self.validate_encryption_header(header)
         try:
             return hashlib.scrypt(
                 passphrase_bytes,
-                salt=salt,
-                n=n,
-                r=r,
-                p=p,
-                maxmem=maxmem,
+                salt=validated['salt'],
+                n=validated['n'],
+                r=validated['r'],
+                p=validated['p'],
+                maxmem=self.encryption_scrypt_maxmem,
                 dklen=self.encryption_key_length
             )
         except ValueError as exc:
@@ -3092,6 +3488,42 @@ class NotepadX:
                 ) from exc
             raise
 
+    def validate_encryption_header(self, header):
+        if not isinstance(header, dict):
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
+        if header.get('format') != 'Notepad-X Encrypted':
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
+        if header.get('version') != self.encryption_version:
+            raise ValueError(self.tr('encryption.error.unsupported_settings', 'Unsupported encrypted file settings.'))
+        if header.get('cipher') != 'AES-256-GCM' or header.get('kdf') != 'scrypt':
+            raise ValueError(self.tr('encryption.error.unsupported_settings', 'Unsupported encrypted file settings.'))
+        if str(header.get('encoding') or '').lower().replace('_', '-') != 'utf-8':
+            raise ValueError(self.tr('encryption.error.unsupported_settings', 'Unsupported encrypted file settings.'))
+
+        try:
+            n = int(header['n'])
+            r = int(header['r'])
+            p = int(header['p'])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.')) from exc
+        if n < 2 or n & (n - 1) or r <= 0 or p <= 0:
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
+        required_memory = (128 * n * r) + (256 * r * p)
+        work_factor = n * r * p
+        if required_memory > self.encryption_scrypt_maxmem or work_factor > self.encryption_scrypt_max_work_factor:
+            raise ValueError(self.tr('encryption.error.unsupported_settings', 'Unsupported encrypted file settings.'))
+
+        salt_text = header.get('salt')
+        if not isinstance(salt_text, str) or not salt_text.strip():
+            raise ValueError(self.tr('encryption.error.missing_salt', 'Encrypted file is missing its salt.'))
+        try:
+            salt = base64.b64decode(salt_text.encode('ascii'), validate=True)
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.')) from exc
+        if not (8 <= len(salt) <= 64):
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
+        return {'n': n, 'r': r, 'p': p, 'salt': salt}
+
     def build_encrypted_payload(self, header, nonce, ciphertext):
         header_bytes = json.dumps(header, separators=(',', ':')).encode('utf-8')
         return (
@@ -3103,6 +3535,9 @@ class NotepadX:
         )
 
     def parse_encrypted_payload(self, payload_bytes):
+        if not isinstance(payload_bytes, (bytes, bytearray)):
+            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
+        payload_bytes = bytes(payload_bytes)
         if not payload_bytes.startswith(self.encryption_magic):
             return None
         header_offset = len(self.encryption_magic)
@@ -3111,18 +3546,19 @@ class NotepadX:
         header_length = int.from_bytes(payload_bytes[header_offset:header_offset + 4], 'big')
         header_start = header_offset + 4
         header_end = header_start + header_length
-        if header_length <= 0 or len(payload_bytes) < header_end + self.encryption_nonce_length:
+        if (
+            header_length <= 0
+            or header_length > self.encryption_header_max_bytes
+            or len(payload_bytes) < header_end + self.encryption_nonce_length
+        ):
             raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
         header = json.loads(payload_bytes[header_start:header_end].decode('utf-8'))
         nonce_start = header_end
         nonce_end = nonce_start + self.encryption_nonce_length
         nonce = payload_bytes[nonce_start:nonce_end]
         ciphertext = payload_bytes[nonce_end:]
-        if not isinstance(header, dict) or header.get('format') != 'Notepad-X Encrypted':
-            raise ValueError(self.tr('encryption.error.header_invalid', 'Encrypted file header is invalid.'))
-        if header.get('cipher') != 'AES-256-GCM' or header.get('kdf') != 'scrypt':
-            raise ValueError(self.tr('encryption.error.unsupported_settings', 'Unsupported encrypted file settings.'))
-        if not ciphertext:
+        self.validate_encryption_header(header)
+        if len(ciphertext) < 16:
             raise ValueError(self.tr('encryption.error.no_ciphertext', 'Encrypted file has no ciphertext.'))
         return header, nonce, ciphertext
 
@@ -3370,7 +3806,7 @@ class NotepadX:
         except tk.TclError:
             pass
 
-    def build_line_index_background(self, file_path):
+    def build_line_index_background(self, file_path, max_line_starts=None):
         line_starts = [0]
         file_size = 0
         with open(file_path, 'rb') as f:
@@ -3385,6 +3821,11 @@ class NotepadX:
                     newline_index = chunk.find(b'\n', search_from)
                     if newline_index == -1:
                         break
+                    if max_line_starts is not None and len(line_starts) >= max(1, int(max_line_starts)):
+                        raise RuntimeError(
+                            'This file has too many lines for the in-memory large-file index. '
+                            'Use a streaming tool or split the file before opening it.'
+                        )
                     line_starts.append(base_offset + newline_index + 1)
                     search_from = newline_index + 1
         return line_starts, file_size
@@ -3424,7 +3865,10 @@ class NotepadX:
 
         def worker():
             try:
-                decoder = codecs.getincrementaldecoder('utf-8')('replace')
+                decoder = io.IncrementalNewlineDecoder(
+                    codecs.getincrementaldecoder('utf-8')('replace'),
+                    translate=True
+                )
                 file_size = int(doc.get('background_bytes_total', 0) or 0)
                 bytes_loaded = 0
                 total_lines = 1
@@ -3593,7 +4037,7 @@ class NotepadX:
         self.update_doc_load_progress(doc)
         self.close_doc_load_progress(doc)
         self.end_doc_load(doc)
-        self.update_doc_file_signature(doc)
+        self.finalize_doc_file_signature_after_load(doc)
         self.configure_syntax_highlighting(doc['frame'])
         self.restore_doc_notes(doc)
         self.register_doc_for_shared_notes(doc)
@@ -3636,7 +4080,10 @@ class NotepadX:
         if executor is None:
             def worker():
                 try:
-                    line_starts, indexed_file_size = self.build_line_index_background(file_path)
+                    line_starts, indexed_file_size = self.build_line_index_background(
+                        file_path,
+                        max_line_starts=self.virtual_index_max_line_starts,
+                    )
                     minimap_model = self.build_minimap_model_from_line_starts(line_starts, indexed_file_size)
                     self.queue_background_file_result({
                         'kind': 'virtual',
@@ -3661,6 +4108,10 @@ class NotepadX:
 
         worker_count = self.get_background_index_worker_count(file_size)
         index_ranges = self.build_background_index_ranges(file_size, worker_count, self.virtual_index_task_multiplier)
+        max_starts_per_range = max(
+            1,
+            int(self.virtual_index_max_line_starts) // max(1, len(index_ranges)),
+        )
         token = load_token
         doc['background_index_token'] = token
         doc['background_index_active'] = True
@@ -3672,7 +4123,8 @@ class NotepadX:
                     start_offset,
                     end_offset,
                     self.index_process_chunk_size,
-                    range_index
+                    range_index,
+                    max_starts_per_range,
                 )
                 for range_index, (start_offset, end_offset) in enumerate(index_ranges)
             ]
@@ -3682,7 +4134,10 @@ class NotepadX:
             self.log_exception("submit background virtual index", exc)
             def fallback_worker():
                 try:
-                    line_starts, indexed_file_size = self.build_line_index_background(file_path)
+                    line_starts, indexed_file_size = self.build_line_index_background(
+                        file_path,
+                        max_line_starts=self.virtual_index_max_line_starts,
+                    )
                     minimap_model = self.build_minimap_model_from_line_starts(line_starts, indexed_file_size)
                     self.queue_background_file_result({
                         'kind': 'virtual',
@@ -3810,7 +4265,7 @@ class NotepadX:
         doc['background_load_token'] = None
         self.close_doc_load_progress(doc)
         self.end_doc_load(doc)
-        self.update_doc_file_signature(doc)
+        self.finalize_doc_file_signature_after_load(doc)
         self.configure_syntax_highlighting(doc['frame'])
         self.restore_doc_notes(doc)
         self.register_doc_for_shared_notes(doc)
@@ -3830,6 +4285,7 @@ class NotepadX:
         doc['background_load_kind'] = None
         doc['background_load_file_path'] = None
         doc['background_load_token'] = None
+        doc.pop('load_source_signature', None)
         doc.pop('pending_insert_content', None)
         doc.pop('pending_insert_offset', None)
         doc.pop('pending_insert_batch_count', None)
@@ -3903,6 +4359,15 @@ class NotepadX:
         doc['background_open_new_tab'] = False
 
     def handle_background_file_result(self, result):
+        if not isinstance(result, dict):
+            return
+        result_kind = str(result.get('kind') or '')
+        if result_kind == 'command_complete':
+            self.finish_shell_command(
+                str(result.get('command_text') or ''),
+                result.get('result') if isinstance(result.get('result'), dict) else {}
+            )
+            return
         tab_id = str(result.get('tab_id') or '')
         doc = self.documents.get(tab_id)
         if not doc:
@@ -3910,15 +4375,13 @@ class NotepadX:
         file_path = os.path.abspath(str(result.get('file_path') or ''))
         if not file_path or os.path.abspath(str(doc.get('file_path') or '')) != file_path:
             return
-        result_kind = str(result.get('kind') or '')
         result_token = str(result.get('token') or '')
-        doc_token = str(doc.get('background_load_token') or '')
-        if result_token and doc_token and result_token != doc_token:
-            return
         if result_kind in {'text_index', 'text_index_error'}:
-            index_token = str(doc.get('background_index_token') or '')
-            if index_token and result_token and result_token != index_token:
-                return
+            expected_token = str(doc.get('background_index_token') or '')
+        else:
+            expected_token = str(doc.get('background_load_token') or '')
+        if not result_token or not expected_token or result_token != expected_token:
+            return
         if result_kind == 'virtual_index_progress':
             doc['background_bytes_loaded'] = max(0, int(result.get('bytes_loaded') or 0))
             doc['background_bytes_total'] = max(0, int(result.get('file_size_bytes') or doc.get('background_bytes_total', 0) or 0))
@@ -3953,7 +4416,7 @@ class NotepadX:
                 doc['background_index_token'] = None
             total_lines = max(1, int(result.get('total_lines') or doc.get('background_lines_loaded', 1) or 1))
             doc['background_lines_loaded'] = max(total_lines, int(doc.get('background_lines_loaded', 1) or 1))
-            sample_step = max(1, int(result.get('sample_step') or max(1, total_lines // self.minimap_max_segments)))
+            sample_step = max(1, int(result.get('sample_step') or self.get_minimap_sample_step(total_lines)))
             segment_max_lengths = list(result.get('segment_max_lengths') or [0])
             doc['minimap_progressive_state'] = None
             doc['minimap_model'] = self.create_minimap_model(total_lines, sample_step, segment_max_lengths, complete=True)
@@ -3967,6 +4430,15 @@ class NotepadX:
                 self.update_status()
             return
         if result_kind == 'virtual':
+            if not self.finalize_doc_file_signature_after_load(doc):
+                self.handle_background_file_error(
+                    doc,
+                    RuntimeError(
+                        'The file changed while Notepad-X was indexing it. '
+                        'Open it again to load a consistent version.'
+                    ),
+                )
+                return
             if str(doc.get('background_index_token') or '') == result_token:
                 doc['background_index_future'] = None
                 doc['background_index_active'] = False
@@ -4053,6 +4525,7 @@ class NotepadX:
             if not encryption_header:
                 raise ValueError(self.tr('encryption.error.metadata_missing', 'Encrypted file metadata is missing.'))
             encryption_header['original_name'] = encryption_header.get('original_name') or os.path.basename(original_name or file_path)
+        self.validate_encryption_header(encryption_header)
         plaintext_bytes = str(text_content).encode('utf-8')
         nonce = os.urandom(self.encryption_nonce_length)
         ciphertext = AESGCM(key).encrypt(nonce, plaintext_bytes, self.encryption_magic)
@@ -4070,6 +4543,12 @@ class NotepadX:
     def read_encrypted_text_file(self, file_path):
         if not self.file_looks_encrypted(file_path):
             return None
+        encrypted_size = os.path.getsize(file_path)
+        if encrypted_size > self.max_encrypted_file_bytes:
+            raise RuntimeError(
+                'This encrypted file exceeds the 64 MB in-memory safety limit. '
+                'Notepad-X cannot open it without a streaming encrypted-file format.'
+            )
         self.trace_startup(f"read_encrypted_text_file detected={file_path}")
         if not self.encryption_available():
             self.show_encryption_unavailable(self.root)
@@ -4106,28 +4585,67 @@ class NotepadX:
 
     def get_file_signature(self, file_path):
         try:
-            stat = os.stat(file_path)
+            file_stat = os.stat(file_path)
         except OSError:
             return None
-        return (stat.st_mtime_ns, stat.st_size)
+        return (
+            file_stat.st_mtime_ns,
+            file_stat.st_size,
+            getattr(file_stat, 'st_ctime_ns', 0),
+            getattr(file_stat, 'st_dev', 0),
+            getattr(file_stat, 'st_ino', 0),
+        )
 
     def update_doc_file_signature(self, doc):
         file_path = doc.get('file_path') if doc else None
         signature = self.get_file_signature(file_path) if file_path else None
         if doc is not None:
             doc['file_signature'] = signature
+            doc['autosave_conflict'] = False
         return signature
+
+    def finalize_doc_file_signature_after_load(self, doc):
+        if doc is None:
+            return False
+        file_path = doc.get('file_path')
+        current_signature = self.get_file_signature(file_path) if file_path else None
+        source_signature = doc.pop('load_source_signature', None)
+        if source_signature is not None and current_signature != source_signature:
+            doc['file_signature'] = source_signature
+            doc['autosave_conflict'] = True
+            return False
+        doc['file_signature'] = current_signature
+        doc['autosave_conflict'] = False
+        return True
+
+    def doc_file_changed_on_disk(self, doc):
+        if not doc or doc.get('is_remote'):
+            return False
+        file_path = doc.get('file_path')
+        known_signature = doc.get('file_signature')
+        if not file_path or known_signature is None:
+            return False
+        return self.get_file_signature(file_path) != known_signature
 
     def confirm_external_file_change(self, doc):
         if doc and doc.get('is_remote'):
             return True
         file_path = doc.get('file_path') if doc else None
-        if not file_path or not os.path.exists(file_path):
+        if not file_path:
             return True
         current_signature = self.get_file_signature(file_path)
         known_signature = doc.get('file_signature')
-        if known_signature is None or current_signature is None or current_signature == known_signature:
+        if known_signature is None or current_signature == known_signature:
             return True
+        if current_signature is None:
+            return messagebox.askyesno(
+                self.tr('file.changed_title', 'File Changed on Disk'),
+                self.tr(
+                    'file.deleted_message',
+                    'This file was deleted after it was opened. Recreate it from the current editor contents?'
+                ),
+                parent=self.root
+            )
         answer = messagebox.askyesno(
             self.tr('file.changed_title', 'File Changed on Disk'),
             self.tr(
@@ -4156,6 +4674,21 @@ class NotepadX:
             return False
         return True
 
+    def paths_refer_to_same_file(self, first_path, second_path):
+        if not first_path or not second_path:
+            return False
+        try:
+            if os.path.exists(first_path) and os.path.exists(second_path):
+                return os.path.samefile(first_path, second_path)
+        except (OSError, ValueError):
+            pass
+        try:
+            first_key = os.path.normcase(os.path.realpath(os.path.abspath(first_path)))
+            second_key = os.path.normcase(os.path.realpath(os.path.abspath(second_path)))
+        except (OSError, TypeError, ValueError):
+            return False
+        return first_key == second_key
+
     def show_filesystem_error(self, title, file_path, exc):
         location = os.path.abspath(file_path) if file_path else self.tr('filesystem.unknown_path', 'that path')
         messagebox.showerror(
@@ -4177,7 +4710,16 @@ class NotepadX:
         return bool(doc and doc.get('virtual_mode') and doc.get('virtual_editable'))
 
     def is_doc_text_readonly(self, doc):
-        return bool(doc and (doc.get('preview_mode') or (doc.get('virtual_mode') and not self.is_virtual_editable(doc))))
+        return bool(
+            doc
+            and (
+                doc.get('loading_file')
+                or doc.get('background_loading')
+                or doc.get('virtual_window_truncated')
+                or doc.get('preview_mode')
+                or (doc.get('virtual_mode') and not self.is_virtual_editable(doc))
+            )
+        )
 
     def doc_has_unsaved_changes(self, doc):
         if not doc:
@@ -4211,6 +4753,8 @@ class NotepadX:
         doc['virtual_source_path'] = None
         doc['virtual_window_start_byte'] = 0
         doc['virtual_window_end_byte'] = 0
+        doc['virtual_window_truncated'] = False
+        doc['virtual_window_loaded'] = False
         doc['virtual_hot_chunk_cache'] = OrderedDict()
         doc['virtual_cold_chunk_cache'] = OrderedDict()
 
@@ -4436,8 +4980,6 @@ class NotepadX:
         safe_start_line = max(1, min(total_lines, int(start_line or 1)))
         safe_end_line = max(safe_start_line, min(total_lines, int(end_line or safe_start_line)))
         start_index = safe_start_line - 1
-        next_line_index = safe_end_line
-
         prefix = line_starts[:start_index + 1]
         replacement_new_starts = []
         for newline_offset, byte_value in enumerate(replacement_bytes or b''):
@@ -4445,7 +4987,10 @@ class NotepadX:
                 replacement_new_starts.append(start_byte + newline_offset + 1)
 
         byte_delta = len(replacement_bytes or b'') - max(0, old_end_byte - start_byte)
-        shifted_suffix = [int(line_start) + byte_delta for line_start in line_starts[next_line_index:]]
+        shifted_suffix = [
+            int(line_start) + byte_delta
+            for line_start in line_starts[safe_end_line + 1:]
+        ]
 
         doc['line_starts'] = prefix + replacement_new_starts + shifted_suffix
         if not doc['line_starts']:
@@ -4456,6 +5001,11 @@ class NotepadX:
     def flush_virtual_window_edits(self, doc, force=False):
         if not self.is_virtual_editable(doc):
             return True
+        if doc.get('virtual_window_truncated'):
+            try:
+                return not bool(doc['text'].edit_modified())
+            except tk.TclError:
+                return False
         if not self.is_virtual_index_ready(doc):
             return False
         text_widget = doc.get('text')
@@ -4557,6 +5107,8 @@ class NotepadX:
                     pass
 
     def write_virtual_document_atomically(self, doc, file_path):
+        if os.path.islink(file_path):
+            file_path = os.path.realpath(file_path)
         directory = os.path.dirname(file_path) or '.'
         os.makedirs(directory, exist_ok=True)
         target_mode = None
@@ -4565,17 +5117,17 @@ class NotepadX:
             try:
                 target_mode = stat.S_IMODE(os.stat(file_path).st_mode)
             except OSError:
-                target_mode = 0o664
+                target_mode = None
         try:
             fd, temp_path = tempfile.mkstemp(prefix='notepadx-save-', suffix='.tmp', dir=directory)
             with os.fdopen(fd, 'wb') as temp_file:
+                if target_mode is not None:
+                    os.fchmod(temp_file.fileno(), target_mode)
                 for chunk in self.iter_virtual_document_chunks(doc):
                     temp_file.write(chunk)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
             os.replace(temp_path, file_path)
-            if target_mode is not None:
-                os.chmod(file_path, target_mode)
             return True
         finally:
             if temp_path and os.path.exists(temp_path):
@@ -4625,11 +5177,15 @@ class NotepadX:
             if autosave:
                 return False
             return self.save_as()
+        if not doc.get('is_remote'):
+            if autosave and self.doc_file_changed_on_disk(doc):
+                doc['autosave_conflict'] = True
+                self.update_status()
+                return False
+            if not autosave and not self.confirm_external_file_change(doc):
+                return False
         if not self.flush_virtual_window_edits(doc, force=True):
             return False
-        if not autosave and not doc.get('is_remote'):
-            if not self.confirm_external_file_change(doc):
-                return False
         try:
             if not autosave:
                 self.create_backup_snapshot(doc)
@@ -4637,21 +5193,21 @@ class NotepadX:
                 shadow_path = doc.get('remote_shadow_path') or doc.get('file_path')
                 if not shadow_path:
                     raise OSError('Remote document metadata is incomplete')
-                self.write_virtual_document_atomically(doc, shadow_path)
                 remote_spec = doc.get('remote_spec')
                 scp_path = self.get_scp_executable()
                 if not remote_spec or not scp_path:
                     raise OSError('scp is unavailable')
-                completed = subprocess.run(
-                    [scp_path, '-q', shadow_path, remote_spec],
-                    capture_output=True,
-                    text=True,
-                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-                )
+                self.write_virtual_document_atomically(doc, shadow_path)
+                self.rebase_virtual_document_after_save(doc, shadow_path)
+                try:
+                    completed = self.run_scp_transfer([scp_path, '-q', shadow_path, remote_spec])
+                except OSError:
+                    doc['virtual_doc_dirty'] = True
+                    raise
                 if completed.returncode != 0:
+                    doc['virtual_doc_dirty'] = True
                     error_detail = (completed.stderr or completed.stdout or 'Unknown scp failure').strip()
                     raise OSError(error_detail)
-                self.rebase_virtual_document_after_save(doc, shadow_path)
             else:
                 self.write_virtual_document_atomically(doc, doc['file_path'])
                 self.rebase_virtual_document_after_save(doc, doc['file_path'])
@@ -4672,6 +5228,7 @@ class NotepadX:
         self.refresh_tab_title(doc['frame'])
         self.update_status()
         self.save_session()
+        self.schedule_recovery_save()
         return True
 
     def clear_remote_metadata(self, doc):
@@ -4706,6 +5263,20 @@ class NotepadX:
             return None
         return normalized_path
 
+    def run_scp_transfer(self, command_args):
+        try:
+            return subprocess.run(
+                command_args,
+                capture_output=True,
+                text=True,
+                timeout=self.remote_transfer_timeout_seconds,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise OSError(
+                f'Remote transfer timed out after {self.remote_transfer_timeout_seconds} seconds'
+            ) from exc
+
     def parse_remote_spec(self, spec_text):
         spec = str(spec_text or '').strip()
         if any(char in spec for char in '\r\n\0'):
@@ -4723,29 +5294,71 @@ class NotepadX:
 
     def build_remote_shadow_path(self, remote_spec):
         parsed = self.parse_remote_spec(remote_spec)
-        remote_name = os.path.basename(parsed['path']) or 'remote.txt'
+        remote_name = self.slugify_storage_name(os.path.basename(parsed['path']) or 'remote.txt')
         host_slug = self.slugify_storage_name(parsed['host'])
         path_hash = hashlib.sha1(parsed['spec'].encode('utf-8', errors='replace')).hexdigest()[:12]
         shadow_dir = os.path.join(self.remote_cache_dir, host_slug)
         os.makedirs(shadow_dir, exist_ok=True)
-        return os.path.join(shadow_dir, f'{path_hash}-{remote_name}')
+        if not self.is_windows:
+            try:
+                os.chmod(shadow_dir, 0o700)
+            except OSError:
+                pass
+        return os.path.join(shadow_dir, f'{path_hash}-{secrets.token_hex(8)}-{remote_name}')
+
+    def cleanup_owned_remote_shadow(self, shadow_path):
+        if not shadow_path:
+            return False
+        shadow_path = os.path.abspath(shadow_path)
+        owned_paths = getattr(self, 'owned_remote_shadow_paths', set())
+        if shadow_path not in owned_paths:
+            return False
+        try:
+            cache_root = os.path.abspath(self.remote_cache_dir)
+            if os.path.commonpath((cache_root, shadow_path)) != cache_root:
+                return False
+            if os.path.lexists(shadow_path):
+                path_stat = os.lstat(shadow_path)
+                if not stat.S_ISREG(path_stat.st_mode) or stat.S_ISLNK(path_stat.st_mode):
+                    return False
+                os.remove(shadow_path)
+        except (OSError, ValueError) as exc:
+            self.log_exception('cleanup remote shadow', exc)
+            return False
+        owned_paths.discard(shadow_path)
+        return True
+
+    def cleanup_all_owned_remote_shadows(self):
+        for shadow_path in list(getattr(self, 'owned_remote_shadow_paths', set())):
+            self.cleanup_owned_remote_shadow(shadow_path)
 
     def fetch_remote_file_to_shadow(self, remote_spec, shadow_path):
         scp_path = self.get_scp_executable()
         if not scp_path:
             self.remote_tools_available(notify=True)
             raise OSError('scp is unavailable')
-        os.makedirs(os.path.dirname(shadow_path), exist_ok=True)
-        completed = subprocess.run(
-            [scp_path, '-q', remote_spec, shadow_path],
-            capture_output=True,
-            text=True,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        )
-        if completed.returncode != 0:
-            error_detail = (completed.stderr or completed.stdout or 'Unknown scp failure').strip()
-            raise OSError(error_detail)
-        return shadow_path
+        shadow_dir = os.path.dirname(shadow_path)
+        os.makedirs(shadow_dir, exist_ok=True)
+        temp_path = None
+        try:
+            descriptor, temp_path = tempfile.mkstemp(prefix='notepadx-remote-', suffix='.tmp', dir=shadow_dir)
+            os.close(descriptor)
+            completed = self.run_scp_transfer([scp_path, '-q', remote_spec, temp_path])
+            if completed.returncode != 0:
+                error_detail = (completed.stderr or completed.stdout or 'Unknown scp failure').strip()
+                raise OSError(error_detail)
+            if not self.is_windows:
+                os.chmod(temp_path, 0o600)
+            os.replace(temp_path, shadow_path)
+            temp_path = None
+            self.owned_remote_shadow_paths.add(os.path.abspath(shadow_path))
+            return shadow_path
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
     def open_remote_file_dialog(self, event=None):
         remote_spec = self.prompt_text_input(
@@ -4789,6 +5402,7 @@ class NotepadX:
             target_doc['background_open_new_tab'] = False
             if not self.load_content_into_doc(target_doc, shadow_path):
                 self.cleanup_failed_file_open(target_doc)
+                self.cleanup_owned_remote_shadow(shadow_path)
                 return False
         else:
             tab_id = self.create_tab(file_path=shadow_path, select=True)
@@ -4800,6 +5414,7 @@ class NotepadX:
                 except tk.TclError:
                     pass
                 self.documents.pop(str(target_doc['frame']), None)
+                self.cleanup_owned_remote_shadow(shadow_path)
                 return False
 
         target_doc['is_remote'] = True
@@ -4818,15 +5433,36 @@ class NotepadX:
         source_name = self.get_doc_display_path(doc) or doc.get('untitled_name') or 'untitled'
         return self.slugify_storage_name(source_name)
 
-    def trim_backup_history(self, backup_prefix):
+    def trim_backup_history(self, backup_prefix, incoming_bytes=None):
         pattern = os.path.join(self.backup_dir, f'{backup_prefix}-*.bak')
-        backups = sorted(glob.glob(pattern), key=lambda path: os.path.getmtime(path))
-        while len(backups) > self.max_backup_versions_per_doc:
-            old_path = backups.pop(0)
+        timestamped_backups = []
+        for backup_path in glob.glob(pattern):
+            try:
+                timestamped_backups.append(
+                    (os.path.getmtime(backup_path), backup_path, os.path.getsize(backup_path))
+                )
+            except OSError:
+                continue
+        backups = sorted(timestamped_backups)
+        retained_count = len(backups)
+        retained_bytes = sum(size for _mtime, _path, size in backups)
+        incoming_size = max(0, int(incoming_bytes or 0))
+        incoming_count = 1 if incoming_bytes is not None else 0
+        while backups and (
+            retained_count + incoming_count > self.max_backup_versions_per_doc
+            or retained_bytes + incoming_size > self.max_backup_bytes_per_doc
+        ):
+            _mtime, old_path, old_size = backups.pop(0)
             try:
                 os.remove(old_path)
             except OSError:
                 continue
+            retained_count -= 1
+            retained_bytes -= old_size
+        return (
+            retained_count + incoming_count <= self.max_backup_versions_per_doc
+            and retained_bytes + incoming_size <= self.max_backup_bytes_per_doc
+        )
 
     def create_backup_snapshot(self, doc):
         if not doc:
@@ -4834,8 +5470,19 @@ class NotepadX:
         source_path = self.get_doc_persistence_path(doc)
         if not source_path or not os.path.exists(source_path):
             return None
+        try:
+            source_size = os.path.getsize(source_path)
+        except OSError as exc:
+            self.log_exception('inspect backup source', exc)
+            return None
+        if source_size > self.max_single_backup_bytes:
+            self.trace_startup('backup snapshot skipped because the source exceeds the safety limit')
+            return None
         backup_prefix = self.get_doc_backup_prefix(doc)
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        if not self.trim_backup_history(backup_prefix, incoming_bytes=source_size):
+            self.trace_startup('backup snapshot skipped because the per-document quota could not be enforced')
+            return None
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
         backup_path = os.path.join(self.backup_dir, f'{backup_prefix}-{timestamp}.bak')
         try:
             shutil.copy2(source_path, backup_path)
@@ -4854,12 +5501,7 @@ class NotepadX:
         if not scp_path:
             raise OSError('scp is unavailable')
         self.write_file_atomically(shadow_path, text_content)
-        completed = subprocess.run(
-            [scp_path, '-q', shadow_path, remote_spec],
-            capture_output=True,
-            text=True,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        )
+        completed = self.run_scp_transfer([scp_path, '-q', shadow_path, remote_spec])
         if completed.returncode != 0:
             error_detail = (completed.stderr or completed.stdout or 'Unknown scp failure').strip()
             raise OSError(error_detail)
@@ -4867,6 +5509,14 @@ class NotepadX:
 
     def save_document_content(self, doc, autosave=False, show_errors=True, update_recent=True):
         if not doc:
+            return False
+        if doc.get('loading_file') or doc.get('background_loading'):
+            if show_errors:
+                messagebox.showinfo(
+                    self.tr('large_file.title', 'Large File Mode'),
+                    self.tr('large_file.loading', 'Loading large file...'),
+                    parent=self.root,
+                )
             return False
         if doc.get('preview_mode') or (doc.get('virtual_mode') and not self.is_virtual_editable(doc)):
             if show_errors:
@@ -4887,12 +5537,16 @@ class NotepadX:
                 return False
             return self.save_as()
 
-        if not autosave and not doc.get('is_remote'):
-            if not self.confirm_external_file_change(doc):
+        if not doc.get('is_remote'):
+            if autosave and self.doc_file_changed_on_disk(doc):
+                doc['autosave_conflict'] = True
+                self.update_status()
+                return False
+            if not autosave and not self.confirm_external_file_change(doc):
                 return False
 
         try:
-            text_content = doc['text'].get('1.0', tk.END).rstrip('\n')
+            text_content = self.get_text_widget_content(doc['text'])
             if doc.get('is_remote'):
                 if not autosave:
                     self.create_backup_snapshot(doc)
@@ -4929,6 +5583,7 @@ class NotepadX:
         self.refresh_tab_title(doc['frame'])
         self.update_status()
         self.save_session()
+        self.schedule_recovery_save()
         return True
 
     def cancel_doc_autosave(self, doc):
@@ -4976,12 +5631,18 @@ class NotepadX:
         return True
 
     def finalize_exit_app(self):
+        self.stop_command_runner()
         for doc in list(self.documents.values()):
             self.unregister_doc_from_shared_notes(doc)
             self.cancel_doc_autosave(doc)
             self.cancel_doc_background_index(doc)
         self.stop_single_instance_server()
         self.shutdown_index_process_executor()
+        if self.is_windows and getattr(self, 'winmm', None):
+            try:
+                self.winmm.mciSendStringW('close notepadx_note', None, 0, None)
+            except Exception:
+                pass
         if self.recovery_job:
             try:
                 self.root.after_cancel(self.recovery_job)
@@ -5001,6 +5662,10 @@ class NotepadX:
                 self.log_exception("remove recovery file on exit", exc)
         self.persist_editor_identity()
         self.save_session()
+        for doc in list(self.documents.values()):
+            self.dispose_doc_resources(doc)
+        self.documents.clear()
+        self.cleanup_all_owned_remote_shadows()
 
     def is_probably_binary_file(self, file_path, sample_size=8192):
         try:
@@ -5041,21 +5706,32 @@ class NotepadX:
         if not isinstance(session, dict):
             return None
         open_files = []
-        for path in session.get('open_files', []):
+        source_open_files = session.get('open_files', [])
+        if not isinstance(source_open_files, list):
+            source_open_files = []
+        for path in source_open_files:
             if isinstance(path, str) and os.path.exists(path):
                 open_files.append(path)
         open_files = list(dict.fromkeys(open_files))[:self.max_session_files]
 
         recent_files = []
-        for path in session.get('recent_files', []):
+        source_recent_files = session.get('recent_files', [])
+        if not isinstance(source_recent_files, list):
+            source_recent_files = []
+        for path in source_recent_files:
             if isinstance(path, str) and os.path.exists(path):
                 recent_files.append(path)
         recent_files = list(dict.fromkeys(recent_files))[:self.max_recent_files]
 
         closed_files = []
-        for path in session.get('closed_session_files', []):
+        source_closed_files = session.get('closed_session_files', [])
+        if not isinstance(source_closed_files, list):
+            source_closed_files = []
+        for path in source_closed_files:
             if isinstance(path, str):
                 closed_files.append(path)
+            if len(closed_files) >= self.max_session_files:
+                break
 
         find_history = self.sanitize_search_history_entries(session.get('find_history', []))
         find_in_history = self.sanitize_search_history_entries(session.get('find_in_history', []))
@@ -5141,6 +5817,8 @@ class NotepadX:
             return None
         recovery_tabs = []
         source_tabs = recovery.get('recovery_tabs', recovery.get('unsaved_tabs', []))
+        if not isinstance(source_tabs, list):
+            source_tabs = []
         for tab in source_tabs:
             if not isinstance(tab, dict):
                 continue
@@ -5312,12 +5990,24 @@ class NotepadX:
     def load_known_editor_ids(self):
         if not os.path.exists(self.editor_identity_path):
             return []
-        identity = self.read_json_file(self.editor_identity_path, "load editor identity", {})
+        identity = self.read_json_file(
+            self.editor_identity_path,
+            "load editor identity",
+            {},
+            max_bytes=self.max_identity_json_bytes
+        )
         if isinstance(identity, dict):
             known_ids = identity.get('known_editor_ids', [])
             if isinstance(known_ids, list):
-                return [str(editor_id).strip() for editor_id in known_ids if str(editor_id).strip()]
-            legacy_id = str(identity.get('editor_id', '')).strip()
+                sanitized_ids = []
+                for editor_id in known_ids:
+                    sanitized_id = self.trim_text(editor_id, self.max_shared_editor_id_length)
+                    if sanitized_id and sanitized_id not in sanitized_ids:
+                        sanitized_ids.append(sanitized_id)
+                    if len(sanitized_ids) >= 32:
+                        break
+                return sanitized_ids
+            legacy_id = self.trim_text(identity.get('editor_id'), self.max_shared_editor_id_length)
             if legacy_id:
                 return [legacy_id]
         return []
@@ -5544,11 +6234,15 @@ class NotepadX:
         return is_notepadx_support_file_path(file_path)
 
     def start_single_instance_server(self):
-        if self.isolated_session:
+        if self.isolated_session or self.single_instance_secret is None:
             return
+        server = None
         try:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if self.is_windows and hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+                server.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            elif not self.is_windows:
+                server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server.bind((self.single_instance_host, self.single_instance_port))
             server.listen(5)
             server.settimeout(0.5)
@@ -5573,32 +6267,102 @@ class NotepadX:
                     break
 
                 with connection:
-                    data = b''
-                    while True:
-                        try:
-                            chunk = connection.recv(65536)
-                        except OSError:
-                            break
-                        if not chunk:
-                            break
-                        data += chunk
-                    if not data:
+                    stream = None
+                    try:
+                        connection.settimeout(1.0)
+                        stream = connection.makefile('rwb')
+                    except OSError:
                         continue
                     try:
-                        payload = json.loads(data.decode('utf-8'))
-                    except Exception:
-                        continue
-                    if payload.get('command') != 'open_files':
-                        continue
-                    incoming_files = []
-                    for raw_path in payload.get('files', []):
-                        if not raw_path:
+                        hello = read_notepadx_ipc_message(stream)
+                        if hello.get('protocol') != SINGLE_INSTANCE_PROTOCOL or hello.get('type') != 'hello':
                             continue
-                        candidate_path = os.path.abspath(str(raw_path))
-                        incoming_files.append(candidate_path)
-                    if incoming_files:
+                        client_nonce = decode_notepadx_ipc_nonce(hello.get('client_nonce'))
+                        if client_nonce is None:
+                            continue
+                        server_nonce = secrets.token_bytes(SINGLE_INSTANCE_NONCE_BYTES)
+                        write_notepadx_ipc_message(stream, {
+                            'protocol': SINGLE_INSTANCE_PROTOCOL,
+                            'type': 'challenge',
+                            'server_nonce': encode_notepadx_ipc_nonce(server_nonce),
+                            'proof': build_notepadx_ipc_proof(
+                                self.single_instance_secret,
+                                'server',
+                                client_nonce,
+                                server_nonce,
+                            ),
+                        })
+                        request = read_notepadx_ipc_message(stream)
+                        if request.get('protocol') != SINGLE_INSTANCE_PROTOCOL or request.get('type') != 'request':
+                            continue
+                        payload = request.get('payload')
+                        if not isinstance(payload, dict) or payload.get('command') != 'open_files':
+                            continue
+                        payload_bytes = canonical_notepadx_ipc_payload(payload)
+                        payload_digest = hashlib.sha256(payload_bytes).digest()
+                        expected_client_proof = build_notepadx_ipc_proof(
+                            self.single_instance_secret,
+                            'client',
+                            client_nonce,
+                            server_nonce,
+                            payload_digest,
+                        )
+                        if not hmac.compare_digest(str(request.get('proof') or ''), expected_client_proof):
+                            continue
+                        raw_files = payload.get('files')
+                        if (
+                            not isinstance(raw_files, list)
+                            or not raw_files
+                            or len(raw_files) > SINGLE_INSTANCE_MAX_FILES
+                        ):
+                            continue
+                        incoming_files = []
+                        seen_files = set()
+                        valid_request = True
+                        for raw_path in raw_files:
+                            if not isinstance(raw_path, str):
+                                valid_request = False
+                                break
+                            candidate_path = normalize_startup_path_argument(
+                                raw_path,
+                                allow_network_paths=False,
+                            )
+                            if not candidate_path:
+                                valid_request = False
+                                break
+                            candidate_key = os.path.normcase(candidate_path)
+                            if candidate_key in seen_files:
+                                valid_request = False
+                                break
+                            seen_files.add(candidate_key)
+                            incoming_files.append(candidate_path)
+                        if not valid_request or len(incoming_files) != len(raw_files):
+                            continue
                         with self.remote_open_lock:
                             self.remote_open_files.extend(incoming_files)
+                        accepted_count = len(incoming_files)
+                        write_notepadx_ipc_message(stream, {
+                            'protocol': SINGLE_INSTANCE_PROTOCOL,
+                            'type': 'ack',
+                            'ok': True,
+                            'accepted_count': accepted_count,
+                            'proof': build_notepadx_ipc_proof(
+                                self.single_instance_secret,
+                                'ack',
+                                client_nonce,
+                                server_nonce,
+                                payload_digest,
+                                str(accepted_count).encode('ascii'),
+                            ),
+                        })
+                    except (OSError, ValueError):
+                        continue
+                    finally:
+                        if stream is not None:
+                            try:
+                                stream.close()
+                            except OSError:
+                                pass
 
         self.single_instance_listener_thread = threading.Thread(
             target=listen,
@@ -5963,6 +6727,11 @@ class NotepadX:
         percent = round((self.current_font_size / self.base_font_size) * 100)
         return f"+{percent-100}%" if percent > 100 else f"{percent-100}%"
 
+    def get_text_widget_content(self, text_widget):
+        if text_widget is None:
+            raise ValueError('A text widget is required')
+        return text_widget.get('1.0', 'end-1c')
+
     def get_text_widget_char_count(self, text_widget, start_index='1.0', end_index='end-1c'):
         if not text_widget:
             return 0
@@ -6051,6 +6820,8 @@ class NotepadX:
             mode_suffix = f" | {self.tr('status.mode.preview', 'Preview')}"
         elif doc and doc.get('large_file_mode'):
             mode_suffix = f" | {self.tr('status.mode.large', 'Large')}"
+        if doc and doc.get('autosave_conflict'):
+            mode_suffix += f" | {self.tr('status.autosave_conflict', 'Autosave paused: file changed on disk')}"
 
         return self.tr(
             'status.main',
@@ -6104,6 +6875,8 @@ class NotepadX:
             mode_suffix = f" | {self.tr('status.mode.preview', 'Preview')}"
         elif doc and doc.get('large_file_mode'):
             mode_suffix = f" | {self.tr('status.mode.large', 'Large')}"
+        if doc and doc.get('autosave_conflict'):
+            mode_suffix += f" | {self.tr('status.autosave_conflict', 'Autosave paused: file changed on disk')}"
 
         return self.tr(
             'status.compare',
@@ -7730,6 +8503,7 @@ class NotepadX:
     def finish_shell_command(self, command_text, result):
         self.command_runner_active = False
         self.command_runner_thread = None
+        self.command_runner_process = None
         if not result:
             self.append_command_output("No output.\n[exit 0]\n\n")
             return
@@ -7744,6 +8518,23 @@ class NotepadX:
             output_parts.append("No output.\n")
         output_parts.append(f"[exit {result.get('returncode', 0)}]\n\n")
         self.append_command_output("".join(output_parts))
+
+    def stop_command_runner(self):
+        process = getattr(self, 'command_runner_process', None)
+        self.command_runner_process = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=0.75)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=0.75)
+            except subprocess.TimeoutExpired:
+                pass
+        except OSError as exc:
+            self.log_exception('stop command runner', exc)
 
     def run_command_panel(self):
         if not hasattr(self, 'command_entry') or not self.command_entry:
@@ -7789,21 +8580,55 @@ class NotepadX:
 
         def worker():
             result = {'returncode': -1, 'stdout': '', 'stderr': ''}
+            process = None
             try:
-                completed = subprocess.run(
+                creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                if self.is_windows:
+                    creation_flags |= getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+                process = subprocess.Popen(
                     command_text,
                     shell=True,
                     cwd=cwd,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     text=True,
-                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=creation_flags,
                 )
-                result['returncode'] = completed.returncode
-                result['stdout'] = completed.stdout or ''
-                result['stderr'] = completed.stderr or ''
+                self.command_runner_process = process
+                output_parts = []
+                output_chars = 0
+                output_truncated = False
+                while process.stdout is not None:
+                    chunk = process.stdout.read(4096)
+                    if not chunk:
+                        break
+                    remaining = max(0, self.command_output_max_chars - output_chars)
+                    if remaining:
+                        output_parts.append(chunk[:remaining])
+                        output_chars += min(len(chunk), remaining)
+                    if len(chunk) > remaining:
+                        output_truncated = True
+                result['returncode'] = process.wait()
+                result['stdout'] = ''.join(output_parts)
+                if output_truncated:
+                    result['stdout'] += '\n[output truncated by Notepad-X]\n'
             except Exception as exc:
                 result['stderr'] = str(exc)
-            self.root.after(0, lambda current=command_text, payload=result: self.finish_shell_command(current, payload))
+            finally:
+                if process is not None and process.stdout is not None:
+                    try:
+                        process.stdout.close()
+                    except OSError:
+                        pass
+                if self.command_runner_process is process:
+                    self.command_runner_process = None
+            self.queue_background_file_result({
+                'kind': 'command_complete',
+                'command_text': command_text,
+                'result': result,
+            })
 
         self.command_runner_thread = threading.Thread(target=worker, name='NotepadXCommandPanel', daemon=True)
         self.command_runner_thread.start()
@@ -7854,6 +8679,11 @@ class NotepadX:
         if clear_progress:
             doc['minimap_progressive_state'] = None
 
+    def get_minimap_sample_step(self, total_lines):
+        safe_total_lines = max(1, int(total_lines or 1))
+        max_segments = max(1, int(self.minimap_max_segments or 1))
+        return max(1, (safe_total_lines + max_segments - 1) // max_segments)
+
     def create_minimap_model(self, total_lines, sample_step, segment_max_lengths, complete=True):
         total_lines = max(1, int(total_lines or 1))
         sample_step = max(1, int(sample_step or 1))
@@ -7891,7 +8721,7 @@ class NotepadX:
             line_lengths.extend([0] * (total_lines - len(line_lengths)))
         elif len(line_lengths) > total_lines:
             total_lines = len(line_lengths)
-        sample_step = max(1, total_lines // self.minimap_max_segments)
+        sample_step = self.get_minimap_sample_step(total_lines)
         segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
         segment_max_lengths = [0] * segment_count
         for line_number in range(1, total_lines + 1):
@@ -7902,7 +8732,7 @@ class NotepadX:
     def build_minimap_model_from_line_starts(self, line_starts, file_size):
         normalized_starts = list(line_starts or [0])
         total_lines = max(1, len(normalized_starts))
-        sample_step = max(1, total_lines // self.minimap_max_segments)
+        sample_step = self.get_minimap_sample_step(total_lines)
         segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
         segment_max_lengths = [0] * segment_count
         safe_file_size = max(0, int(file_size or 0))
@@ -7921,7 +8751,7 @@ class NotepadX:
         if not doc:
             return
         total_lines = max(1, int(total_lines_hint or 1))
-        sample_step = max(1, total_lines // self.minimap_max_segments)
+        sample_step = self.get_minimap_sample_step(total_lines)
         segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
         doc['minimap_progressive_state'] = {
             'total_lines': total_lines,
@@ -7947,22 +8777,44 @@ class NotepadX:
         else:
             lines = buffer.split('\n')
             state['remainder'] = lines.pop() if lines else ''
-        total_lines = max(1, int(state.get('total_lines', 1) or 1))
-        sample_step = max(1, int(state.get('sample_step', 1) or 1))
-        segment_max_lengths = state.get('segment_max_lengths') or []
         processed_lines = int(state.get('processed_lines', 0) or 0)
+        previous_total_lines = max(1, int(state.get('total_lines', 1) or 1))
+        hinted_total_lines = max(1, int(doc.get('background_lines_loaded', previous_total_lines) or previous_total_lines))
+        total_lines = max(previous_total_lines, hinted_total_lines, processed_lines + len(lines))
+        previous_sample_step = max(1, int(state.get('sample_step', 1) or 1))
+        sample_step = self.get_minimap_sample_step(total_lines)
+        previous_segment_lengths = list(state.get('segment_max_lengths') or [])
+        segment_count = max(1, (total_lines + sample_step - 1) // sample_step)
+        if sample_step == previous_sample_step:
+            segment_max_lengths = previous_segment_lengths[:segment_count]
+            if len(segment_max_lengths) < segment_count:
+                segment_max_lengths.extend([0] * (segment_count - len(segment_max_lengths)))
+        else:
+            segment_max_lengths = [0] * segment_count
+            for old_index, raw_length in enumerate(previous_segment_lengths):
+                old_start = old_index * previous_sample_step
+                if old_start >= previous_total_lines:
+                    break
+                old_end = min(previous_total_lines, old_start + previous_sample_step)
+                first_segment = min(segment_count - 1, old_start // sample_step)
+                last_segment = min(segment_count - 1, max(old_start, old_end - 1) // sample_step)
+                safe_length = max(0, int(raw_length or 0))
+                for segment_index in range(first_segment, last_segment + 1):
+                    segment_max_lengths[segment_index] = max(
+                        segment_max_lengths[segment_index],
+                        safe_length
+                    )
+        state['total_lines'] = total_lines
+        state['sample_step'] = sample_step
+        state['segment_max_lengths'] = segment_max_lengths
         max_length = max(1, int(state.get('max_length', 1) or 1))
         for line in lines:
-            if processed_lines >= total_lines:
-                break
             processed_lines += 1
             segment_index = min(len(segment_max_lengths) - 1, (processed_lines - 1) // sample_step)
             line_length = len(line)
             if segment_index >= 0:
                 segment_max_lengths[segment_index] = max(segment_max_lengths[segment_index], line_length)
             max_length = max(max_length, line_length)
-        if finalize and processed_lines < total_lines:
-            processed_lines = total_lines
         state['processed_lines'] = processed_lines
         state['max_length'] = max_length
         doc['minimap_model'] = self.create_minimap_model(total_lines, sample_step, segment_max_lengths, complete=finalize)
@@ -9879,11 +10731,18 @@ class NotepadX:
         self.find_in_selected_directory = os.path.abspath(selected_directory)
         return self.find_in_selected_directory
 
-    def count_query_matches_in_file(self, file_path, query):
+    def count_query_matches_in_file(self, file_path, query, pattern=None, max_matches=None):
         match_count = 0
+        active_pattern = pattern
+        if active_pattern is None:
+            base_pattern = self.build_find_query_pattern(query)
+            active_pattern = re.compile(base_pattern.pattern, base_pattern.flags | re.IGNORECASE)
         with open(file_path, 'r', encoding='utf-8', errors='replace') as source_file:
             for line in source_file:
-                match_count += len(self.find_query_offsets_in_text(line, query, nocase=True))
+                for _match in active_pattern.finditer(line):
+                    match_count += 1
+                    if max_matches is not None and match_count >= max(0, int(max_matches)):
+                        return match_count
         return match_count
 
     def search_query_in_directory(self, directory, query):
@@ -9893,6 +10752,9 @@ class NotepadX:
         results = []
         scanned_files = 0
         total_matches = 0
+        base_pattern = self.build_find_query_pattern(query_text)
+        search_pattern = re.compile(base_pattern.pattern, base_pattern.flags | re.IGNORECASE)
+        search_limit_reached = False
 
         for current_root, dir_names, file_names in os.walk(directory):
             dir_names[:] = [
@@ -9905,8 +10767,29 @@ class NotepadX:
                 if normalized_name not in exact_names and extension not in extensions:
                     continue
                 file_path = os.path.join(current_root, file_name)
+                try:
+                    path_stat = os.lstat(file_path)
+                except OSError:
+                    continue
+                if not stat.S_ISREG(path_stat.st_mode) or path_stat.st_size > self.find_in_max_file_bytes:
+                    continue
+                if scanned_files >= self.find_in_max_files:
+                    search_limit_reached = True
+                    break
                 scanned_files += 1
-                match_count = self.count_query_matches_in_file(file_path, query_text)
+                try:
+                    remaining_matches = max(0, self.find_in_max_total_matches - total_matches)
+                    if remaining_matches <= 0:
+                        search_limit_reached = True
+                        break
+                    match_count = self.count_query_matches_in_file(
+                        file_path,
+                        query_text,
+                        pattern=search_pattern,
+                        max_matches=remaining_matches,
+                    )
+                except OSError:
+                    continue
                 if match_count <= 0:
                     continue
                 total_matches += match_count
@@ -9915,9 +10798,18 @@ class NotepadX:
                     'relative_path': os.path.relpath(file_path, directory),
                     'match_count': match_count,
                 })
+                if (
+                    len(results) >= self.find_in_max_results
+                    or total_matches >= self.find_in_max_total_matches
+                ):
+                    search_limit_reached = True
+                    break
+            if search_limit_reached:
+                dir_names.clear()
+                break
 
         results.sort(key=lambda item: (-item['match_count'], item['relative_path'].lower()))
-        return results, scanned_files, total_matches
+        return results, scanned_files, total_matches, search_limit_reached
 
     def show_find_in_results_dialog(self, directory, query, results, scanned_files, total_matches):
         dialog = self.create_toplevel(self.root)
@@ -10060,14 +10952,16 @@ class NotepadX:
             'matches': [],
             'scanned_files': 0,
             'total_matches': 0,
+            'limited': False,
         }
 
         def worker():
             try:
-                matches, scanned_files, total_matches = self.search_query_in_directory(directory, query)
+                matches, scanned_files, total_matches, limited = self.search_query_in_directory(directory, query)
                 result['matches'] = matches
                 result['scanned_files'] = scanned_files
                 result['total_matches'] = total_matches
+                result['limited'] = limited
             except Exception as exc:
                 result['error'] = exc
             finally:
@@ -10099,6 +10993,14 @@ class NotepadX:
                     parent=self.root
                 )
                 return
+
+            if result.get('limited'):
+                messagebox.showwarning(
+                    self.tr('find.in.title', 'Find In Files'),
+                    'The search reached a safety limit. Results shown are incomplete; '
+                    'narrow the directory or query to continue.',
+                    parent=self.root,
+                )
 
             matches = list(result.get('matches') or [])
             if not matches:
@@ -10269,6 +11171,12 @@ class NotepadX:
                 break
         return offsets
 
+    def replace_query_in_text(self, content, query, replacement, nocase=True):
+        pattern = self.build_find_query_pattern(query)
+        flags = pattern.flags | (re.IGNORECASE if nocase else 0)
+        match_pattern = re.compile(pattern.pattern, flags)
+        return match_pattern.subn(lambda _match: str(replacement), str(content))
+
     def find_query_offsets(self, text_widget, query, start_offset=0, stop_offset=None, max_matches=None, nocase=True):
         try:
             if not text_widget or not text_widget.winfo_exists() or not query:
@@ -10367,6 +11275,9 @@ class NotepadX:
         self.update_search_history_popup(self.find_in_entry, force_show=True)
 
     def replace_all(self):
+        doc = self.get_current_doc()
+        if doc and (doc.get('loading_file') or doc.get('background_loading')):
+            return
         query = self.read_entry_text(getattr(self, 'replace_find_entry', None), "read replace query")
         replace_text = self.read_entry_text(getattr(self, 'replace_entry', None), "read replacement text", strip=False)
         if query is None or replace_text is None:
@@ -10375,14 +11286,12 @@ class NotepadX:
             return
         self.hide_search_history_popup()
         self.add_find_history_entry(query)
-        content = self.text.get('1.0', tk.END)
-        pattern = self.build_find_query_pattern(query)
-        flags = pattern.flags | re.IGNORECASE
-        match_pattern = re.compile(pattern.pattern, flags)
-        new_content, replacement_count = match_pattern.subn(replace_text, content)
-        self.text.delete('1.0', tk.END)
-        self.text.insert('1.0', new_content.rstrip('\n'))
-        self.text.edit_modified(True)
+        content = self.get_text_widget_content(self.text)
+        new_content, replacement_count = self.replace_query_in_text(content, query, replace_text, nocase=True)
+        if replacement_count:
+            self.text.delete('1.0', tk.END)
+            self.text.insert('1.0', new_content)
+            self.text.edit_modified(True)
         messagebox.showinfo(
             self.tr('replace_all.title', 'Replace All'),
             self.tr('replace_all.completed', 'Replaced {count} occurrence(s).', count=replacement_count),
@@ -12658,7 +13567,10 @@ class NotepadX:
             add_scoped_symbol(symbol, doc.get('file_path'))
 
         if project_scope and doc.get('file_path'):
-            for candidate_path in self.get_project_source_files(doc['file_path'])[:self.intellisense_max_project_files]:
+            for candidate_path in self.get_project_source_files(
+                doc['file_path'],
+                max_files=self.intellisense_max_project_files
+            ):
                 if candidate_path == doc.get('file_path'):
                     continue
                 content = self.read_project_symbol_source(candidate_path)
@@ -13355,6 +14267,17 @@ class NotepadX:
         mode = self.get_syntax_mode(doc)
         doc['syntax_mode'] = mode
 
+        if doc.get('large_file_mode'):
+            if doc.get('colorizer') is not None:
+                try:
+                    doc['percolator'].removefilter(doc['colorizer'])
+                except Exception:
+                    pass
+                doc['percolator'] = None
+                doc['colorizer'] = None
+            self.clear_custom_syntax_tags(doc)
+            return
+
         if mode == 'python' and doc['colorizer'] is None:
             colorizer = ColorDelegator()
             colorizer.tagdefs.update({
@@ -13874,7 +14797,13 @@ class NotepadX:
     def apply_custom_syntax_highlighting(self, doc):
         doc['syntax_job'] = None
         mode = doc.get('syntax_mode')
-        if not mode or mode == 'python' or doc.get('virtual_mode') or doc.get('preview_mode'):
+        if (
+            not mode
+            or mode == 'python'
+            or doc.get('virtual_mode')
+            or doc.get('preview_mode')
+            or doc.get('large_file_mode')
+        ):
             return
 
         self.clear_custom_syntax_tags(doc)
@@ -14188,6 +15117,13 @@ class NotepadX:
         else:
             end_byte = int(doc.get('file_size_bytes', 0) or 0)
 
+        max_bytes = max(1, int(self.virtual_file_window_max_bytes or 1))
+        if int(doc.get('file_size_bytes', 0) or 0) >= self.huge_file_preview_threshold_bytes:
+            max_bytes = min(max_bytes, max(1, int(self.huge_virtual_file_window_max_bytes or 1)))
+        doc['virtual_window_truncated'] = (end_byte - start_byte) > max_bytes
+        if doc['virtual_window_truncated']:
+            end_byte = start_byte + max_bytes
+
         if self.is_virtual_editable(doc):
             return self.read_virtual_byte_range_text(doc, start_byte, end_byte)
 
@@ -14224,6 +15160,7 @@ class NotepadX:
             current_col = 0
 
         if (
+            doc.get('virtual_window_loaded') and
             start_line == int(doc.get('window_start_line', 0) or 0) and
             end_line == int(doc.get('window_end_line', 0) or 0)
         ):
@@ -14253,6 +15190,7 @@ class NotepadX:
 
         doc['window_start_line'] = start_line
         doc['window_end_line'] = end_line
+        doc['virtual_window_loaded'] = True
         doc['virtual_window_start_byte'] = int((doc.get('line_starts') or [0])[start_line - 1])
         doc['virtual_window_end_byte'] = self.get_virtual_line_end_byte(doc, end_line)
 
@@ -16132,10 +17070,26 @@ class NotepadX:
         anchor_line=None,
         responses=None
     ):
+        try:
+            next_note_id = max(1, int(doc.get('note_counter', 1) or 1))
+        except (TypeError, ValueError):
+            next_note_id = 1
         if note_id is None:
-            note_id = doc['note_counter']
-        doc['note_counter'] = max(doc['note_counter'], int(note_id) + 1)
-        note_tag = f"note_{note_id}"
+            note_id_text = secrets.token_hex(16)
+        else:
+            note_id_text = self.trim_text(note_id, 128)
+        if not note_id_text or any(ord(char) < 32 for char in note_id_text):
+            note_id_text = str(next_note_id)
+        if note_id_text.isdigit() and len(note_id_text) <= 18:
+            numeric_note_id = int(note_id_text)
+            doc['note_counter'] = max(next_note_id, numeric_note_id + 1)
+            note_tag = f"note_{note_id_text}"
+        else:
+            doc['note_counter'] = next_note_id
+            tag_suffix = hashlib.sha256(note_id_text.encode('utf-8', errors='replace')).hexdigest()[:16]
+            note_tag = f"note_{tag_suffix}"
+        if note_tag in doc.get('notes', {}) and str(doc['notes'][note_tag].get('id')) != note_id_text:
+            note_tag = f"{note_tag}_{len(doc['notes']) + 1}"
         normalized_read_by = []
         for editor_id in read_by or []:
             editor_text = str(editor_id).strip()
@@ -16150,7 +17104,7 @@ class NotepadX:
         safe_anchor_text = anchor_text if anchor_text is not None else doc['text'].get(start, end)
         safe_anchor_text = str(safe_anchor_text)[:self.max_note_text_length]
         doc['notes'][note_tag] = {
-            'id': str(note_id),
+            'id': note_id_text,
             'text': safe_note_text,
             'color': safe_note_color,
             'author_id': safe_author_id,
@@ -16378,6 +17332,8 @@ class NotepadX:
         return os.path.join(directory, f"{preferred_filename}{suffix}")
 
     def get_sidecar_variants(self, sidecar_path):
+        if not self.is_windows:
+            return [sidecar_path]
         directory = os.path.dirname(sidecar_path)
         target_name = os.path.basename(sidecar_path)
         variants = []
@@ -16434,12 +17390,19 @@ class NotepadX:
         except OSError:
             variant_paths.sort(key=lambda path: path.lower())
         for variant_path in variant_paths:
-            payload = self.read_json_file(variant_path, "load shared notes signature", None)
+            payload = self.read_json_file(
+                variant_path,
+                "load shared notes signature",
+                None,
+                max_bytes=self.max_sidecar_json_bytes
+            )
             if not isinstance(payload, dict):
                 continue
             found_payload = True
             raw_notes = payload.get('notes', [])
             for note in raw_notes if isinstance(raw_notes, list) else []:
+                if len(notes) >= self.max_shared_notes:
+                    break
                 sanitized_note = self.sanitize_note_payload(note)
                 if sanitized_note is not None:
                     notes.append(sanitized_note)
@@ -16460,7 +17423,12 @@ class NotepadX:
         except OSError:
             variant_paths.sort(key=lambda path: path.lower())
         for variant_path in variant_paths:
-            payload = self.read_json_file(variant_path, "load shared editors signature", None)
+            payload = self.read_json_file(
+                variant_path,
+                "load shared editors signature",
+                None,
+                max_bytes=self.max_sidecar_json_bytes
+            )
             if not isinstance(payload, dict):
                 continue
             found_payload = True
@@ -16516,13 +17484,16 @@ class NotepadX:
 
     def prune_inactive_shared_editors(self, editors):
         now = datetime.now(timezone.utc)
+        local_host = (self.get_local_machine_name() or '').casefold()
         active_editors = []
         for entry in self.sanitize_shared_editors(editors):
             last_seen = self.parse_iso_datetime(entry.get('last_seen'))
             if last_seen is not None and last_seen.tzinfo is None:
                 last_seen = last_seen.replace(tzinfo=timezone.utc)
             last_seen_recent = bool(last_seen and abs((now - last_seen).total_seconds()) <= self.shared_editor_stale_seconds)
-            if self.is_editor_process_alive(entry.get('pid')) or last_seen_recent:
+            entry_host = str(entry.get('host') or '').casefold()
+            process_is_local = not entry_host or entry_host == local_host
+            if (process_is_local and self.is_editor_process_alive(entry.get('pid'))) or last_seen_recent:
                 active_editors.append(entry)
         return active_editors
 
@@ -16582,6 +17553,7 @@ class NotepadX:
         doc['note_active_editors'] = len(editors)
         self.write_shared_editors(sidecar_path, editors)
         doc['note_editors_signature'] = self.get_editors_sidecar_signature(sidecar_path)
+        self.refresh_doc_sidecar_file_signatures(doc)
         doc['note_last_heartbeat_at'] = time.monotonic()
 
     def export_doc_notes(self, doc):
@@ -16631,8 +17603,19 @@ class NotepadX:
         doc['note_sync_mtime'] = os.path.getmtime(notes_sidecar_path) if os.path.exists(notes_sidecar_path) else None
         doc['note_sync_signature'] = self.get_notes_sidecar_signature(notes_sidecar_path)
         doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
+        self.refresh_doc_sidecar_file_signatures(doc)
         doc['note_last_heartbeat_at'] = time.monotonic()
         doc['last_unread_count'] = self.get_unread_note_count(doc)
+
+    def refresh_doc_sidecar_file_signatures(self, doc):
+        if not doc or not doc.get('file_path'):
+            return
+        doc['note_sidecar_file_signature'] = self.get_file_signature(
+            self.get_notes_sidecar_path(doc['file_path'])
+        )
+        doc['note_editors_file_signature'] = self.get_file_signature(
+            self.get_editors_sidecar_path(doc['file_path'])
+        )
 
     def write_doc_notes_payload(self, doc, notes_payload):
         if not doc or not doc.get('file_path') or doc.get('virtual_mode') or doc.get('preview_mode'):
@@ -16745,6 +17728,7 @@ class NotepadX:
             self.write_shared_notes(sidecar_path, notes, doc.get('note_active_editors', 0), doc.get('note_editors', []))
             doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
             doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+            self.refresh_doc_sidecar_file_signatures(doc)
             doc['note_last_heartbeat_at'] = time.monotonic()
             doc['last_unread_count'] = self.get_unread_note_count(doc)
         except PermissionError as exc:
@@ -16767,10 +17751,14 @@ class NotepadX:
         if not isinstance(saved_note, dict):
             return None
         note_text = self.trim_text(saved_note.get('text', ''), self.max_note_text_length)
-        start = str(saved_note.get('start', '')).strip()
-        end = str(saved_note.get('end', '')).strip()
-        note_id = str(saved_note.get('id', '')).strip()
-        if not note_text or not start or not end:
+        start = self.trim_text(saved_note.get('start'), 64)
+        end = self.trim_text(saved_note.get('end'), 64)
+        if not start or not end or not re.fullmatch(r'\d+\.\d+', start) or not re.fullmatch(r'\d+\.\d+', end):
+            return None
+        note_id = self.trim_text(saved_note.get('id'), 128)
+        if note_id and any(ord(char) < 32 for char in note_id):
+            note_id = None
+        if not note_text:
             return None
         read_by = saved_note.get('read_by', [])
         if not isinstance(read_by, list):
@@ -16812,6 +17800,8 @@ class NotepadX:
         deduped = []
         by_id = {}
         for note in notes:
+            if len(deduped) >= self.max_shared_notes:
+                break
             sanitized_note = self.sanitize_note_payload(note)
             if sanitized_note is None:
                 continue
@@ -16892,13 +17882,19 @@ class NotepadX:
         embedded_editors = []
         dirty_payload = len(variant_paths) > 1
         for variant_path in variant_paths:
-            payload = self.read_json_file(variant_path, "load shared notes", {'active_editors': 0, 'editors': [], 'notes': []})
+            payload = self.read_json_file(
+                variant_path,
+                "load shared notes",
+                {'active_editors': 0, 'editors': [], 'notes': []},
+                max_bytes=self.max_sidecar_json_bytes
+            )
             if not isinstance(payload, dict):
                 dirty_payload = True
                 continue
             notes = payload.get('notes', [])
             if isinstance(notes, list):
-                original_notes.extend(notes)
+                remaining_slots = max(0, self.max_shared_notes - len(original_notes))
+                original_notes.extend(notes[:remaining_slots])
             else:
                 dirty_payload = True
             embedded = payload.get('editors', [])
@@ -16942,7 +17938,12 @@ class NotepadX:
             merged_editors = []
             dirty_payload = len(variant_paths) > 1
             for variant_path in variant_paths:
-                payload = self.read_json_file(variant_path, "load shared editors", {'active_editors': 0, 'editors': []})
+                payload = self.read_json_file(
+                    variant_path,
+                    "load shared editors",
+                    {'active_editors': 0, 'editors': []},
+                    max_bytes=self.max_sidecar_json_bytes
+                )
                 if not isinstance(payload, dict):
                     dirty_payload = True
                     continue
@@ -16980,13 +17981,13 @@ class NotepadX:
                 self.write_shared_notes(sidecar_path, exported, doc.get('note_active_editors', 0), doc.get('note_editors', []))
                 doc['note_sync_mtime'] = os.path.getmtime(sidecar_path)
                 doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
+                self.refresh_doc_sidecar_file_signatures(doc)
                 doc['note_last_heartbeat_at'] = time.monotonic()
         except PermissionError as exc:
             self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
         except OSError as exc:
             self.log_exception("persist doc notes", exc)
             self.show_filesystem_error(self.tr('code_notes.title', 'Code Notes'), sidecar_path, exc)
-        self.save_session()
 
     def restore_doc_notes(self, doc):
         if not self.can_use_shared_note_sidecars(doc):
@@ -17003,6 +18004,7 @@ class NotepadX:
             doc['note_sync_mtime'] = os.path.getmtime(sidecar_path) if os.path.exists(sidecar_path) else None
             doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
             doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
+            self.refresh_doc_sidecar_file_signatures(doc)
             return
 
         for saved_note in saved_notes:
@@ -17041,6 +18043,7 @@ class NotepadX:
         doc['note_sync_mtime'] = os.path.getmtime(sidecar_path) if os.path.exists(sidecar_path) else None
         doc['note_sync_signature'] = self.get_notes_sidecar_signature(sidecar_path)
         doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
+        self.refresh_doc_sidecar_file_signatures(doc)
         doc['last_unread_count'] = self.get_unread_note_count(doc)
 
     def register_doc_for_shared_notes(self, doc):
@@ -17081,6 +18084,7 @@ class NotepadX:
         try:
             self.write_shared_editors(editors_sidecar_path, editors)
             doc['note_editors_signature'] = self.get_editors_sidecar_signature(editors_sidecar_path)
+            self.refresh_doc_sidecar_file_signatures(doc)
         except OSError as exc:
             self.log_exception("unregister doc from shared notes", exc)
         self.update_status()
@@ -17097,22 +18101,30 @@ class NotepadX:
 
                     notes_sidecar_path = self.get_notes_sidecar_path(doc['file_path'])
                     editors_sidecar_path = self.get_editors_sidecar_path(doc['file_path'])
-                    current_note_signature = self.get_notes_sidecar_signature(notes_sidecar_path)
-                    current_editors_signature = self.get_editors_sidecar_signature(editors_sidecar_path)
+                    current_note_file_signature = self.get_file_signature(notes_sidecar_path)
+                    current_editors_file_signature = self.get_file_signature(editors_sidecar_path)
 
-                    if current_note_signature != doc.get('note_sync_signature'):
-                        previous_unread_count = self.get_unread_note_count(doc)
-                        self.restore_doc_notes(doc)
-                        current_unread_count = self.get_unread_note_count(doc)
-                        if current_unread_count > previous_unread_count:
-                            self.play_unread_note_sound()
-                        doc['last_unread_count'] = current_unread_count
-                        status_dirty = True
-                    elif current_editors_signature != doc.get('note_editors_signature'):
-                        shared_editors_payload = self.load_shared_editors(editors_sidecar_path)
-                        self.apply_shared_editors_to_doc(doc, shared_editors_payload)
-                        doc['note_editors_signature'] = current_editors_signature
-                        status_dirty = True
+                    if current_note_file_signature != doc.get('note_sidecar_file_signature'):
+                        current_note_signature = self.get_notes_sidecar_signature(notes_sidecar_path)
+                        if current_note_signature != doc.get('note_sync_signature'):
+                            previous_unread_count = self.get_unread_note_count(doc)
+                            self.restore_doc_notes(doc)
+                            current_unread_count = self.get_unread_note_count(doc)
+                            if current_unread_count > previous_unread_count:
+                                self.play_unread_note_sound()
+                            doc['last_unread_count'] = current_unread_count
+                            status_dirty = True
+                        else:
+                            doc['note_sidecar_file_signature'] = current_note_file_signature
+
+                    if current_editors_file_signature != doc.get('note_editors_file_signature'):
+                        current_editors_signature = self.get_editors_sidecar_signature(editors_sidecar_path)
+                        if current_editors_signature != doc.get('note_editors_signature'):
+                            shared_editors_payload = self.load_shared_editors(editors_sidecar_path)
+                            self.apply_shared_editors_to_doc(doc, shared_editors_payload)
+                            doc['note_editors_signature'] = current_editors_signature
+                            status_dirty = True
+                        self.refresh_doc_sidecar_file_signatures(doc)
                     if doc.get('notes_registered'):
                         try:
                             last_heartbeat = float(doc.get('note_last_heartbeat_at', 0.0) or 0.0)
@@ -17175,6 +18187,7 @@ class NotepadX:
             text.configure(state='normal')
             text.delete('1.0', tk.END)
 
+            doc['load_source_signature'] = self.get_file_signature(file_path)
             file_size = os.path.getsize(file_path)
             doc['file_size_bytes'] = file_size
 
@@ -17245,7 +18258,7 @@ class NotepadX:
             doc['last_xview'] = 0.0
             doc['symbol_cache_signature'] = None
             doc['symbol_cache'] = None
-            self.update_doc_file_signature(doc)
+            self.finalize_doc_file_signature_after_load(doc)
             self.configure_syntax_highlighting(doc['frame'])
             self.restore_doc_notes(doc)
             self.register_doc_for_shared_notes(doc)
@@ -17268,6 +18281,14 @@ class NotepadX:
             self.log_exception("load content into doc", exc)
             messagebox.showerror(self.tr('file.open_failed_title', 'Open Failed'), str(exc), parent=self.root)
             return False
+        except MemoryError as exc:
+            self.log_exception("load content into doc", exc)
+            messagebox.showerror(
+                self.tr('file.open_failed_title', 'Open Failed'),
+                'Notepad-X did not have enough memory to open this file safely.',
+                parent=self.root,
+            )
+            return False
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             self.log_exception("load content into doc", exc)
             messagebox.showerror(
@@ -17284,6 +18305,7 @@ class NotepadX:
         finally:
             if not keep_loading_state:
                 self.end_doc_load(doc)
+                doc.pop('load_source_signature', None)
 
     def get_session_state(self):
         current_doc = self.get_current_doc()
@@ -17373,7 +18395,7 @@ class NotepadX:
         selected_recovery_key = None
         current_doc = self.get_current_doc()
         for doc in self.documents.values():
-            if doc.get('large_file_mode'):
+            if doc.get('large_file_mode') or doc.get('encrypted_file'):
                 continue
             content = doc['text'].get('1.0', 'end-1c')
             modified = bool(doc['text'].edit_modified())
@@ -17461,7 +18483,12 @@ class NotepadX:
     def restore_recovery_state(self):
         if self.isolated_session or not os.path.exists(self.recovery_path):
             return
-        recovery = self.read_json_file(self.recovery_path, "restore recovery state", None)
+        recovery = self.read_json_file(
+            self.recovery_path,
+            "restore recovery state",
+            None,
+            max_bytes=self.max_recovery_json_bytes
+        )
         recovery = self.sanitize_recovery_payload(recovery)
         if recovery is None:
             return
@@ -17649,7 +18676,12 @@ class NotepadX:
             self.schedule_startup_recovery_restore()
             return
 
-        raw_session = self.read_json_file(self.session_path, "restore session", None)
+        raw_session = self.read_json_file(
+            self.session_path,
+            "restore session",
+            None,
+            max_bytes=self.max_session_json_bytes
+        )
         has_saved_window_layout = isinstance(raw_session, dict) and any(
             key in raw_session for key in ('window_width', 'window_height', 'window_state')
         )
@@ -17886,7 +18918,6 @@ class NotepadX:
             self.refresh_compare_header()
         if self.markdown_preview_enabled.get() and self.markdown_preview_source_tab == str(tab_id):
             self.schedule_markdown_preview_refresh()
-        self.save_session()
 
     def update_window_title(self):
         doc = self.get_current_doc()
@@ -18056,7 +19087,8 @@ class NotepadX:
         if (
             len(self.documents) == 1 and
             not doc.get('file_path') and
-            doc.get('untitled_name') == 'Untitled 1'
+            doc.get('untitled_name') == 'Untitled 1' and
+            not self.doc_has_unsaved_changes(doc)
         ):
             return False
         if confirm and not self.confirm_close_tab(doc):
@@ -18230,7 +19262,7 @@ class NotepadX:
             return None
         menu = self.tab_context_menu or self.create_tab_context_menu()
         menu.delete(0, tk.END)
-        save_disabled = bool(doc.get('preview_mode') or (doc.get('virtual_mode') and not self.is_virtual_editable(doc)))
+        save_disabled = self.is_doc_text_readonly(doc)
         has_local_path = bool(doc.get('file_path') and os.path.exists(doc.get('file_path')))
 
         menu.add_command(label=self.tr('tab.menu.save', 'Save'), state='disabled' if save_disabled else 'normal', command=lambda current=tab_id: self.run_tab_menu_action(current, self.save))
@@ -18293,6 +19325,7 @@ class NotepadX:
             return
         self.cancel_doc_background_index(doc)
         self.reset_virtual_backing_store(doc, remove_files=True)
+        self.cleanup_owned_remote_shadow(doc.get('remote_shadow_path'))
         self.close_doc_load_progress(doc)
         self.cancel_text_theme_effect_job(doc)
         self.cancel_doc_autosave(doc)
@@ -18352,6 +19385,8 @@ class NotepadX:
         doc['background_bytes_loaded'] = 0
         doc['background_bytes_total'] = 0
         doc['background_lines_loaded'] = 1
+        doc['encryption_key'] = None
+        doc['encryption_header'] = None
 
         frame = doc.get('frame')
         if frame:
@@ -18367,9 +19402,15 @@ class NotepadX:
     def create_menu(self):
         t = self.tr
         hk = self.get_hotkey_display
+        previous_menu = getattr(self, 'menu', None)
         self.menu = tk.Menu(self.root, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a', activeforeground='white')
         self.root.config(menu=self.menu)
+        if previous_menu is not None and previous_menu is not self.menu:
+            try:
+                previous_menu.destroy()
+            except tk.TclError:
+                pass
 
         file_menu = tk.Menu(self.menu, tearoff=0, bg='#2d2d2d', fg=self.fg_color,
                             activebackground='#3a3a3a')
@@ -19136,6 +20177,8 @@ class NotepadX:
         return any(shutil.which(command_name) for command_name in command_names)
 
     def get_pip_python_executable(self):
+        if getattr(sys, 'frozen', False):
+            return None
         executable = sys.executable or shutil.which('python') or shutil.which('python3') or 'python'
         if self.is_windows and os.path.basename(executable).lower() in {'pythonw.exe', 'pythonw'}:
             console_python = os.path.join(os.path.dirname(executable), 'python.exe')
@@ -19147,7 +20190,16 @@ class NotepadX:
         package_name = requirement.get('pip') or requirement.get('label')
         if not package_name:
             return
-        command_args = [self.get_pip_python_executable(), '-m', 'pip', 'install', package_name]
+        python_executable = self.get_pip_python_executable()
+        if not python_executable:
+            messagebox.showinfo(
+                self.tr('about.requirement.install_failed_title', 'Install Package'),
+                'This packaged Notepad-X build cannot install Python modules at runtime. '
+                'Rebuild the application with the optional module included.',
+                parent=parent or self.root,
+            )
+            return
+        command_args = [python_executable, '-m', 'pip', 'install', package_name]
         try:
             if self.is_windows:
                 subprocess.Popen(
@@ -19689,10 +20741,15 @@ class NotepadX:
             'makefile', 'cmakelists.txt'
         }
         root_dir = os.path.abspath(root_dir)
+        root_real_dir = os.path.normcase(os.path.realpath(root_dir))
         candidate_files = []
 
         for current_root, dir_names, file_names in os.walk(root_dir):
-            dir_names[:] = [name for name in dir_names if name.lower() not in {'.git', '.vs', '__pycache__'}]
+            dir_names[:] = [
+                name for name in dir_names
+                if name.lower() not in {'.git', '.vs', '__pycache__'}
+                and not os.path.islink(os.path.join(current_root, name))
+            ]
             for file_name in sorted(file_names, key=str.lower):
                 lower_name = file_name.lower()
                 if self.is_notepadx_support_file(lower_name):
@@ -19700,7 +20757,20 @@ class NotepadX:
                 full_path = os.path.join(current_root, file_name)
                 extension = os.path.splitext(lower_name)[1]
                 if lower_name in preferred_names or extension in project_extensions:
+                    try:
+                        candidate_stat = os.lstat(full_path)
+                        if not stat.S_ISREG(candidate_stat.st_mode):
+                            continue
+                        candidate_real_path = os.path.normcase(os.path.realpath(full_path))
+                        if os.path.commonpath((root_real_dir, candidate_real_path)) != root_real_dir:
+                            continue
+                    except (OSError, ValueError):
+                        continue
                     candidate_files.append(full_path)
+                    if len(candidate_files) >= self.grab_git_max_project_files:
+                        break
+            if len(candidate_files) >= self.grab_git_max_project_files:
+                break
 
         candidate_files.sort(key=lambda path: os.path.relpath(path, root_dir).lower())
         return candidate_files
@@ -19873,6 +20943,7 @@ class NotepadX:
                     [git_executable, 'clone', clone_url, clone_target],
                     capture_output=True,
                     text=True,
+                    timeout=self.grab_git_clone_timeout_seconds,
                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 )
                 result['returncode'] = completed.returncode
@@ -19957,7 +21028,7 @@ class NotepadX:
             return None
         return raw_content.decode('utf-8', errors='replace')
 
-    def get_project_source_files(self, file_path):
+    def get_project_source_files(self, file_path, max_files=None):
         source_extensions = {
             '.py', '.pyw', '.rs', '.c', '.h', '.cpp', '.cc', '.cxx',
             '.hpp', '.hh', '.hxx', '.java', '.html', '.htm', '.php',
@@ -19978,6 +21049,12 @@ class NotepadX:
             return [file_path]
         related_files = [file_path]
         seen_files = {os.path.normcase(file_path)}
+        try:
+            file_limit = max(1, int(max_files)) if max_files is not None else None
+        except (TypeError, ValueError):
+            file_limit = None
+        if file_limit == 1:
+            return related_files
 
         try:
             project_walk = os.walk(project_dir, topdown=True, followlinks=False)
@@ -20023,6 +21100,8 @@ class NotepadX:
                     continue
                 seen_files.add(candidate_key)
                 related_files.append(candidate_path)
+                if file_limit is not None and len(related_files) >= file_limit:
+                    return related_files
 
         return related_files
 
@@ -20040,7 +21119,7 @@ class NotepadX:
         file_path = os.path.abspath(file_path)
 
         for tab_id, doc in self.documents.items():
-            if doc['file_path'] == file_path:
+            if self.paths_refer_to_same_file(doc.get('file_path'), file_path):
                 self.notebook.select(doc['frame'])
                 self.set_active_document(tab_id)
                 self.add_recent_file(file_path)
@@ -20095,7 +21174,13 @@ class NotepadX:
             )
             return False
         selected_project_path = os.path.normcase(os.path.abspath(file_path))
-        project_files = self.get_project_source_files(file_path)
+        project_file_limit = max(1, int(self.intellisense_max_project_files))
+        project_files = self.get_project_source_files(
+            file_path,
+            max_files=project_file_limit + 1
+        )
+        project_was_truncated = len(project_files) > project_file_limit
+        project_files = project_files[:project_file_limit]
         for project_file in project_files:
             self.open_file_path(project_file)
         for tab_id, doc in self.documents.items():
@@ -20106,6 +21191,14 @@ class NotepadX:
                 if self.text:
                     self.text.focus_set()
                 break
+        if project_was_truncated:
+            self.show_toast(
+                self.tr(
+                    'project.open_limited',
+                    'Opened the first {count} project files to keep the editor responsive.',
+                    count=project_file_limit
+                )
+            )
         return True
 
     def open_project(self, event=None):
@@ -20123,43 +21216,69 @@ class NotepadX:
         self.open_file_path(file_path)
 
     def write_file_atomically(self, file_path, content):
+        if os.path.islink(file_path):
+            file_path = os.path.realpath(file_path)
         directory = os.path.dirname(file_path) or '.'
+        os.makedirs(directory, exist_ok=True)
         target_mode = None
         temp_path = None
         if not self.is_windows:
             try:
                 target_mode = stat.S_IMODE(os.stat(file_path).st_mode)
             except OSError:
-                target_mode = 0o664
+                target_mode = None
         try:
             fd, temp_path = tempfile.mkstemp(prefix='notepadx-save-', suffix='.tmp', dir=directory)
             with os.fdopen(fd, 'w', encoding='utf-8') as temp_file:
+                if target_mode is not None:
+                    os.fchmod(temp_file.fileno(), target_mode)
                 temp_file.write(content)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
             os.replace(temp_path, file_path)
-            if target_mode is not None:
-                os.chmod(file_path, target_mode)
             return True
         except OSError as exc:
             self.log_exception("write file atomically", exc)
-            try:
-                with open(file_path, 'w', encoding='utf-8') as direct_file:
-                    direct_file.write(content)
-                    direct_file.flush()
-                    os.fsync(direct_file.fileno())
-                if target_mode is not None:
-                    os.chmod(file_path, target_mode)
-                return True
-            except OSError as direct_exc:
-                self.log_exception("write file direct fallback", direct_exc)
-                raise
+            raise
         finally:
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
                 except OSError as exc:
                     self.log_exception("cleanup temp save file", exc)
+
+    def copy_file_atomically(self, source_path, target_path):
+        if os.path.islink(target_path):
+            target_path = os.path.realpath(target_path)
+        directory = os.path.dirname(target_path) or '.'
+        os.makedirs(directory, exist_ok=True)
+        target_mode = None
+        temp_path = None
+        if not self.is_windows:
+            try:
+                target_mode = stat.S_IMODE(os.stat(target_path).st_mode)
+            except OSError:
+                target_mode = None
+        try:
+            fd, temp_path = tempfile.mkstemp(prefix='notepadx-copy-', suffix='.tmp', dir=directory)
+            with os.fdopen(fd, 'wb') as target_file, open(source_path, 'rb') as source_file:
+                if target_mode is not None:
+                    os.fchmod(target_file.fileno(), target_mode)
+                while True:
+                    chunk = source_file.read(self.file_load_chunk_size)
+                    if not chunk:
+                        break
+                    target_file.write(chunk)
+                target_file.flush()
+                os.fsync(target_file.fileno())
+            os.replace(temp_path, target_path)
+            return True
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError as exc:
+                    self.log_exception("cleanup temp copy file", exc)
 
     def get_save_filetypes(self, include_encrypted=False):
         t = self.tr
@@ -20397,6 +21516,13 @@ class NotepadX:
                 parent=self.root
             )
             return "break"
+        if doc.get('encrypted_file'):
+            messagebox.showinfo(
+                self.tr('run.title', 'Save and Run'),
+                self.tr('run.encrypted_unavailable', 'Save and Run is not available for encrypted documents.'),
+                parent=self.root
+            )
+            return "break"
         if not self.save():
             return "break"
 
@@ -20482,7 +21608,7 @@ class NotepadX:
             self.notebook.select(tab_id)
             self.set_active_document(tab_id)
 
-            if doc['file_path'] or self.doc_has_unsaved_changes(doc):
+            if self.doc_has_unsaved_changes(doc):
                 if not self.save():
                     if original_tab in self.notebook.tabs():
                         self.notebook.select(original_tab)
@@ -20502,6 +21628,13 @@ class NotepadX:
         doc = self.get_current_doc()
         if not doc:
             return False
+        if doc.get('loading_file') or doc.get('background_loading'):
+            messagebox.showinfo(
+                self.tr('large_file.title', 'Large File Mode'),
+                self.tr('large_file.loading', 'Loading large file...'),
+                parent=self.root,
+            )
+            return False
         if doc.get('preview_mode') or (doc.get('virtual_mode') and not self.is_virtual_editable(doc)):
             messagebox.showinfo(
                 self.tr('large_file.title', 'Large File Mode'),
@@ -20510,23 +21643,60 @@ class NotepadX:
             )
             return False
         file_path = self.prompt_plain_text_save_path(self.tr('save.as_title', 'Save As'))
-        if file_path:
-            old_file_path = doc.get('file_path')
-            if old_file_path and old_file_path != file_path:
-                self.unregister_doc_from_shared_notes(doc)
-            doc['file_path'] = os.path.abspath(file_path)
+        if not file_path:
+            return False
+
+        target_path = os.path.abspath(file_path)
+        old_file_path = doc.get('file_path')
+        path_changed = not self.paths_refer_to_same_file(old_file_path, target_path)
+        metadata_keys = (
+            'file_path', 'file_signature', 'is_remote', 'remote_spec', 'remote_host',
+            'remote_path', 'remote_shadow_path', 'display_name', 'untitled_name',
+            'encrypted_file', 'encryption_header', 'encryption_key', 'notes_registered',
+        )
+        previous_metadata = {key: doc.get(key) for key in metadata_keys}
+
+        if path_changed and doc.get('notes_registered'):
+            self.unregister_doc_from_shared_notes(doc)
+        doc['file_path'] = target_path
+        if path_changed:
             self.clear_remote_metadata(doc)
-            doc['display_name'] = None
-            doc['untitled_name'] = None
-            self.configure_syntax_highlighting(doc['frame'])
-            self.set_active_document(doc['frame'])
+            doc['encrypted_file'] = False
+            doc['encryption_header'] = None
+            doc['encryption_key'] = None
+        doc['display_name'] = None
+        doc['untitled_name'] = None
+        if path_changed:
+            doc['file_signature'] = self.get_file_signature(target_path)
+        self.configure_syntax_highlighting(doc['frame'])
+        self.set_active_document(doc['frame'])
+
+        if self.save_document_content(doc, autosave=False, show_errors=True, update_recent=True):
+            if path_changed and previous_metadata.get('is_remote'):
+                self.cleanup_owned_remote_shadow(previous_metadata.get('remote_shadow_path'))
             self.register_doc_for_shared_notes(doc)
-            return self.save()
+            return True
+
+        for key, value in previous_metadata.items():
+            doc[key] = value
+        if previous_metadata.get('notes_registered'):
+            doc['notes_registered'] = False
+            self.register_doc_for_shared_notes(doc)
+        self.configure_syntax_highlighting(doc['frame'])
+        self.set_active_document(doc['frame'])
+        self.refresh_tab_title(doc['frame'])
         return False
 
     def save_copy_as(self):
         doc = self.get_current_doc()
         if not doc:
+            return "break"
+        if doc.get('loading_file') or doc.get('background_loading'):
+            messagebox.showinfo(
+                self.tr('large_file.title', 'Large File Mode'),
+                self.tr('large_file.loading', 'Loading large file...'),
+                parent=self.root,
+            )
             return "break"
         suggested_name = self.get_doc_name(doc['frame'])
         output_path = self.prompt_plain_text_save_path(
@@ -20535,20 +21705,23 @@ class NotepadX:
         )
         if not output_path:
             return "break"
+        source_path = self.get_doc_persistence_path(doc)
+        if self.paths_refer_to_same_file(source_path, output_path):
+            messagebox.showerror(
+                self.tr('save.copy_title', 'Save Copy As'),
+                self.tr('save.copy_same_file', 'Choose a different path so the open document is not overwritten.'),
+                parent=self.root
+            )
+            return "break"
         try:
             if doc.get('preview_mode') or (doc.get('virtual_mode') and not self.is_virtual_editable(doc)):
-                with open(doc['file_path'], 'rb') as src, open(output_path, 'wb') as dst:
-                    while True:
-                        chunk = src.read(self.file_load_chunk_size)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
+                self.copy_file_atomically(doc['file_path'], output_path)
             elif self.is_virtual_editable(doc):
                 if not self.flush_virtual_window_edits(doc, force=True):
                     return "break"
                 self.write_virtual_document_atomically(doc, output_path)
             else:
-                self.write_file_atomically(output_path, doc['text'].get('1.0', tk.END).rstrip('\n'))
+                self.write_file_atomically(output_path, self.get_text_widget_content(doc['text']))
             messagebox.showinfo(
                 self.tr('save.copy_title', 'Save Copy As'),
                 self.tr('save.copy_saved', 'Copy saved to:\n{output_path}', output_path=output_path),
@@ -20569,6 +21742,13 @@ class NotepadX:
         doc = self.get_current_doc()
         if not doc:
             return "break"
+        if doc.get('loading_file') or doc.get('background_loading'):
+            messagebox.showinfo(
+                self.tr('large_file.title', 'Large File Mode'),
+                self.tr('large_file.loading', 'Loading large file...'),
+                parent=self.root,
+            )
+            return "break"
         encryption_options = self.prompt_encryption_options(default_encrypt=True, parent=self.root)
         if encryption_options is None or not encryption_options.get('encrypt'):
             return "break"
@@ -20585,6 +21765,13 @@ class NotepadX:
             return "break"
         if not output_path.lower().endswith('.npxe'):
             output_path = f"{output_path}.npxe"
+        if self.paths_refer_to_same_file(self.get_doc_persistence_path(doc), output_path):
+            messagebox.showerror(
+                self.tr('save.encrypted_copy_title', 'Save Encrypted Copy'),
+                self.tr('save.copy_same_file', 'Choose a different path so the open document is not overwritten.'),
+                parent=self.root
+            )
+            return "break"
         try:
             if doc.get('virtual_mode') or doc.get('preview_mode'):
                 messagebox.showinfo(
@@ -20598,7 +21785,7 @@ class NotepadX:
                 return "break"
             self.write_encrypted_text_file(
                 output_path,
-                doc['text'].get('1.0', tk.END).rstrip('\n'),
+                self.get_text_widget_content(doc['text']),
                 passphrase=encryption_options.get('passphrase'),
                 original_name=suggested_name
             )
@@ -20632,6 +21819,20 @@ class NotepadX:
             if not saved:
                 return "break"
             doc = self.get_current_doc()
+        elif self.doc_has_unsaved_changes(doc):
+            if not self.save_document_content(doc, autosave=False, show_errors=True, update_recent=True):
+                return "break"
+
+        if doc.get('encrypted_file'):
+            messagebox.showinfo(
+                self.tr('print.failed_title', 'Print Failed'),
+                self.tr(
+                    'print.encrypted_unavailable',
+                    'Encrypted documents cannot be sent directly to the system print handler.'
+                ),
+                parent=self.root
+            )
+            return "break"
 
         if not self.path_looks_safe_for_shell(doc['file_path']):
             messagebox.showerror(
